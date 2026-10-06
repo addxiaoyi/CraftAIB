@@ -8,6 +8,38 @@ importers:
 
   .: {}
 
+  packages/cartographer-adapter:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/core: {}
+
+  packages/craftmatic-adapter:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/engine-cli:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/engine-worker:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/voxelartcraft-adapter:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
+
   vendor/cartographer/interface:
     dependencies:
       '@cartographer/block-palettes':

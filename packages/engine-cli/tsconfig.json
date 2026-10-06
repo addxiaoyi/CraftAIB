@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src", "types": ["node"], "typeRoots": ["../../node_modules/.pnpm/@types+node@22.20.5/node_modules/@types"] },
+  "include": ["src"]
+}

@@ -12,3 +12,4 @@ outputs/
 .playwright-mcp/
 craftaib-redesign.png
 current-ui.png
+packages/**/dist/

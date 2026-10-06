@@ -1,46 +1,63 @@
 # CraftAIB
 
-CraftAIB uses **Voxelartcraft as the primary application**: upload an image, tune the image and block palette, preview the voxel result, then export Minecraft build artifacts.
+CraftAIB is a unified Minecraft image, voxel, map-art, schematic, and scene engine. **Voxelartcraft remains the primary image-to-voxel experience**, while Craftmatic and Cartographer are connected through explicit TypeScript adapters and a shared scene model.
 
-## Integrated features
+## Current implementation
 
-- **Voxelartcraft core**: WebGL image processing, 3D voxelization, dithering, block filtering, material counts, and NBT export.
-- **Craftmatic-compatible output**: export the generated voxel grid as Sponge Schematic v2 (`.schem`) for Craftmatic's parser, renderer, 3D viewer, and CLI.
-- **Cartographer-compatible bridge**: export a normalized `BlockGrid` JSON file so Cartographer-style map-art and Litematica adapters can consume the same generated block placement without scraping UI state.
+The first engine foundation is now present:
 
-The primary UI remains the Voxelartcraft interface. The other projects provide downstream capabilities and format contracts rather than separate pages pasted into the application.
+- `docs/capability-matrix.md` — source-level inventory of the three pinned repositories, runtime boundaries, migration strategy, tests, and license flags.
+- `packages/core` — `ImageSource`, `PixelMap`, `BlockState`, `BlockGrid`, `SceneGraph`, task events, validation, scene conversion, and material counting.
+- `packages/voxelartcraft-adapter` — normalizes Voxelartcraft's runtime `blocks/palette/materials` arrays into `BlockGrid`.
+- `packages/cartographer-adapter` — normalizes Map Art cells and exposes a single-layer pixel bridge.
+- `packages/craftmatic-adapter` — normalizes schematic-like data into `BlockGrid` and `SceneGraph`.
+- `packages/engine-worker` — shared browser Worker task protocol with progress, result, error, and cancellation-ready events.
+- `packages/engine-cli` — initial Node CLI for validating grids and producing material reports.
 
-## Run
+The current step is intentionally an engine foundation, not a claim that every upstream feature has already been reimplemented behind one API.
 
-Requirements: Node.js 22 and a static HTTP server.
+## Pinned upstream baselines
 
-```powershell
-python -m http.server 4173
+```text
+Voxelartcraft 708732579536d16c7d7762c01c499671ae7cc490
+Craftmatic    59f76c889ab1f0efdf08adeffa7dfc78a6631ae2
+Cartographer  784c1d90e5072cae118fcce82050fbe7737ed86f
 ```
 
-Open `http://localhost:4173/` in a browser. WebGL2 and `EXT_color_buffer_float` are required.
+## Engine model
 
-The app can also be served by any static host. Do not open `index.html` with `file://`; module imports, shader loading, and local assets require HTTP.
+```text
+ImageSource -> PixelMap -> BlockGrid -> SceneGraph
+                                  -> NBT / Schematic / Litematic / JSON
+                                  -> PNG / GLB / HTML
+```
 
-## Export workflow
+The canonical grid uses zero-based `xyz` coordinates, a required `minecraft:air` palette entry, explicit dimensions, and normalized block IDs. Adapters validate bounds, duplicate coordinates, palette references, and malformed block IDs at the boundary.
 
-1. Upload an image and configure the Voxelartcraft settings.
-2. Click **CUBIFY** and wait for the material count to finish.
-3. Export one of:
-   - `DOWNLOAD NBT`: Minecraft structure NBT, preserving the existing Voxelartcraft workflow.
-   - `DOWNLOAD .SCHEM`: Sponge Schematic v2 for Craftmatic / WorldEdit tooling.
-   - `EXPORT BLOCK GRID`: normalized JSON bridge for downstream Cartographer integration.
+## Development
 
-All exports are generated in the browser. No image is uploaded to a server.
+Requirements: Node.js 22, pnpm 11, and Git.
 
-## Upstream sources
+```powershell
+pnpm install --offline --ignore-scripts
+node scripts/build-engine.mjs
+node scripts/engine-smoke.mjs
+pnpm matrix
+```
 
-- [`Voxelartcraft`](https://github.com/41pha1/Voxelartcraft) — primary UI and voxelization engine.
-- [`craftmatic`](https://github.com/tribixbite/craftmatic) — schematic toolkit and renderer, tracked at [`vendor/craftmatic`](vendor/craftmatic).
-- [`Cartographer`](https://github.com/julienvincent/cartographer) — map-art and Litematica generation, tracked at [`vendor/cartographer`](vendor/cartographer).
+The direct build script is used for the new engine packages because upstream native postinstall scripts (`esbuild`, `sharp`, `workerd`) may be blocked by pnpm approval policy. Upstream builds remain available separately:
 
-The upstream projects are pinned as Git submodules. Integration code owned by CraftAIB lives in `src/exports.js` and is deliberately kept outside `vendor/`.
+```powershell
+pnpm build:craftmatic
+pnpm build:cartographer
+```
 
-## Development notes
+The Voxelartcraft-led browser workbench remains available through the static server:
 
-`pnpm install --recursive` installs the submodule workspaces. Some dependencies have native postinstall scripts; pnpm may require explicit approval through `pnpm approve-builds` before a full upstream build. The Voxelartcraft browser flow itself has no local bundler requirement.
+```powershell
+python -m http.server 4182
+```
+
+## License boundary
+
+This is an internal integration workspace. Craftmatic is MIT, Cartographer is GPLv3, and the Voxelartcraft baseline carries an All Rights Reserved notice. The matrix records provenance and distribution risk; do not treat the current workspace as unrestricted commercial redistribution.
