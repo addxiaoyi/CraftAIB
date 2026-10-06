@@ -1,185 +1,179 @@
-import { voxelConvert, applyProcessing, updatePalette, downloadNBT, downloadSchematic, downloadBlockGrid, updateTargetImage, stopVoxelization } from "./script.js";
+import {
+    applyProcessing,
+    downloadBlockGrid,
+    downloadNBT,
+    downloadSchematic,
+    stopVoxelization,
+    updatePalette,
+    updateTargetImage,
+    voxelConvert,
+} from "./script.js";
 
-document.getElementById("convertButton").addEventListener("click", voxelConvert, false);
-document.getElementById("downloadButton").addEventListener("click", downloadNBT, false);
-document.getElementById("downloadSchematicButton").addEventListener("click", downloadSchematic, false);
-document.getElementById("downloadGridButton").addEventListener("click", downloadBlockGrid, false);
+const DEFAULT_TARGET = "./res/upload.svg";
+const $ = (selector) => document.querySelector(selector);
+const on = (selector, event, handler) => $(selector)?.addEventListener(event, handler);
 
-const DEFAULT_TARGET = './res/upload.svg';
-const image_input = document.querySelector('#image-input');
-image_input.addEventListener("change", image_update);
+on("#convertButton", "click", voxelConvert);
+on("#downloadButton", "click", downloadNBT);
+on("#downloadSchematicButton", "click", downloadSchematic);
+on("#downloadGridButton", "click", downloadBlockGrid);
+on("#image-input", "change", imageUpdate);
+on("#discretize-checkbox", "change", applyProcessing);
+on("#dither-checkbox", "change", updatePalette);
+on("#reset-image", "click", resetImage);
+on("#reset-image-mini", "click", resetImage);
+on("#reset-3d", "click", reset3D);
+on("#reset-3d-mini", "click", reset3D);
+on("#pixelart-checkbox", "change", updatePixelArtVisibility);
 
-function image_update() {
+for (const slider of document.querySelectorAll("input[type=range]")) {
+    slider.addEventListener("input", handleSliderInput);
+}
+
+for (const input of document.querySelectorAll(".number-input")) {
+    input.addEventListener("change", handleNumberInput);
+}
+
+for (const nav of document.querySelectorAll(".nav-item")) {
+    nav.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("is-active"));
+        nav.classList.add("is-active");
+    });
+}
+
+const dropZone = $(".hero-canvas");
+if (dropZone) {
+    for (const eventName of ["dragenter", "dragover"]) {
+        dropZone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            dropZone.classList.add("is-dragging");
+        });
+    }
+    for (const eventName of ["dragleave", "drop"]) {
+        dropZone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            dropZone.classList.remove("is-dragging");
+        });
+    }
+    dropZone.addEventListener("drop", (event) => {
+        const file = [...(event.dataTransfer?.files ?? [])].find((item) => item.type.startsWith("image/"));
+        if (!file) return;
+        const input = $("#image-input");
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+        imageUpdate();
+    });
+}
+
+function imageUpdate() {
     stopVoxelization();
-    const img = document.querySelector("#image-input").files[0];
-    const resolution = parseInt(document.querySelector("#resolution-number").value, 10);
+    const input = $("#image-input");
+    const resolution = clamp(Number($("#resolution-number")?.value) || 512, 128, 2048);
+    const source = input?.files?.[0];
     const image = new Image();
 
-    image.onload = function () {
+    image.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        const context = canvas.getContext("2d");
         const aspect = image.width / image.height;
-        canvas.width = aspect > 1 ? resolution : Math.max(1, Math.round(resolution * aspect));
-        canvas.height = aspect > 1 ? Math.max(1, Math.round(resolution / aspect)) : resolution;
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.width = aspect >= 1 ? resolution : Math.max(1, Math.round(resolution * aspect));
+        canvas.height = aspect >= 1 ? Math.max(1, Math.round(resolution / aspect)) : resolution;
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
         const scaled = new Image();
-        scaled.onload = function () {
+        scaled.onload = () => {
             updateTargetImage(scaled);
-            const size = document.querySelector("#canvas-size");
+            const size = $("#canvas-size");
             if (size) size.textContent = `${canvas.width} × ${canvas.height} px`;
+            const thumb = $(".asset-thumb img");
+            if (thumb) thumb.src = canvas.toDataURL("image/png");
+            dropZone?.classList.remove("is-empty");
         };
         scaled.src = canvas.toDataURL("image/png");
     };
 
-    image.src = img ? URL.createObjectURL(img) : DEFAULT_TARGET;
+    image.onerror = () => setWorkspaceMessage("图片读取失败，请换一张 PNG、JPG 或 WebP 图片。", true);
+    image.src = source ? URL.createObjectURL(source) : DEFAULT_TARGET;
 }
-const sliders = document.querySelectorAll("input[type=range]");
-for (const slider of sliders) slider.addEventListener("input", updateSlider);
 
-const numberInputs = document.querySelectorAll(".number-input");
-for (const number of numberInputs) {
-    number.addEventListener("change", function () {
-        const sliderId = number.id.replace("-number", "-slider");
-        const slider = document.querySelector(`#${sliderId}`);
-        if (!slider) return;
-        const min = Number(slider.min || 0);
-        const max = Number(slider.max || 100);
-        const value = Math.min(max, Math.max(min, Number(number.value) || min));
-        number.value = value;
-        slider.value = slider.classList.contains("logarithmic") ? Math.log2(value) : value;
-        if (slider.id === "resolution-slider") image_update();
-        applyProcessing();
+function handleSliderInput(event) {
+    const slider = event.currentTarget;
+    const number = $(`#${slider.id.replace("-slider", "-number")}`);
+    if (number) number.value = slider.classList.contains("logarithmic") ? Math.floor(2 ** Number(slider.value)) : slider.value;
+
+    if (slider.id === "resolution-slider") imageUpdate();
+    if (slider.id === "depth-min" || slider.id === "depth-max") syncDepthRange(slider.id);
+    applyProcessing();
+}
+
+function handleNumberInput(event) {
+    const number = event.currentTarget;
+    const slider = $(`#${number.id.replace("-number", "-slider")}`);
+    if (!slider) return;
+
+    const min = Number(slider.min || 0);
+    const max = Number(slider.max || 100);
+    const value = clamp(Number(number.value) || min, min, max);
+    number.value = value;
+    slider.value = slider.classList.contains("logarithmic") ? Math.log2(value) : value;
+
+    if (slider.id === "resolution-slider") imageUpdate();
+    if (slider.id === "depth-min" || slider.id === "depth-max") syncDepthRange(slider.id);
+    applyProcessing();
+}
+
+function syncDepthRange(changedId) {
+    const minSlider = $("#depth-min");
+    const maxSlider = $("#depth-max");
+    if (!minSlider || !maxSlider) return;
+
+    if (changedId === "depth-min") maxSlider.value = Math.max(Number(maxSlider.value), Number(minSlider.value));
+    if (changedId === "depth-max") minSlider.value = Math.min(Number(minSlider.value), Number(maxSlider.value));
+    $("#depth-min-number").value = minSlider.value;
+    $("#depth-max-number").value = maxSlider.value;
+}
+
+function updatePixelArtVisibility() {
+    const isPixelArt = $("#pixelart-checkbox")?.checked;
+    document.querySelectorAll(".pixelart-disabled-settings").forEach((element) => {
+        element.style.display = isPixelArt ? "none" : "";
     });
 }
-
-function updateSlider(event) {
-    const slider = event.target;
-    const number = document.querySelector(`#${slider.id.replace("-slider", "-number")}`);
-    if (number) number.value = slider.classList.contains("logarithmic") ? Math.floor(Math.pow(2, slider.value)) : slider.value;
-    if (slider.id === "resolution-slider") image_update();
-    applyProcessing();
-}
-const discretize_checkbox = document.querySelector('#discretize-checkbox');
-discretize_checkbox.addEventListener("change", discretize_update);
-
-function discretize_update() {
-    applyProcessing();
-}
-
-const pixelart_checkbox = document.querySelector('#pixelart-checkbox');
-pixelart_checkbox.addEventListener("change", pixelart_update);
-function pixelart_update() {
-    var pixelart_hide = document.getElementsByClassName('pixelart-disabled-settings');
-    const display = pixelart_checkbox.checked ? 'none' : '';
-    for (var i = 0; i < pixelart_hide.length; i++) {
-        pixelart_hide[i].style.display = display;
-    }
-}
-
-var depth_min_slider = document.querySelector('#depth-min');
-var depth_max_slider = document.querySelector('#depth-max');
-var depth_min_number = document.querySelector('#depth-min-number');
-var depth_max_number = document.querySelector('#depth-max-number');
-var depth_selected = document.getElementById('depth-selected');
-
-depth_min_slider.addEventListener("input", depth_updateMinSlider);
-function depth_updateMinSlider() {
-    //collision between slider seletors
-    depth_max_slider.value = Math.max(depth_max_slider.value, parseInt(depth_min_slider.value));
-    //copying the slider values to the numbers
-    depth_min_number.value = depth_min_slider.value;
-    depth_max_number.value = depth_max_slider.value;
-    updateAllSlidersBackgrounds();
-}
-depth_max_slider.addEventListener("input", depth_updateMaxSlider);
-function depth_updateMaxSlider() {
-    //collision between slider seletors
-    depth_min_slider.value = Math.min(depth_min_slider.value, parseInt(depth_max_slider.value));
-    //copying the slider values to the numbers
-    depth_min_number.value = depth_min_slider.value;
-    depth_max_number.value = depth_max_slider.value;
-    updateAllSlidersBackgrounds();
-}
-depth_min_number.addEventListener("change", depth_updateMinNumber);
-function depth_updateMinNumber() {
-    //change the user text to a number
-    depth_min_number.value = parseInt(depth_min_number.value) || depth_min_number.min;
-    depth_min_number.value = Math.min(depth_min_number.max, Math.max(depth_min_number.min, depth_min_number.value));
-    //collision between number seletors
-    depth_max_number.value = Math.max(depth_max_number.value, parseInt(depth_min_number.value));
-    //copying the number values to the slider
-    depth_min_slider.value = depth_min_number.value;
-    depth_max_slider.value = depth_max_number.value;
-    updateAllSlidersBackgrounds();
-}
-depth_max_number.addEventListener("change", depth_updateMaxNumber);
-function depth_updateMaxNumber() {
-    //change the user text to a number
-    depth_max_number.value = parseInt(depth_max_number.value) || depth_max_number.max;
-    depth_max_number.value = Math.min(depth_max_number.max, Math.max(depth_max_number.min, depth_max_number.value));
-    //collision between number seletors
-    depth_min_number.value = Math.min(depth_min_number.value, parseInt(depth_max_number.value));
-    //copying the number values to the slider
-    depth_min_slider.value = depth_min_number.value;
-    depth_max_slider.value = depth_max_number.value;
-    updateAllSlidersBackgrounds();
-}
-
-depth_updateMaxSlider();
-depth_updateMinSlider();
-
-document.querySelector('#dither-checkbox').addEventListener("change", updatePalette);
-
-document.querySelector('#reset-image').addEventListener("click", resetImage);
-document.querySelector('#reset-image-mini')?.addEventListener("click", resetImage);
-document.querySelector('#reset-3d').addEventListener("click", reset3D);
-document.querySelector('#reset-3d-mini')?.addEventListener("click", reset3D);
 
 function resetImage() {
-    
-    const numbers = document.querySelectorAll('#settings-image input[type="number"]');
-    numbers.forEach(number => {
-        number.value = number.defaultValue;
-    });
-
-    const sliders = document.querySelectorAll('#settings-image input[type="range"]');
-    sliders.forEach(slider => {
-        slider.value = slider.defaultValue;
-        updateSliderBackground({ target: slider });
-    });
-
-    const checkboxes = document.querySelectorAll('#settings-image input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = checkbox.defaultChecked;
-    });
-
-
+    resetGroup("#settings-image");
+    imageUpdate();
     applyProcessing();
-    updateAllSlidersBackgrounds();
 }
 
 function reset3D() {
-    const numbers = document.querySelectorAll('#settings-3d input[type="number"]');
-    numbers.forEach(number => {
-        number.value = number.defaultValue;
-    });
-
-    const sliders = document.querySelectorAll('#settings-3d input[type="range"]');
-    sliders.forEach(slider => {
-        slider.value = slider.defaultValue;
-        updateSliderBackground({ target: slider });
-    });
-
-    const checkboxes = document.querySelectorAll('#settings-3d input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = checkbox.defaultChecked;
-    });
-
-    pixelart_update();
+    resetGroup("#settings-3d");
+    updatePixelArtVisibility();
     applyProcessing();
 }
 
-export { image_update };
+function resetGroup(selector) {
+    document.querySelectorAll(`${selector} input`).forEach((input) => {
+        if (input.type === "checkbox") input.checked = input.defaultChecked;
+        else if (input.defaultValue !== undefined) input.value = input.defaultValue;
+    });
+}
+
+function setWorkspaceMessage(message, isError = false) {
+    const hint = $(".canvas-hint");
+    if (!hint) return;
+    hint.textContent = message;
+    hint.classList.toggle("is-error", isError);
+}
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+updatePixelArtVisibility();
+syncDepthRange("depth-max");
+
+export { imageUpdate, imageUpdate as image_update };
 
 
