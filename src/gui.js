@@ -9,143 +9,57 @@ const DEFAULT_TARGET = './res/upload.svg';
 const image_input = document.querySelector('#image-input');
 image_input.addEventListener("change", image_update);
 
-function image_update(src = null) {
+function image_update() {
     stopVoxelization();
-    const img = document.querySelector('#image-input').files[0];
-    const resolution_number = document.querySelector('#resolution-number');
-
+    const img = document.querySelector("#image-input").files[0];
+    const resolution = parseInt(document.querySelector("#resolution-number").value, 10);
     const image = new Image();
-    const resolution = parseInt(resolution_number.value);
 
     image.onload = function () {
-        const processingCanvas = document.querySelector('.processing-preview');
-        const voxelCanvas = document.querySelector('.voxel-preview');
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
         const aspect = image.width / image.height;
-        console.log(aspect);
-
-        if (aspect > 1) {
-            canvas.width = resolution;
-            canvas.height = resolution / aspect;
-        } else {
-            canvas.width = resolution * aspect;
-            canvas.height = resolution;
-        }
-
-        const maxHeight = 600;
-        const maxWidth = 1200;
-
-
-        const mainConversionDiv = document.querySelector('.main-conversion');
-        const parenteWidth = mainConversionDiv.clientWidth;
-        const parentHeight = mainConversionDiv.clientHeight;
-
-        const settingsDiv = document.querySelector('.settingsGroup');
-        const settingsWidth = settingsDiv.clientWidth;
-        const settingsHeight = settingsDiv.clientHeight;
-
-        var imagesWidth = parenteWidth - settingsWidth;
-        const imagesHeight = settingsHeight - 133;
-
-        if (imagesWidth < settingsWidth) {
-            imagesWidth = parenteWidth;
-        }
-
-        if (imagesHeight * aspect > imagesWidth) {
-            processingCanvas.style.width = imagesWidth - 100 + "px";
-            processingCanvas.style.height = "auto";
-
-            voxelCanvas.style.width = imagesWidth - 100 + "px";
-            voxelCanvas.style.height = "auto";
-            console.log("Limiting width")
-        } else {
-            processingCanvas.style.width = "auto";
-            processingCanvas.style.height = imagesHeight + "px";
-
-            voxelCanvas.style.width = "auto";
-            voxelCanvas.style.height = imagesHeight + "px";
-            console.log("Limiting height")
-        }
-
+        canvas.width = aspect > 1 ? resolution : Math.max(1, Math.round(resolution * aspect));
+        canvas.height = aspect > 1 ? Math.max(1, Math.round(resolution / aspect)) : resolution;
         ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const dataURL = canvas.toDataURL();
 
         const scaled = new Image();
-        scaled.onload = function () { updateTargetImage(scaled); }
-        scaled.src = dataURL;
-    }
+        scaled.onload = function () {
+            updateTargetImage(scaled);
+            const size = document.querySelector("#canvas-size");
+            if (size) size.textContent = `${canvas.width} × ${canvas.height} px`;
+        };
+        scaled.src = canvas.toDataURL("image/png");
+    };
 
-    image.src = img === undefined ? DEFAULT_TARGET : URL.createObjectURL(img);
+    image.src = img ? URL.createObjectURL(img) : DEFAULT_TARGET;
 }
+const sliders = document.querySelectorAll("input[type=range]");
+for (const slider of sliders) slider.addEventListener("input", updateSlider);
 
-const sliders = document.getElementsByClassName('slider');
-for (var i = 0; i < sliders.length; i++) {
-    sliders[i].addEventListener("input", updateSliderBackground);
-    sliders[i].addEventListener("input", updateSlider);
-}
-
-const numberInputs = document.getElementsByClassName('number-input');
-for (var i = 0; i < numberInputs.length; i++) {
-    numberInputs[i].addEventListener("change", function (event) {
-        const slider = event.target.closest("tr").querySelector('input[type="range"]');
-        const number = event.target;
-        number.value = parseInt(number.value) || Math.max(number.min, 0);
-        number.value = Math.min(number.max, Math.max(number.min, number.value));
-
-        if (slider.classList.contains('logarithmic'))
-            slider.value = Math.log2(number.value);
-        else
-            slider.value = number.value;
-
-        updateSliderBackground({ target: slider });
+const numberInputs = document.querySelectorAll(".number-input");
+for (const number of numberInputs) {
+    number.addEventListener("change", function () {
+        const sliderId = number.id.replace("-number", "-slider");
+        const slider = document.querySelector(`#${sliderId}`);
+        if (!slider) return;
+        const min = Number(slider.min || 0);
+        const max = Number(slider.max || 100);
+        const value = Math.min(max, Math.max(min, Number(number.value) || min));
+        number.value = value;
+        slider.value = slider.classList.contains("logarithmic") ? Math.log2(value) : value;
+        if (slider.id === "resolution-slider") image_update();
         applyProcessing();
     });
 }
 
-function updateAllSlidersBackgrounds() {
-    for (var i = 0; i < sliders.length; i++) {
-        updateSliderBackground({ target: sliders[i].children[0].children[0] });
-    }
-}
-updateAllSlidersBackgrounds();
-
-function updateSliderBackground(event) {
-    const sliderDiv = event.target.parentElement.parentElement;
-    const slider = sliderDiv.children[1].children[0];
-    const sliderProgress = sliderDiv.querySelector('.range-progress');
-
-    const zeroPoint = Math.max(0, slider.min);
-    const zeroPercent = (zeroPoint - slider.min) / (slider.max - slider.min) * 100;
-    const percent = (slider.value - slider.min) / (slider.max - slider.min) * 100;
-
-    const smallerPercent = Math.min(percent, zeroPercent);
-    const largerPercent = Math.max(percent, zeroPercent);
-
-    sliderProgress.style.left = smallerPercent + '%';
-    sliderProgress.style.right = (100 - largerPercent) + '%';
-}
-
 function updateSlider(event) {
     const slider = event.target;
-    const number = slider.closest("tr").querySelector('.number-input');
-
-    if (slider.classList.contains('logarithmic'))
-        number.value = Math.floor(Math.pow(2, slider.value));
-    else
-        number.value = slider.value;
-
-    if (slider.id == 'resolution-slider') {
-        const resolution_number = document.querySelector('#resolution-number');
-        resolution_number.value = number.value;
-        image_update();
-    }
-
+    const number = document.querySelector(`#${slider.id.replace("-slider", "-number")}`);
+    if (number) number.value = slider.classList.contains("logarithmic") ? Math.floor(Math.pow(2, slider.value)) : slider.value;
+    if (slider.id === "resolution-slider") image_update();
     applyProcessing();
 }
-
-
 const discretize_checkbox = document.querySelector('#discretize-checkbox');
 discretize_checkbox.addEventListener("change", discretize_update);
 
@@ -218,7 +132,9 @@ depth_updateMinSlider();
 document.querySelector('#dither-checkbox').addEventListener("change", updatePalette);
 
 document.querySelector('#reset-image').addEventListener("click", resetImage);
+document.querySelector('#reset-image-mini')?.addEventListener("click", resetImage);
 document.querySelector('#reset-3d').addEventListener("click", reset3D);
+document.querySelector('#reset-3d-mini')?.addEventListener("click", reset3D);
 
 function resetImage() {
     
@@ -265,3 +181,5 @@ function reset3D() {
 }
 
 export { image_update };
+
+
