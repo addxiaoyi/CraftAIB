@@ -1,43 +1,33 @@
 # CraftAIB integration architecture
 
-## Product boundary
+## Primary application
 
-CraftAIB owns orchestration and user-facing integration. It does not fork or silently rewrite upstream implementations.
+Voxelartcraft remains the user-facing application and owns the complete image-to-voxel path:
 
 ```text
-image upload
-    |
-    v
-ImageInput -> PaletteSelection -> BlockGrid
-                              |          |
-                              v          v
-                       Cartographer   Craftmatic
-                     map-art outputs  schem/render/view
-                              \          /
-                               v        v
-                              Export / Material report
+image upload -> image processing -> palette selection -> WebGL voxelization
+             -> material list -> preview -> export
 ```
 
-## Responsibilities
+CraftAIB adds downstream export capabilities to the existing flow instead of replacing its UI or duplicating its voxelizer.
 
-### Voxelartcraft adapter
+## Functional fusion
 
-Use Voxelartcraft for image preprocessing, palette matching, dithering, and its existing NBT-oriented browser flow. The adapter must normalize its output into a versioned `BlockGrid` instead of passing DOM state between applications.
+```text
+Voxelartcraft blocks + palette + materials
+                    |
+                    +--> structure.nbt (existing export)
+                    +--> Sponge Schematic v2 (.schem) -> Craftmatic parser / renderer / viewer
+                    +--> BlockGrid JSON -> Cartographer-compatible integration boundary
+```
 
-### Cartographer adapter
+`src/exports.js` converts the existing Voxelartcraft runtime arrays into a normalized representation. It validates palette references and computes a zero-based bounding box before any format is written.
 
-Use Cartographer's generation package for map-art block placement, palette balancing, staircasing, and Litematica/JSON/NBT transforms. Keep worker execution isolated from the UI.
-
-### Craftmatic adapter
-
-Use Craftmatic for Sponge `.schem` parsing/writing, 2D/3D rendering, and interactive viewing. It is the canonical renderer for schematic artifacts.
-
-## Initial contract
+### BlockGrid contract
 
 ```ts
 export type BlockCell = {
   id: string;
-  properties?: Record<string, string>;
   x: number;
   y: number;
   z: number;
@@ -45,16 +35,20 @@ export type BlockCell = {
 
 export type BlockGrid = {
   version: 1;
+  source: 'voxelartcraft';
   width: number;
   height: number;
-  depth: number;
+  length: number;
   cells: BlockCell[];
-  source: 'image' | 'schematic' | 'generated';
 };
 ```
 
-Adapters should validate dimensions and coordinates at the boundary. Exporters must return a typed error rather than silently dropping unsupported blocks or formats.
+The JSON bridge is intentionally simple: Cartographer or a future CraftAIB worker can map the cells into its palette and Litematica serializers without depending on Voxelartcraft's DOM or private module state.
 
-## Why submodules
+## Upstream boundaries
 
-The three upstream repositories have different build systems and release cadences. Submodules keep upstream provenance and license boundaries visible, allow pinned reproducible builds, and avoid copying generated assets into CraftAIB. Integration code should live in CraftAIB-owned packages, not in `vendor/`.
+- `vendor/voxelartcraft` is the original upstream reference and is not the runtime source after its browser files are copied to the project root.
+- `vendor/craftmatic` remains the downstream schematic/rendering implementation and source of truth for future viewer embedding.
+- `vendor/cartographer` remains the downstream map-art/Litematica implementation and source of truth for future map-art export.
+
+Future work should add explicit adapters around these contracts. It should not copy UI state between the three applications or parse generated HTML.

@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>VoxelartCraft | The free Minecraft Perspective Art Generator</title>
+  <link rel="stylesheet" href="style/style.css">
+  <script src="src/blockPalette.js" type="module"></script>
+  <script src="src/script.js" type="module"></script>
+  <script src="src/schematic.js" type="module"></script>
+  <script src="src/gui.js" type="module"></script>
+  <script src='https://git.io/glm-js.min.js'></script>
+
+  <!-- Adsense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3405708991470158"crossorigin="anonymous"></script>
+
+  <!-- Google Tag Manager -->
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-MC7FB2MH');</script>
+  <!-- End Google Tag Manager -->
+</head>
+
+<body>
+  <!--[if lt IE 8]>
+    <p class="browserupgrade">
+      You are using an <strong>outdated</strong> browser. Please
+      <a href="http://browsehappy.com/">upgrade your browser</a> to improve
+      your experience.
+    </p>
+  <![endif]-->
+  <!-- Google Tag Manager (noscript) -->
+  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-MC7FB2MH"height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+  <!-- End Google Tag Manager (noscript) -->
+  <div class="main-content">
+    <div class="header">
+      <div class="header-title">
+        <img src="res/logo.png" alt="VoxelartCraft Logo" class="logo">
+        <div class = "title-container">
+          <h1 class = "main-title">VoxelartCraft</h1>
+          <h3 class = "title-subtext">Convert any Image to a 3D Minecraft schematic!</h3>
+        </div>
+      </div>
+      <div class="header-links">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-github text-gray-800 dark:text-white" viewBox="0 0 16 16" style="margin-right:5px">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/>
+        </svg>
+
+        <a href="https://github.com/41pha1/Voxelartcraft" style="text-decoration:none; margin-right: 1em;">GitHub ☆</a>
+
+        <svg class="icon w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
+          fill="currentColor" viewBox="2 2 21 21">
+          <path
+            d="M19 5.6c-1.4-.7-2.8-1.1-4.2-1.3l-.5 1c-1.5-.2-3-.2-4.6 0l-.5-1c-1.4.2-2.8.6-4.1 1.3a17.4 17.4 0 0 0-3 11.6 18 18 0 0 0 5 2.5c.5-.5.8-1.1 1.1-1.7l-1.7-1c.2 0 .3-.2.4-.3a11.7 11.7 0 0 0 10.2 0l.4.3-1.7.9 1 1.7c1.9-.5 3.6-1.4 5.1-2.6.4-4-.6-8.2-3-11.5ZM8.6 14.8a2 2 0 0 1-1.8-2 2 2 0 0 1 1.8-2 2 2 0 0 1 1.8 2 2 2 0 0 1-1.8 2Zm6.6 0a2 2 0 0 1-1.8-2 2 2 0 0 1 1.8-2 2 2 0 0 1 1.8 2 2 2 0 0 1-1.8 2Z" />
+        </svg>
+        <a href="https://discord.gg/shzeYBKpGZ" target="_blank" style="text-decoration:none">
+          Discord
+        </a>
+        <!-- <script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Support Me on Ko-fi', '#202240', 'O5O7U6IQ7');kofiwidget2.draw();</script>  -->
+      </div>
+    </div>
+    <div class="elements">
+      <div class="main-conversion">
+        <div class="settingsGroup">
+          <div class="card" id = "settings-image">
+            <h3>Image Preprocessing
+
+              <svg id ="reset-image" class="refresh-button" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">    <g id="SVGRepo_bgCarrier" stroke-width="0"></g>    <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>    <g id="SVGRepo_iconCarrier">      <g fill="none" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round"        transform="matrix(0 1 1 0 2.5 2.5)">        <path          d="m3.98652376 1.07807068c-2.38377179 1.38514556-3.98652376 3.96636605-3.98652376 6.92192932 0 4.418278 3.581722 8 8 8s8-3.581722 8-8-3.581722-8-8-8">        </path>        <path d="m4 1v4h-4" transform="matrix(1 0 0 -1 0 6)"></path>      </g>    </g>  </svg>
+                 
+            </h3>
+            <table width=100%>
+              <tbody>
+                <tr>
+                  <th>
+                    <label for="discretize-checkbox">
+                      <b class="tooltip-label">Discretize</b>
+                      <div class="tooltip">
+                        <b>Color discretization</b>
+                        <hr>
+                        <div class="tooltiptext">Only affects the preprocessing preview image and not the voxelized
+                          result! This option displays the image using only colors from the chosen block pallette. Helps
+                          you to tune the sliders to reduce color banding.</div>
+                      </div>
+                    </label>
+                  </th>
+                  <td><input id="discretize-checkbox" type="checkbox" checked></td>
+                  <td>
+                </tr>
+                <tr>
+                  <th>
+                    <b class="tooltip-label">Resolution:</b>
+                    <div class="tooltip">
+                      <b>Image Resolution</b>
+                      <hr>
+                      <div class="tooltiptext">The size of the Image. Use a smaller resolution for faster conversion,
+                        and a larger one for more quality on a final product.</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="resolution-slider" class="logarithmic" type="range" min="7" max="11" value="9"
+                          step="0.5">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="resolution-number" class="number-input" type="number" min="128" max="2048" step="1"
+                      value="512"></td>
+                </tr>
+                <tr>
+                  <th>
+                    <b class="tooltip-label">Brightness:</b>
+                    <div class="tooltip">
+                      <b>Brightness</b>
+                      <hr>
+                      <div class="tooltiptext">How white the image is.</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="brightness-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="brightness-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Highlights:</b>
+                    <div class="tooltip">
+                      <b>Highlights</b>
+                      <hr>
+                      <div class="tooltiptext">Controls the bright regions of the image. Positive values makes them
+                        brighter, negative values make them darker.</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="highlights-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="highlights-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Shadows:</b>
+                    <div class="tooltip">
+                      <b>Shadows</b>
+                      <hr>
+                      <div class="tooltiptext">Controls the dark regions of the image. Positive values makes them
+                        brighter, negative values make them darker.</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="shadows-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="shadows-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Contrast:</b>
+                    <div class="tooltip">
+                      <b>Contrast</b>
+                      <hr>
+                      <div class="tooltiptext">Controls the difference between bright and dark parts of the image.
+                        Positive values add contrast (more black and white), negative values remove contrast (more
+                        gray).
+                      </div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="contrast-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="contrast-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0">
+                  </td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Saturation:</b>
+                    <div class="tooltip">
+                      <b>Saturation</b>
+                      <hr>
+                      <div class="tooltiptext">Controls the intensity of color. Positive values makes colors stronger,
+                        negative values reduces colors. Negative -100 creates a grayscale image. Consider using a
+                        grayscale pallette with this as well.
+                      </div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="saturation-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="saturation-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Temperature:</b>
+                    <div class="tooltip">
+                      <b>Temperature</b>
+                      <hr>
+                      <div class="tooltiptext">How yellow or blue the image is.
+                      </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="temperature-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="temperature-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+                <tr>
+                  <th><b class="tooltip-label">Tint:</b>
+                    <div class="tooltip">
+                      <b>Tint</b>
+                      <hr>
+                      <div class="tooltiptext">Adds or removes green color.</div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="tint-slider" type="range" min="-100" max="100" value="0">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="tint-number" class="number-input" type="number" min="-100" max="100" step="1"
+                      value="0"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card" id = "settings-3d">
+            <h3>3D Settings
+              <svg id = "reset-3d" class="refresh-button" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">  <g id="SVGRepo_bgCarrier" stroke-width="0"></g>  <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>  <g id="SVGRepo_iconCarrier">    <g fill="none" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round"      transform="matrix(0 1 1 0 2.5 2.5)">      <path        d="m3.98652376 1.07807068c-2.38377179 1.38514556-3.98652376 3.96636605-3.98652376 6.92192932 0 4.418278 3.581722 8 8 8s8-3.581722 8-8-3.581722-8-8-8">      </path>      <path d="m4 1v4h-4" transform="matrix(1 0 0 -1 0 6)"></path>    </g>  </g></svg>
+            </h3>
+            <table width=100%>
+                <tbody>
+                  <tr>
+                  <th><label for="pixelart-checkbox">
+                      <b class="tooltip-label">2D Pixelart</b>
+                      <div class="tooltip">
+                        <b>Pixelart Mode</b>
+                        <hr>
+                        <div class="tooltiptext">Special Mode where only one plane of blocks is placed. Always creates a
+                          flat build. Can still be rotated freely. Allows creating diagonal or tilted pixelart in Minecraft.</div>
+                      </div>
+                    </label>
+                  </th>
+                  <td><input id="pixelart-checkbox" type="checkbox"></td>
+                  </td>
+                </tr>
+                <tr>
+                  <tr>
+                  <th><label for="enforce-boundary-checkbox">
+                      <b class="tooltip-label">Enforce Boundary</b>
+                      <div class="tooltip">
+                        <b>Enforce Boundary</b>
+                        <hr>
+                        <div class="tooltiptext">If enabled, blocks are not allowed to go outside of the image boundaries. This creates a clean edge, but can also increase the amount of blocks needed.
+                      </div>
+                    </label>
+                  </th>
+                  <td><input id="enforce-boundary-checkbox" type="checkbox"></td>
+                  </td>
+                </tr>
+
+                <tr>
+                <tr>
+                  <th><label for="dither-checkbox">
+                      <b class="tooltip-label">Dither</b>
+                      <div class="tooltip">
+                        <b>Dither</b>
+                        <hr>
+                        <div class="tooltiptext">If enabled, dithering will be applied to the block types reducing color banding.
+                      </div>
+                    </label>
+                  </th>
+                  <td><input id="dither-checkbox" type="checkbox" checked></td>
+                  </td>
+                </tr>
+                <tr>
+                </tbody>
+            </table>
+
+            <table width=100%>
+              <tbody>
+                <tr>
+                  <th>
+                    <b class="tooltip-label">FOV:</b>
+                    <div class="tooltip" id="FOV-tooltip">
+                      <b>Field of View</b>
+                      <hr>
+                      <div class="tooltiptext">The viewing angle between the top and the bottom of the image. (Doesn't
+                        always translate 1:1 to minecraft fov)</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="fov-slider" type="range" min="10" max="120" value="60">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="fov-number" class="number-input" type="number" min="10" max="120" step="1" value="60">
+                  </td>
+                </tr>
+                <tr>
+                  <th>
+                    <b class="tooltip-label">Yaw:</b>
+                    <div class="tooltip" id="FOV-tooltip">
+                      <b>Yaw</b>
+                      <hr>
+                      <div class="tooltiptext">The sideways rotation of the camera. (-180, -90, 0, 90, 180) is (N E S W
+                        N)</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="yaw-slider" type="range" min="-180" max="180" value="-45">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="yaw-number" class="number-input" type="number" min="-180" max="180" step="1"
+                      value="-45">
+                  </td>
+                </tr>
+                <tr>
+                  <th>
+                    <b class="tooltip-label">Pitch:</b>
+                    <div class="tooltip">
+                      <b>Pitch</b>
+                      <hr>
+                      <div class="tooltiptext">The vertical rotation of the camera. (-90, 0, 90) is (Up, Horizontal,
+                        Down)</div>
+                    </div>
+                  </th>
+                  <td>
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="pitch-slider" type="range" min="-90" max="90" value="-35">
+                      </div>
+                    </div>
+                  </td>
+                  <td><input id="pitch-number" class="number-input" type="number" min="-90" max="90" step="1"
+                      value="-35">
+                  </td>
+                </tr>
+                <tr>
+                  <th height="30px">
+                    <b class="tooltip-label">Min Depth:</b>
+                    <div class="tooltip">
+                      <b>Minimum Depth</b>
+                      <hr>
+                      <div class="tooltiptext">The starting distance where blocks are placed.</div>
+                    </div>
+                  </th>
+                  <td width="100px" height="3pt">
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="depth-min" type="range" min="5" max="500" value="10" step="1">
+                      </div>
+                  <td><input id="depth-min-number" class="number-input" type="number" min="5" max="500" step="1"
+                      value="45">
+                  </td>
+                </tr>
+                <tr class="pixelart-disabled-settings">
+                  <th height="30px">
+                    <b class="tooltip-label">Max Depth:</b>
+                    <div class="tooltip">
+                      <b>Maximum Depth</b>
+                      <hr>
+                      <div class="tooltiptext">The final distance until where blocks are placed.</div>
+                    </div>
+                  </th>
+                  <td width="100px" height="3pt">
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="depth-max" type="range" min="5" max="500" value="100" step="1">
+                      </div>
+                  <td><input id="depth-max-number" class="number-input" type="number" min="5" max="500" step="1"
+                      value="100">
+                  </td>
+                </tr>
+                <tr class="pixelart-disabled-settings">
+                  <th height="30px">
+                    <b class="tooltip-label">Detail:</b>
+                    <div class="tooltip">
+                      <b>Detail</b>
+                      <hr>
+                      <div class="tooltiptext">The allowed detail in the image where a block is placed. Higher values
+                        lead to more expensive builds with better detail quality. Lower values lead to cheaper builds, but poorer quality.</div>
+                    </div>
+                  </th>
+                  <td width="100px" height="3pt">
+                    <div class="slider">
+                      <div class="range-highlight">
+                        <span class="range-progress"></span>
+                      </div>
+                      <div class="range-input">
+                        <input id="detail" type="range" min="1" max="100" value="50" step="1">
+                      </div>
+                  <td><input id="detail-number" class="number-input" type="number" min="1" max="100" step="1" value="50">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="images">
+          <div class="card image preview">
+            <input type="file" id="image-input" accept="image/*">
+            <label class="image-input-label" for="image-input">
+              <div class="canvas-background">
+                <canvas id="glcanvas" class="processing-preview" width="1" height="1"></canvas>
+                <canvas id="canvas" class="voxel-preview" width="1" height="1" style="display:none;"></canvas>
+              </div>
+            </label>
+            <div class="conversion-control">
+              <button class="buttons progress-button" type="button" id="convertButton">
+                <div class="progress-bar" id="conversion-progress"></div>
+                <div class="button-text">
+                  <svg class="icon w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true"
+                    xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="5 5 14 14">
+                    <path fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-linecap="round"
+                      stroke-linejoin="round" stroke-width="1" d="M12 12 v6 l5 -3 0 -6 -5 3" />
+                    <path fill="currentColor" fill-opacity="0.5" stroke="currentColor" stroke-linecap="round"
+                      stroke-linejoin="round" stroke-width="1" d="M12 12 v6 l-5 -3 0 -6 5 3" />
+                    <path fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-linecap="round"
+                      stroke-linejoin="round" stroke-width="1" d="M7 9 l5 -3 5 3 l -5 3" />
+                  </svg>
+                  CUBIFY
+                </div>
+              </button>
+              <button class="buttons" id="downloadSchematicButton" type="button" disabled>
+                <div class="button-text">DOWNLOAD .SCHEM</div>
+              </button>
+              <button class="buttons" id="downloadGridButton" type="button" disabled>
+                <div class="button-text">EXPORT BLOCK GRID</div>
+              </button>
+              <button class="buttons" id="downloadButton" type="button" disabled>
+                <div class="button-text">
+                  <svg class="icon w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true"
+                    xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 13V4M7 14H5a1 1 0 0 0-1 1v4c0 .6.4 1 1 1h14c.6 0 1-.4 1-1v-4c0-.6-.4-1-1-1h-2m-1-5-4 5-4-5m9 8h0" />
+                  </svg>
+                  DOWNLOAD NBT
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="palette">
+        <div class="card palette-card">
+          <div class="palette-header">
+            <div class="palette-name">
+              <h3>Block Palette&nbsp;</h3>
+              <svg class="icon w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <path stroke="currentColor" stroke-linecap="round" stroke-width="2"
+                  d="M18.8 4H5.2a1 1 0 0 0-.7 1.7l5.3 6 .2.7v4.8c0 .2 0 .4.2.4l3 2.3c.3.2.8 0 .8-.4v-7.1c0-.3 0-.5.2-.7l5.3-6a1 1 0 0 0-.7-1.7Z" />
+              </svg>
+            </div>
+            <span class="material-total-count"></span>
+          </div>
+          <div class="blockList-container">
+            <div class="blockList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer" style ="text-align: center; padding: 1em; font-size: 0.9em; color: #555;">
+        <p>Made with ❤️. Check out the <a href="https://github.com/41pha1/PerspectiveArt">GitHub repository</a> for more info and to give suggestions! | <a href="impressum.html" target="_self" style="text-decoration:none">Impressum</a></p>
+      </div>
+
+      <script src='https://storage.ko-fi.com/cdn/scripts/overlay-widget.js'></script>
+      <script>
+        kofiWidgetOverlay.draw('voxelartcraft', {
+          'type': 'floating-chat',
+          'floating-chat.donateButton.text': 'Support us',
+          'floating-chat.donateButton.background-color': '#323842',
+          'floating-chat.donateButton.text-color': '#fff'
+        });
+      </script>
+
+    </div>
+    
+  </div>
+</body>
+
+</html>
