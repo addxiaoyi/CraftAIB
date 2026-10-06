@@ -1,0 +1,15 @@
+{
+  "name": "craftaib",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Unified Minecraft map-art and schematic workspace combining Voxelartcraft, craftmatic, and Cartographer.",
+  "packageManager": "pnpm@11.23.0",
+  "scripts": {
+    "bootstrap": "pnpm install --recursive",
+    "build:craftmatic": "pnpm --dir vendor/craftmatic build",
+    "build:cartographer": "pnpm --dir vendor/cartographer build",
+    "build": "pnpm build:craftmatic && pnpm build:cartographer",
+    "dev:craftmatic": "pnpm --dir vendor/craftmatic dev:web",
+    "dev:cartographer": "pnpm --dir vendor/cartographer watch"
+  }
+}

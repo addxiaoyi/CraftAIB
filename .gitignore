@@ -1,0 +1,16 @@
+# Dependencies and generated output
+node_modules/
+vendor/**/node_modules/
+vendor/**/dist/
+vendor/**/.next/
+vendor/**/web/dist/
+
+# Local workspace tooling
+.codegraph/
+work/
+outputs/
+
+# Environment files
+.env
+.env.*
+!.env.example

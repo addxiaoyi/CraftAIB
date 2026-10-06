@@ -1,0 +1,9 @@
+[submodule "vendor/voxelartcraft"]
+	path = vendor/voxelartcraft
+	url = https://github.com/41pha1/Voxelartcraft.git
+[submodule "vendor/craftmatic"]
+	path = vendor/craftmatic
+	url = https://github.com/tribixbite/craftmatic.git
+[submodule "vendor/cartographer"]
+	path = vendor/cartographer
+	url = https://github.com/julienvincent/cartographer.git

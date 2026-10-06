@@ -1,0 +1,9 @@
+packages:
+  - vendor/cartographer/interface
+  - vendor/cartographer/packages/*
+  - vendor/craftmatic
+  - vendor/craftmatic/bridge
+allowBuilds:
+  esbuild: set this to true or false
+  sharp: set this to true or false
+  workerd: set this to true or false
