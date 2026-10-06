@@ -93,7 +93,7 @@ function imageUpdate() {
         scaled.src = canvas.toDataURL("image/png");
     };
 
-    image.onerror = () => setWorkspaceMessage("图片读取失败，请换一张 PNG、JPG 或 WebP 图片。", true);
+    image.onerror = () => setWorkspaceMessage("Image could not be loaded. Please choose a PNG, JPG, or WebP file.", true);
     image.src = source ? URL.createObjectURL(source) : DEFAULT_TARGET;
 }
 
@@ -175,5 +175,6 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
