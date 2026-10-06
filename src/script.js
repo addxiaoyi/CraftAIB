@@ -734,7 +734,11 @@ function showVoxelCanvas() {
     document.querySelector('.voxel-preview').style.display = "block";
 }
 
-function setVoxelProgress(progress) {`r`n    const displayProgress = progress * 100;`r`n    const progressBar = document.querySelector("#conversion-progress");`r`n    if (progressBar) progressBar.style.width = displayProgress + "%";`r`n}
+function setVoxelProgress(progress) {
+    const displayProgress = progress * 100;
+    const progressBar = document.querySelector("#conversion-progress");
+    if (progressBar) progressBar.style.width = displayProgress + "%";
+}
 
 function voxelConvert() {
     if (voxelizing) {
@@ -933,6 +937,7 @@ export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downlo
 // - Block minecraft version
 // - Eastereggs
 // - default pallette category selection
+
 
 
 
