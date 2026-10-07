@@ -12,7 +12,9 @@ const parseEvents = []; const parseRegistry = createTaskRegistry((event) => pars
 const mapEvents = []; const mapRegistry = createTaskRegistry((event) => mapEvents.push(event), createCoreRunner()); await mapRegistry.run({ id: 'map', type: 'map-art.generate', input: { width: 1, height: 1, paletteId: 'smoke', pixels: [{ r: 255, g: 255, b: 255, a: 255 }] }, options: { palette: [{ block: { id: 'minecraft:white_concrete' }, color: { r: 255, g: 255, b: 255 } }] } }); assert.equal(mapEvents.at(-1).type, 'result');
 const materialEvents = []; const materialRegistry = createTaskRegistry((event) => materialEvents.push(event), createCoreRunner()); await materialRegistry.run({ id: 'materials', type: 'materials.analyze', input: grid, options: { inventory: {} } }); assert.equal(materialEvents.at(-1).output[0].missing, 1);
 const renderEvents = []; const renderRegistry = createTaskRegistry((event) => renderEvents.push(event), createCoreRunner()); await renderRegistry.run({ id: 'render', type: 'render.exterior', input: grid, options: { width: 32, height: 32 } }); assert.equal(renderEvents.at(-1).output.width, 32);
+const viewerEvents = []; const viewerRegistry = createTaskRegistry((event) => viewerEvents.push(event), createCoreRunner()); await viewerRegistry.run({ id: 'viewer', type: 'viewer.html', input: grid }); assert.match(viewerEvents.at(-1).output, /CraftAIB Viewer/);
 console.log('worker export task tests passed');
+
 
 
 
