@@ -18,6 +18,7 @@ const on = (selector, event, handler) => $(selector)?.addEventListener(event, ha
 on("#convertButton", "click", voxelConvert);
 on("#downloadButton", "click", downloadNBT);
 on("#downloadLitematicButton", "click", () => runEngineExport("litematic"));
+on("#downloadViewerButton", "click", () => runEngineExport("viewer"));
 on("#downloadSchematicButton", "click", () => runEngineExport("schematic"));
 on("#downloadGridButton", "click", downloadBlockGrid);
 on("#image-input", "change", imageUpdate);
@@ -261,8 +262,8 @@ function runEngineExport(format) {
         if (message.type === "progress") return;
         if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
         if (message.type === "result") {
-            const extension = format === "litematic" ? "litematic" : "schem";
-            const blob = new Blob([message.output], { type: "application/gzip" });
+            const extension = format === "litematic" ? "litematic" : format === "viewer" ? "html" : "schem";
+            const blob = new Blob([message.output], { type: format === "viewer" ? "text/html;charset=utf-8" : "application/gzip" });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
             setWorkspaceMessage(`${extension.toUpperCase()} exported.`); worker.terminate();
@@ -380,6 +381,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 

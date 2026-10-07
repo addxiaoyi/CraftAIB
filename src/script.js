@@ -467,7 +467,7 @@ function updateMaterialList() {
         totalAmount += materialList[key];
     }
 
-    for (const id of ["downloadButton", "downloadLitematicButton", "downloadSchematicButton", "downloadGridButton"]) {
+    for (const id of ["downloadButton", "downloadLitematicButton", "downloadViewerButton", "downloadSchematicButton", "downloadGridButton"]) {
         document.querySelector(`#${id}`).disabled = totalAmount == 0;
     }
     updateBlockTotal(totalAmount);
@@ -947,6 +947,7 @@ export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downlo
 // - Block minecraft version
 // - Eastereggs
 // - default pallette category selection
+
 
 
 
