@@ -8,6 +8,7 @@ import {
     updateTargetImage,
     voxelConvert,
 } from "./script.js";
+import { downloadProject, openProjectFile, restoreProjectFromStorage, saveProjectToStorage } from "./project-store.js";
 
 const DEFAULT_TARGET = "./res/upload.svg";
 const $ = (selector) => document.querySelector(selector);
@@ -25,6 +26,9 @@ on("#reset-image-mini", "click", resetImage);
 on("#reset-3d", "click", reset3D);
 on("#reset-3d-mini", "click", reset3D);
 on("#pixelart-checkbox", "change", updatePixelArtVisibility);
+on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
+on("#open-project", "click", () => $("#project-input")?.click());
+on("#project-input", "change", async (event) => { try { await openProjectFile(event.target.files[0]); applyProcessing(); setWorkspaceMessage("Project restored."); } catch (error) { setWorkspaceMessage(error.message, true); } });
 
 for (const slider of document.querySelectorAll("input[type=range]")) {
     slider.addEventListener("input", handleSliderInput);
@@ -88,7 +92,7 @@ function imageUpdate() {
             if (size) size.textContent = `${canvas.width} × ${canvas.height} px`;
             const thumb = $(".asset-thumb img");
             if (thumb) thumb.src = canvas.toDataURL("image/png");
-            dropZone?.classList.remove("is-empty");
+            dropZone?.classList.remove("is-empty"); saveProjectToStorage();
         };
         scaled.src = canvas.toDataURL("image/png");
     };
@@ -175,6 +179,9 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
+
+
 
 
 
