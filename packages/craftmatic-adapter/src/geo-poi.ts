@@ -1,7 +1,7 @@
 import { createGrid, type BlockGrid, type BlockState } from '@craftaib/core';
 import type { GeoPoint } from './geo.js';
 
-export type GeoPoi = { point: GeoPoint; kind: 'tree' | 'lamp' | 'bench' | 'water' | 'marker'; block?: BlockState; height?: number };
+type GeoPoi = { point: GeoPoint; kind: 'tree' | 'lamp' | 'bench' | 'water' | 'marker'; block?: BlockState; height?: number };
 export type GeoPoiSceneInput = { center: GeoPoint; width: number; length: number; pois: GeoPoi[]; ground?: BlockState };
 
 export function geoPoisToBlockGrid(input: GeoPoiSceneInput): BlockGrid {
@@ -12,3 +12,4 @@ export function geoPoisToBlockGrid(input: GeoPoiSceneInput): BlockGrid {
 }
 function defaultBlock(kind: GeoPoi['kind']): BlockState { if (kind === 'tree') return { id: 'minecraft:oak_log' }; if (kind === 'lamp') return { id: 'minecraft:lantern' }; if (kind === 'water') return { id: 'minecraft:water' }; if (kind === 'bench') return { id: 'minecraft:oak_slab' }; return { id: 'minecraft:gold_block' }; }
 function unique(cells: Array<{ x: number; y: number; z: number; block: BlockState; source: 'user' }>) { const seen = new Set<string>(); return cells.filter((cell) => { const key = `${cell.x}:${cell.y}:${cell.z}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
+

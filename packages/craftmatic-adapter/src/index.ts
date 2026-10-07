@@ -27,3 +27,4 @@ export * from './lego-resources.js';
 export * from './geo.js';
 export * from './geojson.js';
 
+export * from './geo-poi.js';
