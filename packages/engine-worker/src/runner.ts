@@ -10,6 +10,7 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
     if (task.type === 'geo.blockgrid') { return geoSceneToBlockGrid(task.input as any); }
+    if (task.type === 'lego.colors') { return defaultLDrawColorBlocks(); }
     if (task.type === 'lego.blockgrid') { return ldrawToBlockGrid((task.input as any)?.bricks ?? [], { colorBlocks: defaultLDrawColorBlocks(), ...(task.options as any) }); }
     if (task.type === 'lego.load') { const resource = (task.input as any)?.resource ?? task.input; return loadLegoModel(resource, async (url) => { const response = await fetch(url); if (!response.ok) throw new Error(`Unable to load LEGO model: ${response.status}`); return response.text(); }); }
     if (task.type === 'lego.resource.resolve') { const input = task.input as any; return { resource: input.resource, resolved: input.sources?.[input.resource.set_num] ?? input.sources?.[input.resource.set_num.replace(/-\d+$/, '')] ?? input.resource }; }
@@ -34,6 +35,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
