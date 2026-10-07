@@ -1,13 +1,6 @@
-import type { GeoRoad, GeoSceneInput } from './geo.js';
-
-export function geoJsonToScene(input: unknown, options: Omit<GeoSceneInput, 'roads'>): GeoSceneInput {
-  const root = input as any;
-  const features = root?.type === 'FeatureCollection' ? root.features ?? [] : root?.type === 'Feature' ? [root] : [];
-  const roads: GeoRoad[] = [];
-  for (const feature of features) {
-    const geometry = feature?.geometry;
-    if (geometry?.type === 'LineString') roads.push({ nodes: geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng })), surface: feature.properties?.surface, width: Number(feature.properties?.width) || undefined });
-    if (geometry?.type === 'MultiLineString') for (const line of geometry.coordinates) roads.push({ nodes: line.map(([lng, lat]: [number, number]) => ({ lat, lng })), surface: feature.properties?.surface, width: Number(feature.properties?.width) || undefined });
-  }
-  return { ...options, roads };
+import type { GeoPolygon, GeoRoad, GeoSceneInput } from './geo.js';
+export function geoJsonToScene(input: unknown, options: Omit<GeoSceneInput, 'roads' | 'polygons'>): GeoSceneInput {
+  const root = input as any; const features = root?.type === 'FeatureCollection' ? root.features ?? [] : root?.type === 'Feature' ? [root] : []; const roads: GeoRoad[] = []; const polygons: GeoPolygon[] = [];
+  for (const feature of features) { const geometry = feature?.geometry; const properties = feature?.properties ?? {}; const surface = properties.surface; const width = Number(properties.width) || undefined; if (geometry?.type === 'LineString') roads.push({ nodes: geometry.coordinates.map(([lng, lat]: [number, number]) => ({ lat, lng })), surface, width }); if (geometry?.type === 'MultiLineString') for (const line of geometry.coordinates) roads.push({ nodes: line.map(([lng, lat]: [number, number]) => ({ lat, lng })), surface, width }); if (geometry?.type === 'Polygon') polygons.push({ rings: geometry.coordinates.map((ring: [number, number][]) => ring.map(([lng, lat]) => ({ lat, lng }))), block: properties.block ? { id: properties.block } : undefined, y: Number(properties.y) || undefined }); if (geometry?.type === 'MultiPolygon') for (const polygon of geometry.coordinates) polygons.push({ rings: polygon.map((ring: [number, number][]) => ring.map(([lng, lat]) => ({ lat, lng }))), block: properties.block ? { id: properties.block } : undefined, y: Number(properties.y) || undefined }); }
+  return { ...options, roads, polygons };
 }
