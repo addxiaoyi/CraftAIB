@@ -220,14 +220,20 @@ function drawCube(context, x, y, size, color) {
 }
 function blockPreviewColor(id) { let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; const hue = hash % 360; return { top: `hsl(${hue} 55% 58%)`, left: `hsl(${hue} 48% 38%)`, right: `hsl(${hue} 50% 46%)` }; }
 function runMapArtMode() {
-    const pixels = window.craftaibPixelMap; const data = getVoxelExportData();
-    if (!pixels || !data) { setWorkspaceMessage("Run voxelization once before generating Map Art.", true); return; }
+    const sourcePixels = window.craftaibPixelMap; const data = getVoxelExportData();
+    if (!sourcePixels || !data) { setWorkspaceMessage("Run voxelization once before generating Map Art.", true); return; }
+    const pixels = resizePixelMap(sourcePixels, Number($("#map-art-width")?.value ?? 128), Number($("#map-art-height")?.value ?? 128));
     const palette = data.palette.map((entry) => ({ block: { id: `minecraft:${entry[0]}` }, color: { r: entry[1] ?? 0, g: entry[2] ?? 0, b: entry[3] ?? 0 } }));
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `map-art-${Date.now()}`;
     setWorkspaceMessage("Generating Map Art...");
     worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedGrid(message.output); renderImportedMaterials(message.output); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
     worker.onerror = () => { setWorkspaceMessage("Map Art worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: $("#map-art-dither")?.checked ?? true, staircasing: $("#map-art-staircase")?.value ?? "baseline" } });
+}
+function resizePixelMap(source, width, height) {
+    const targetWidth = Math.max(1, Math.min(512, Math.round(width))); const targetHeight = Math.max(1, Math.min(512, Math.round(height))); const pixels = [];
+    for (let y = 0; y < targetHeight; y += 1) for (let x = 0; x < targetWidth; x += 1) { const sx = Math.min(source.width - 1, Math.floor(x * source.width / targetWidth)); const sy = Math.min(source.height - 1, Math.floor(y * source.height / targetHeight)); pixels.push(source.pixels[sy * source.width + sx]); }
+    return { width: targetWidth, height: targetHeight, paletteId: source.paletteId, pixels };
 }
 function runEngineExport(format) {
     const data = getVoxelExportData();
@@ -360,6 +366,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
