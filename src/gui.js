@@ -45,6 +45,8 @@ on("#open-schematic", "click", () => $("#schematic-input")?.click());
 on("#open-litematic", "click", () => $("#litematic-input")?.click());
 on("#open-grid", "click", () => $("#grid-input")?.click());
 on("#open-geojson", "click", () => $("#geojson-input")?.click());
+on("#open-ldraw", "click", () => $("#ldraw-input")?.click());
+on("#ldraw-input", "change", importLDrawFile);
 on("#geojson-input", "change", importGeoJsonFile);
 on("#grid-input", "change", importGridFile);
 on("#litematic-input", "change", importLitematicFile);
@@ -107,6 +109,14 @@ if (dropZone) {
     });
 }
 
+async function importLDrawFile(event) {
+    const file = event.target.files?.[0]; if (!file) return;
+    try {
+        const text = await file.text(); const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `ldraw-${Date.now()}`;
+        setWorkspaceMessage("Reading LDraw model..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); rerenderImportedGrid(); document.body.dataset.mode = "lego"; setWorkspaceMessage("LDraw model imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("LDraw worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "lego.blockgrid", input: { bricks: (await runLDrawParse(text)).bricks }, options: { lduPerBlock: 20, defaultBlock: { id: "minecraft:stone" } } });
+    } catch (error) { setWorkspaceMessage(error.message, true); }
+}
+async function runLDrawParse(text) { return new Promise((resolve, reject) => { const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `ldraw-parse-${Date.now()}`; worker.onmessage = (event) => { if (event.data.taskId !== taskId) return; if (event.data.type === "result") { resolve(event.data.output); worker.terminate(); } if (event.data.type === "error") { reject(new Error(event.data.message)); worker.terminate(); } }; worker.onerror = () => { reject(new Error("LDraw parser worker failed.")); worker.terminate(); }; worker.postMessage({ id: taskId, type: "lego.parse", input: text }); }); }
 async function importGeoJsonFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
@@ -417,6 +427,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
