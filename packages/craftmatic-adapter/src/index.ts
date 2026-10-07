@@ -17,3 +17,4 @@ export function toCraftmaticSchematic(grid: BlockGrid): SchematicLike {
 export function toCraftmaticScene(grid: BlockGrid) { validateGrid(grid); return { version: 1 as const, grids: [grid], metadata: { adapter: 'craftmatic', renderer: 'three' } }; }
 export * from './schematic.js';
 export * from './parse.js';
+export * from './litematic-parse.js';
