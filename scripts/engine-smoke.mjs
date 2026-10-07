@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
+import { analyzeMaterials, countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
 import { fromVoxelartcraft } from '../packages/voxelartcraft-adapter/dist/index.js';
 import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
 import { fromCraftmaticSchematic, parseLitematicaBytes, parseSchematicBytes, serializeSchematic, toCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
 
 const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'stone' } }], { width: 1, height: 1, length: 1 });
-assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
+assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); const gaps = analyzeMaterials(grid, { 'minecraft:stone': 0 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(gaps[0].missing, 1); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
 const project = parseProject(serializeProject(createProject('Smoke'))); assert.equal(project.name, 'Smoke');
 const voxel = fromVoxelartcraft({ blocks: [[0, 0, 0, -2, 1, 4]], palette: [['stone', 0, 0, 0, 0]], materials: [0] }); assert.deepEqual([voxel.cells[0].x, voxel.cells[0].y, voxel.cells[0].z], [0, 0, 0]);
 const map = fromCartographerCells([{ id: 'minecraft:glass', x: 0, y: 0, z: 0 }], { width: 1, height: 1 }); assert.equal(map.cells[0].source, 'cartographer');
@@ -18,6 +18,7 @@ const schemRoundTrip = toCraftmaticSchematic(schem); assert.equal(schemRoundTrip
 const schemBytes = await serializeSchematic(schem); assert.equal(schemBytes[0], 0x1f); assert.equal(schemBytes[1], 0x8b);
 const parsedSchem = await parseSchematicBytes(schemBytes); assert.equal(parsedSchem.width, 1); assert.equal(parsedSchem.cells[0].block.id, 'minecraft:oak_planks');
 console.log('core engine adapter tests passed');
+
 
 
 
