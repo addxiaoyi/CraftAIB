@@ -32,6 +32,7 @@ on("#grid-yaw", "input", () => rerenderImportedGrid());
 on("#grid-cutaway", "input", () => rerenderImportedGrid());
 on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#analyze-materials", "click", analyzeImportedMaterials);
+on("#export-materials", "click", exportImportedMaterials);
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
@@ -136,6 +137,15 @@ async function importSchematicFile(event) {
     };
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
+}
+function exportImportedMaterials() {
+    const grid = window.craftaibImportedGrid;
+    if (!grid) { setWorkspaceMessage("Import a Schematic or Litematic first.", true); return; }
+    const counts = new Map();
+    for (const cell of grid.cells ?? []) { const id = cell.block?.id ?? "minecraft:air"; counts.set(id, (counts.get(id) ?? 0) + 1); }
+    const rows = ["block,required,available,missing,substitutes"];
+    for (const [id, required] of counts) { const input = document.querySelector(`[data-material-id="${id}"]`); const available = Math.max(0, Number(input?.value) || 0); rows.push([id, required, available, Math.max(0, required - available), ""].join(",")); }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "craftaib-materials.csv"; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Materials exported.");
 }
 function analyzeImportedMaterials() {
     const grid = window.craftaibImportedGrid;
@@ -324,6 +334,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
