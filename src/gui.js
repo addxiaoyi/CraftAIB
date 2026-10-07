@@ -1,7 +1,7 @@
 import {
     applyProcessing,
     downloadBlockGrid,
-    downloadNBT, downloadLitematic,
+    downloadNBT, downloadLitematic, getVoxelExportData,
     downloadSchematic,
     stopVoxelization,
     updatePalette,
@@ -9,6 +9,7 @@ import {
     voxelConvert,
 } from "./script.js";
 import { downloadProject, openProjectFile, restoreProjectFromStorage, saveProjectToStorage } from "./project-store.js";
+import { createEngineGrid } from "./exports.js";
 
 const DEFAULT_TARGET = "./res/upload.svg";
 const $ = (selector) => document.querySelector(selector);
@@ -16,8 +17,8 @@ const on = (selector, event, handler) => $(selector)?.addEventListener(event, ha
 
 on("#convertButton", "click", voxelConvert);
 on("#downloadButton", "click", downloadNBT);
-on("#downloadLitematicButton", "click", downloadLitematic);
-on("#downloadSchematicButton", "click", downloadSchematic);
+on("#downloadLitematicButton", "click", () => runEngineExport("litematic"));
+on("#downloadSchematicButton", "click", () => runEngineExport("schematic"));
 on("#downloadGridButton", "click", downloadBlockGrid);
 on("#image-input", "change", imageUpdate);
 on("#discretize-checkbox", "change", applyProcessing);
@@ -71,6 +72,28 @@ if (dropZone) {
     });
 }
 
+function runEngineExport(format) {
+    const data = getVoxelExportData();
+    if (!data) return;
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+    const taskId = `export-${format}-${Date.now()}`;
+    setWorkspaceMessage(`Exporting ${format}...`);
+    worker.onmessage = (event) => {
+        const message = event.data;
+        if (message.taskId !== taskId) return;
+        if (message.type === "progress") return;
+        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+        if (message.type === "result") {
+            const extension = format === "litematic" ? "litematic" : "schem";
+            const blob = new Blob([message.output], { type: "application/gzip" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
+            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); worker.terminate();
+        }
+    };
+    worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: `${format}.serialize`, input: createEngineGrid(data.blocks, data.palette, data.materials) });
+}
 function imageUpdate() {
     stopVoxelization();
     const input = $("#image-input");
@@ -180,6 +203,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 

@@ -832,6 +832,10 @@ function downloadBlockGrid() {
     downloadFile(createGridFile(blocks, palette, materials));
 }
 
+function getVoxelExportData() {
+    if (!requireVoxelData()) return null;
+    return { blocks, palette, materials };
+}
 async function downloadLitematic() {
     if (!requireVoxelData()) return;
     downloadFile(await createLitematicFile(blocks, palette, materials));
@@ -916,7 +920,7 @@ async function main() {
 
 main();
 
-export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downloadNBT, downloadLitematic, downloadSchematic, downloadBlockGrid, stopVoxelization };
+export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downloadNBT, downloadLitematic, downloadSchematic, downloadBlockGrid, getVoxelExportData, stopVoxelization };
 
 
 //TODO:
@@ -943,6 +947,7 @@ export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downlo
 // - Block minecraft version
 // - Eastereggs
 // - default pallette category selection
+
 
 
 

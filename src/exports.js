@@ -71,6 +71,19 @@ function normalizeBlocks(blocks, palette, materials) {
   return { width: maxX - minX + 1, height: maxY - minY + 1, length: maxZ - minZ + 1, cells };
 }
 
+function createEngineGrid(blocks, palette, materials) {
+  const grid = normalizeBlocks(blocks, palette, materials);
+  const paletteStates = [{ id: "minecraft:air" }];
+  const paletteIndex = new Map([["minecraft:air", 0]]);
+  const cells = grid.cells.map((cell) => {
+    if (!paletteIndex.has(cell.id)) {
+      paletteIndex.set(cell.id, paletteStates.length);
+      paletteStates.push({ id: cell.id });
+    }
+    return { x: cell.x, y: cell.y, z: cell.z, block: { id: cell.id }, source: "voxelartcraft" };
+  });
+  return { version: 1, width: grid.width, height: grid.height, length: grid.length, cells, palette: paletteStates, coordinateSystem: "xyz", origin: { x: 0, y: 0, z: 0 } };
+}
 function createGridExport(blocks, palette, materials) {
   const grid = normalizeBlocks(blocks, palette, materials);
   return { version: 1, source: "voxelartcraft", ...grid };
@@ -137,4 +150,5 @@ function createGridFile(blocks, palette, materials) {
   return new File([JSON.stringify(createGridExport(blocks, palette, materials), null, 2)], "craftaib-block-grid.json", { type: "application/json" });
 }
 
-export { createGridExport, createGridFile, createSchematicFile };
+export { createEngineGrid, createGridExport, createGridFile, createSchematicFile };
+
