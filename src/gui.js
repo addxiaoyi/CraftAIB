@@ -87,6 +87,7 @@ async function importSchematicFile(event) {
         if (message.type === "result") {
             window.craftaibImportedGrid = message.output;
             renderImportedGrid(message.output);
+            renderImportedMaterials(message.output);
             const size = $("#canvas-size");
             if (size) size.textContent = `${message.output.width} × ${message.output.height} × ${message.output.length} blocks`;
             setWorkspaceMessage("Schematic imported.");
@@ -95,6 +96,13 @@ async function importSchematicFile(event) {
     };
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
+}
+function renderImportedMaterials(grid) {
+    const panel = $("#imported-materials");
+    if (!panel) return;
+    const counts = new Map();
+    for (const cell of grid.cells ?? []) { const id = cell.block?.id ?? "minecraft:air"; counts.set(id, (counts.get(id) ?? 0) + 1); }
+    panel.innerHTML = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id, count]) => `<div class="material-row"><span>${id.replace("minecraft:", "")}</span><b>${count}</b></div>`).join("");
 }
 function renderImportedGrid(grid) {
     const canvas = $("#canvas");
@@ -141,7 +149,7 @@ function runEngineExport(format) {
         }
     };
     worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
-    worker.postMessage({ id: taskId, type: `${format}.serialize`, input: createEngineGrid(data.blocks, data.palette, data.materials) });
+    worker.postMessage({ id: taskId, type: `${format}.serialize`, input });
 }
 function imageUpdate() {
     stopVoxelization();
@@ -252,6 +260,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
