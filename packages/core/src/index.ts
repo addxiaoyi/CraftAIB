@@ -4,3 +4,4 @@ export * from './project.js';
 export * from './materials.js';
 export * from './render.js';
 export * from './editing.js';
+export * from './merge.js';
