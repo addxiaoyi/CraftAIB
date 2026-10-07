@@ -1,5 +1,5 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
-import { analyzeMaterials, applyGridEdit, countMaterials, renderCutaway, renderExterior, renderFloor, validateGrid } from '@craftaib/core';
+import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, renderCutaway, renderExterior, renderFloor, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
 import { createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
@@ -9,6 +9,7 @@ export function createCoreRunner(): EngineRunner {
     const grid = task.input as BlockGrid;
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
+    if (task.type === 'scene.merge') { return mergeScenes((task.input as any)?.scenes ?? [], (task.options as any)?.offsets); }
     if (task.type === 'geo.blockgrid') { return geoSceneToBlockGrid(task.input as any); }
     if (task.type === 'lego.colors') { return defaultLDrawColorBlocks(); }
     if (task.type === 'lego.blockgrid') { return ldrawToBlockGrid((task.input as any)?.bricks ?? [], { colorBlocks: defaultLDrawColorBlocks(), ...(task.options as any) }); }
@@ -35,6 +36,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
