@@ -1,5 +1,5 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
-import { analyzeMaterials, countMaterials, validateGrid } from '@craftaib/core';
+import { analyzeMaterials, countMaterials, renderCutaway, renderExterior, renderFloor, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
 import { parseLitematicaBytes, parseSchematicBytes, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
@@ -10,6 +10,9 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'grid.validate') { const valid = validateGrid(grid); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'validated' }); return { ok: true, width: valid.width, height: valid.height, length: valid.length, cells: valid.cells.length }; }
     if (task.type === 'materials.analyze') { validateGrid(grid); return analyzeMaterials(grid, (task.options as any)?.inventory ?? {}, (task.options as any)?.rules ?? {}); }
     if (task.type === 'materials.count') { validateGrid(grid); if (signal.aborted) throw new Error('Task cancelled.'); return Object.fromEntries(countMaterials(grid)); }
+    if (task.type === 'render.floor') { validateGrid(grid); return renderFloor(grid, task.options as any); }
+    if (task.type === 'render.cutaway') { validateGrid(grid); return renderCutaway(grid, task.options as any); }
+    if (task.type === 'render.exterior') { validateGrid(grid); return renderExterior(grid, task.options as any); }
     if (task.type === 'map-art.generate') { emit({ type: 'progress', taskId: task.id, value: 0.1, stage: 'matching palette' }); const result = generateMapArt(task.input as any, task.options as any); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'generated' }); return result; }
     if (task.type === 'litematic.parse') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'reading litematic' }); const result = await parseLitematicaBytes(task.input as Uint8Array); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'parsed' }); return result; }
     if (task.type === 'schematic.parse') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'reading schematic' }); const result = await parseSchematicBytes(task.input as Uint8Array); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'parsed' }); return result; }
@@ -18,6 +21,8 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
+
 
 
 
