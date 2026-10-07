@@ -22,3 +22,4 @@ export * from './viewer.js';
 export * from './glb.js';
 export * from './lego.js';
 export * from './ldraw.js';
+export * from './lego-scene.js';
