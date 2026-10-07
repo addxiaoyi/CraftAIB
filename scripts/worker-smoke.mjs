@@ -13,9 +13,11 @@ const mapEvents = []; const mapRegistry = createTaskRegistry((event) => mapEvent
 const materialEvents = []; const materialRegistry = createTaskRegistry((event) => materialEvents.push(event), createCoreRunner()); await materialRegistry.run({ id: 'materials', type: 'materials.analyze', input: grid, options: { inventory: {} } }); assert.equal(materialEvents.at(-1).output[0].missing, 1);
 const renderEvents = []; const renderRegistry = createTaskRegistry((event) => renderEvents.push(event), createCoreRunner()); await renderRegistry.run({ id: 'render', type: 'render.exterior', input: grid, options: { width: 32, height: 32 } }); assert.equal(renderEvents.at(-1).output.width, 32);
 const editEvents = []; const editRegistry = createTaskRegistry((event) => editEvents.push(event), createCoreRunner()); await editRegistry.run({ id: 'edit', type: 'grid.edit', input: grid, options: { type: 'replace', min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 }, from: { id: 'minecraft:stone' }, to: { id: 'minecraft:gold_block' } } }); assert.equal(editEvents.at(-1).output.cells[0].block.id, 'minecraft:gold_block');
+const legoEvents = []; const legoRegistry = createTaskRegistry((event) => legoEvents.push(event), createCoreRunner()); await legoRegistry.run({ id: 'lego', type: 'lego.search', input: { sets: [{ set_num: '10354-1', name: 'Hogwarts Castle', year: 2026, theme_id: 1, num_parts: 5000 }] }, options: { query: 'hogwarts', limit: 5 } }); assert.equal(legoEvents.at(-1).output[0].set_num, '10354-1');
 const viewerEvents = []; const viewerRegistry = createTaskRegistry((event) => viewerEvents.push(event), createCoreRunner()); await viewerRegistry.run({ id: 'viewer', type: 'viewer.html', input: grid }); assert.match(viewerEvents.at(-1).output, /CraftAIB Viewer/);
 const glbEvents = []; const glbRegistry = createTaskRegistry((event) => glbEvents.push(event), createCoreRunner()); await glbRegistry.run({ id: 'glb', type: 'glb.serialize', input: grid }); assert.equal(new TextDecoder().decode(glbEvents.at(-1).output.slice(0, 4)), 'glTF');
 console.log('worker export task tests passed');
+
 
 
 
