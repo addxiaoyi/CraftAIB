@@ -15,7 +15,7 @@
   <main class="studio-shell">
     <header class="topbar">
       <div class="brand-lockup"><img src="res/logo.png" alt="CraftAIB" class="brand-mark" /><div><div class="brand-name">CraftAIB</div><div class="brand-subtitle">Minimal Voxel Studio</div></div></div>
-      <nav class="topnav" aria-label="Main navigation"><button class="nav-item is-active" type="button">Edit</button><button class="nav-item" type="button">Preview</button><button class="nav-item" type="button">Assets</button><button class="nav-item" type="button">Settings</button></nav>
+      <nav class="topnav" aria-label="Main navigation"><button class="nav-item is-active" data-mode="image" type="button">Image</button><button class="nav-item" data-mode="map-art" type="button">Map Art</button><button class="nav-item" data-mode="voxel" type="button">Voxel</button><button class="nav-item" data-mode="schematic" type="button">Schematic</button><button class="nav-item" data-mode="viewer" type="button">Viewer</button><button class="nav-item" data-mode="materials" type="button">Materials</button><button class="nav-item" data-mode="settings" type="button">Settings</button></nav>
       <div class="topbar-meta"><span class="save-state"><span class="status-dot"></span> Auto-saved locally</span><button class="quiet-button" type="button" id="open-litematic">Open .LITEMATIC</button><input id="litematic-input" type="file" accept=".litematic,application/octet-stream" hidden><button class="quiet-button" type="button" id="open-schematic">Open .SCHEM</button><input id="schematic-input" type="file" accept=".schem,application/octet-stream" hidden><button class="quiet-button" type="button" id="open-project">Open</button><button class="quiet-button" type="button" id="save-project">Save</button><input id="project-input" type="file" accept="application/json" hidden><span class="clock">12:34</span><a href="https://github.com/addxiaoyi/CraftAIB" target="_blank" rel="noreferrer" class="icon-link" aria-label="Open GitHub">↗</a></div>
     </header>
     <div class="workspace">
@@ -29,6 +29,7 @@
   </main>
 </body>
 </html>
+
 
 
 

@@ -56,6 +56,8 @@ for (const nav of document.querySelectorAll(".nav-item")) {
     nav.addEventListener("click", () => {
         document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("is-active"));
         nav.classList.add("is-active");
+        document.body.dataset.mode = nav.dataset.mode ?? "image";
+        setWorkspaceMessage(`${nav.textContent.trim()} mode selected.`);
     });
 }
 
@@ -348,6 +350,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
