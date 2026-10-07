@@ -24,3 +24,4 @@ export * from './lego.js';
 export * from './ldraw.js';
 export * from './lego-scene.js';
 export * from './lego-resources.js';
+export * from './geo.js';
