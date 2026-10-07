@@ -28,3 +28,4 @@ export * from './geo.js';
 export * from './geojson.js';
 
 export * from './geo-poi.js';
+export * from './lego-colors.js';
