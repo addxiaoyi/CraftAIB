@@ -17,5 +17,7 @@ const legoEvents = []; const legoRegistry = createTaskRegistry((event) => legoEv
 const ldrawEvents = []; const ldrawRegistry = createTaskRegistry((event) => ldrawEvents.push(event), createCoreRunner()); await ldrawRegistry.run({ id: 'ldraw', type: 'lego.parse', input: `0 FILE model.ldr\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat` }); assert.equal(ldrawEvents.at(-1).output.bricks[0].part, '3001.dat');
 const legoSceneEvents = []; const legoSceneRegistry = createTaskRegistry((event) => legoSceneEvents.push(event), createCoreRunner()); await legoSceneRegistry.run({ id: 'lego-scene', type: 'lego.scene', input: ldrawEvents.at(-1).output }); assert.equal(legoSceneEvents.at(-1).output.metadata.brickCount, 1);
 const resourceEvents = []; const resourceRegistry = createTaskRegistry((event) => resourceEvents.push(event), createCoreRunner()); await resourceRegistry.run({ id: 'resource', type: 'lego.resource.resolve', input: { resource: { set_num: '10354-1', source: 'rebrickable' }, sources: { '10354': { set_num: '10354-1', source: 'omr', modelUrl: '/omr/10354.ldr' } } } }); assert.equal(resourceEvents.at(-1).output.resolved.source, 'omr');
+const loadEvents = []; const loadRegistry = createTaskRegistry((event) => loadEvents.push(event), createCoreRunner()); const ldr = '1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat'; const dataUrl = 'data:text/plain,' + encodeURIComponent(ldr); await loadRegistry.run({ id: 'load', type: 'lego.load', input: { resource: { set_num: '3001-1', source: 'local', modelUrl: dataUrl } } }); assert.equal(loadEvents.at(-1).output.bricks.length, 1);
+
 
 
