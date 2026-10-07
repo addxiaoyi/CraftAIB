@@ -20,3 +20,4 @@ export * from './parse.js';
 export * from './litematic-parse.js';
 export * from './viewer.js';
 export * from './glb.js';
+export * from './lego.js';
