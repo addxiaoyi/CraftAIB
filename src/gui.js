@@ -34,6 +34,8 @@ on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
+on("#open-litematic", "click", () => $("#litematic-input")?.click());
+on("#litematic-input", "change", importLitematicFile);
 on("#schematic-input", "change", importSchematicFile);
 on("#project-input", "change", async (event) => { try { await openProjectFile(event.target.files[0]); applyProcessing(); setWorkspaceMessage("Project restored."); } catch (error) { setWorkspaceMessage(error.message, true); } });
 
@@ -91,6 +93,26 @@ if (dropZone) {
     });
 }
 
+async function importLitematicFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+    const taskId = `litematic-parse-${Date.now()}`;
+    setWorkspaceMessage("Reading Litematic...");
+    worker.onmessage = (messageEvent) => {
+        const message = messageEvent.data;
+        if (message.taskId !== taskId) return;
+        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+        if (message.type === "result") {
+            window.craftaibImportedGrid = message.output;
+            renderImportedGrid(message.output); renderImportedMaterials(message.output);
+            const size = $("#canvas-size"); if (size) size.textContent = `${message.output.width} × ${message.output.height} × ${message.output.length} blocks`;
+            setWorkspaceMessage("Litematic imported."); worker.terminate();
+        }
+    };
+    worker.onerror = () => { setWorkspaceMessage("Litematic import worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: "litematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
+}
 async function importSchematicFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -280,6 +302,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
