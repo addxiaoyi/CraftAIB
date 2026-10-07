@@ -326,7 +326,7 @@ function runEngineExport(format) {
         }
     };
     worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
-    worker.postMessage({ id: taskId, type: `${format}.serialize`, input });
+    worker.postMessage({ id: taskId, type: "export", input, options: { format: format === "viewer" ? "html" : format } });
 }
 function imageUpdate() {
     stopVoxelization();
@@ -441,6 +441,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
