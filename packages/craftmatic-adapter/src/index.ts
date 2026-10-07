@@ -18,3 +18,4 @@ export function toCraftmaticScene(grid: BlockGrid) { validateGrid(grid); return 
 export * from './schematic.js';
 export * from './parse.js';
 export * from './litematic-parse.js';
+export * from './viewer.js';
