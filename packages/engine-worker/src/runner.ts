@@ -20,8 +20,20 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'lego.parse') { return parseLDraw(String(task.input ?? '')); }
     if (task.type === 'lego.search') { return searchLegoCatalog(task.input as any, String((task.options as any)?.query ?? ''), Number((task.options as any)?.limit ?? 24)); }
     if (task.type === 'grid.edit') { return applyGridEdit(grid, task.options as any); }
-    if (task.type === 'export') { const format = (task.options as any)?.format; if (format === 'schem') return serializeSchematic(grid); if (format === 'litematic') return serializeLitematica(grid, (task.options as any)); if (format === 'glb') return serializeGlb(grid); if (format === 'html') return createHtmlViewer(grid); throw new Error(`Unsupported export format: ${format}`); }
-    if (task.type === 'grid.validate') { const valid = validateGrid(grid); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'validated' }); return { ok: true, width: valid.width, height: valid.height, length: valid.length, cells: valid.cells.length }; }
+    if (task.type === 'export') {
+      const format = (task.options as any)?.format;
+      validateGrid(grid);
+      emit({ type: 'progress', taskId: task.id, value: 0.2, stage: `encoding ${format}` });
+      if (signal.aborted) throw new Error('Task cancelled.');
+      let output: unknown;
+      if (format === 'schem') output = await serializeSchematic(grid);
+      else if (format === 'litematic') output = await serializeLitematica(grid, (task.options as any));
+      else if (format === 'glb') output = serializeGlb(grid);
+      else if (format === 'html') output = createHtmlViewer(grid);
+      else throw new Error(`Unsupported export format: ${format}`);
+      emit({ type: 'progress', taskId: task.id, value: 1, stage: 'exported' });
+      return output;
+    }    if (task.type === 'grid.validate') { const valid = validateGrid(grid); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'validated' }); return { ok: true, width: valid.width, height: valid.height, length: valid.length, cells: valid.cells.length }; }
     if (task.type === 'materials.analyze') { validateGrid(grid); return analyzeMaterials(grid, (task.options as any)?.inventory ?? {}, (task.options as any)?.rules ?? {}); }
     if (task.type === 'materials.count') { validateGrid(grid); if (signal.aborted) throw new Error('Task cancelled.'); return Object.fromEntries(countMaterials(grid)); }
     if (task.type === 'glb.serialize') { validateGrid(grid); return serializeGlb(grid); }
@@ -37,6 +49,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
