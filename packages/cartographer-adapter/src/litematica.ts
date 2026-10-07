@@ -1,33 +1,22 @@
 import type { BlockGrid } from '@craftaib/core';
-
-export type LitematicaSchema = {
-  name: string;
-  value: Record<string, unknown>;
-};
-
+export type LitematicaSchema = { name: string; value: Record<string, any> };
 export type LitematicaOptions = { name?: string; author?: string; description?: string };
-
 export function generateLitematicaSchema(grid: BlockGrid, options: LitematicaOptions = {}): LitematicaSchema {
   if (!grid.cells.length) throw new Error('Cannot generate Litematica from an empty grid.');
-  const palette = [{ Name: { type: 'string', value: 'minecraft:air' } }];
-  const paletteIndex = new Map<string, number>([['minecraft:air', 0]]);
-  for (const cell of grid.cells) {
-    const key = stateKey(cell.block.id, cell.block.properties);
-    if (paletteIndex.has(key)) continue;
-    paletteIndex.set(key, palette.length);
-    palette.push({ Name: { type: 'string', value: cell.block.id }, ...(cell.block.properties ? { Properties: { type: 'compound', value: Object.fromEntries(Object.entries(cell.block.properties).map(([name, value]) => [name, { type: 'string', value }])) } } : {}) });
-  }
-  const states = new Array(grid.width * grid.height * grid.length).fill(0);
-  for (const cell of grid.cells) states[(cell.y * grid.length + cell.z) * grid.width + cell.x] = paletteIndex.get(stateKey(cell.block.id, cell.block.properties)) ?? 0;
-  const bits = Math.max(2, Math.ceil(Math.log2(palette.length)));
-  const words = encodeLongArray(states, bits);
+  const palette = [{ Name: { type: 'string', value: 'minecraft:air' } }]; const paletteIndex = new Map<string, number>([['minecraft:air', 0]]);
+  for (const cell of grid.cells) { const key = stateKey(cell.block.id, cell.block.properties); if (paletteIndex.has(key)) continue; paletteIndex.set(key, palette.length); palette.push({ Name: { type: 'string', value: cell.block.id }, ...(cell.block.properties ? { Properties: { type: 'compound', value: Object.fromEntries(Object.entries(cell.block.properties).map(([name, value]) => [name, { type: 'string', value }])) } } : {}) }); }
+  const states = new Array(grid.width * grid.height * grid.length).fill(0); for (const cell of grid.cells) states[(cell.y * grid.length + cell.z) * grid.width + cell.x] = paletteIndex.get(stateKey(cell.block.id, cell.block.properties)) ?? 0;
+  const bits = Math.max(2, Math.ceil(Math.log2(palette.length))); const words = encodeLongArray(states, bits);
   return { name: '', value: { MinecraftDataVersion: intTag(2584), Version: intTag(5), Metadata: compound({ TimeCreated: longTag([0, 0]), TimeModified: longTag([0, 0]), EnclosingSize: compound({ x: intTag(grid.width), y: intTag(grid.height), z: intTag(grid.length) }), Description: stringTag(options.description ?? ''), RegionCount: intTag(1), TotalBlocks: intTag(grid.cells.length), Author: stringTag(options.author ?? ''), TotalVolume: intTag(grid.width * grid.height * grid.length), Name: stringTag(options.name ?? '') }), Regions: compound({ map: compound({ BlockStates: { type: 'longArray', value: words }, BlockStatePalette: { type: 'list', value: { type: 'compound', value: palette } }, Position: compound({ x: intTag(0), y: intTag(0), z: intTag(0) }), Size: compound({ x: intTag(grid.width), y: intTag(grid.height), z: intTag(grid.length) }), PendingBlockTicks: emptyList(), PendingFluidTicks: emptyList(), TileEntities: emptyList(), Entities: emptyList() }) }) } };
 }
-
+export async function serializeLitematica(grid: BlockGrid, options: LitematicaOptions = {}): Promise<Uint8Array> { const schema = generateLitematicaSchema(grid, options); return gzip(encodeCompound(schema.name, schema.value)); }
 function stateKey(id: string, properties?: Record<string, string>) { return `${id}|${Object.entries(properties ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(';')}`; }
 function encodeLongArray(states: number[], bits: number): bigint[] { const perWord = Math.floor(64 / bits); const words = Array.from({ length: Math.ceil(states.length / perWord) }, () => 0n); states.forEach((state, index) => { const bit = BigInt((index % perWord) * bits); words[Math.floor(index / perWord)] |= BigInt(state) << bit; }); return words; }
-const intTag = (value: number) => ({ type: 'int', value });
-const stringTag = (value: string) => ({ type: 'string', value });
-const longTag = (value: [number, number]) => ({ type: 'long', value });
-const compound = (value: Record<string, unknown>) => ({ type: 'compound', value });
-const emptyList = () => ({ type: 'list', value: { type: 'end', value: [] } });
+const intTag = (value: number) => ({ type: 'int', value }); const stringTag = (value: string) => ({ type: 'string', value }); const longTag = (value: [number, number]) => ({ type: 'long', value }); const compound = (value: Record<string, unknown>) => ({ type: 'compound', value }); const emptyList = () => ({ type: 'list', value: { type: 'end', value: [] } });
+const TAG: Record<string, number> = { byte: 1, short: 2, int: 3, long: 4, float: 5, double: 6, byteArray: 7, string: 8, list: 9, compound: 10, intArray: 11, longArray: 12 };
+class Writer { bytes: number[] = []; byte(v: number) { this.bytes.push(v & 255); } short(v: number) { this.byte(v >> 8); this.byte(v); } int(v: number) { this.byte(v >> 24); this.byte(v >> 16); this.byte(v >> 8); this.byte(v); } long(v: bigint) { for (let shift = 56n; shift >= 0n; shift -= 8n) this.byte(Number((v >> shift) & 255n)); } raw(values: Uint8Array | number[]) { for (const value of values) this.byte(value); } string(value: string) { const bytes = new TextEncoder().encode(value); this.short(bytes.length); this.raw(bytes); } result() { return new Uint8Array(this.bytes); } }
+function encodeCompound(name: string, value: Record<string, any>) { const writer = new Writer(); writer.byte(TAG.compound); writer.string(name); encodeCompoundPayload(writer, value); return writer.result(); }
+function encodeCompoundPayload(writer: Writer, value: Record<string, any>) { for (const [name, tag] of Object.entries(value)) { writer.byte(TAG[tag.type]); writer.string(name); encodePayload(writer, tag); } writer.byte(0); }
+function encodePayload(writer: Writer, tag: any) { switch (tag.type) { case 'string': writer.string(tag.value); break; case 'int': writer.int(tag.value); break; case 'long': writer.long((BigInt(tag.value[0]) << 32n) | BigInt(tag.value[1] >>> 0)); break; case 'compound': encodeCompoundPayload(writer, tag.value); break; case 'list': writer.byte(TAG[tag.value.type]); writer.int(tag.value.value.length); for (const child of tag.value.value) encodePayload(writer, child); break; case 'longArray': writer.int(tag.value.length); for (const value of tag.value) writer.long(BigInt.asIntN(64, BigInt(value))); break; default: throw new Error(`Unsupported NBT tag: ${tag.type}`); } }
+async function gzip(bytes: Uint8Array): Promise<Uint8Array> { if (typeof CompressionStream === 'undefined') throw new Error('CompressionStream is required to serialize Litematica.'); return new Uint8Array(await new Response(new Blob([bytes.buffer as ArrayBuffer]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer()); }
+
