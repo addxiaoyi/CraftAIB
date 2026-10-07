@@ -1,16 +1,16 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { deflateSync } from 'node:zlib';
-import { countMaterials, renderCutaway, renderExterior, renderFloor, validateGrid, type BlockGrid, type RenderImage } from '@craftaib/core';
+import { countMaterials, mergeGrids, renderCutaway, renderExterior, renderFloor, validateGrid, type BlockGrid, type RenderImage } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
 import { createHtmlViewer, geoJsonToScene, geoSceneToBlockGrid, ldrawToBlockGrid, parseLDraw, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 const [, , command, input, output, extra] = process.argv;
-if (!command || command === '--help') { console.log('craftaib grid validate <grid.json> | materials <grid.json> [output.json] | export <format> <grid.json> <output> | render <floor|cutaway|exterior> <grid.json> <output.png> | map-art <pixel.json> <output.json> | geo <geojson> <output.json> | lego <model.ldr> <output.json>'); process.exit(0); }
+if (!command || command === '--help') { console.log('craftaib grid validate <grid.json> | grid merge <output.json> <input1.json> <input2.json>... | materials <grid.json> [output.json] | export <format> <grid.json> <output> | render <floor|cutaway|exterior> <grid.json> <output.png> | map-art <pixel.json> <output.json> | geo <geojson> <output.json> | lego <model.ldr> <output.json>'); process.exit(0); }
 async function readGrid(path: string): Promise<BlockGrid> { return validateGrid(JSON.parse(await readFile(path, 'utf8')) as BlockGrid); }
 async function writeJson(path: string, value: unknown) { await writeFile(path, JSON.stringify(value, null, 2)); }
 async function writeArtifact(path: string, artifact: Uint8Array | string) { await writeFile(path, typeof artifact === 'string' ? artifact : artifact); }
 try {
-  if (command === 'grid' && input === 'validate') { const grid = await readGrid(output); console.log(JSON.stringify({ ok: true, width: grid.width, height: grid.height, length: grid.length, cells: grid.cells.length })); }
+  if (command === 'grid' && input === 'merge') { const target = output; const inputs = process.argv.slice(5); if (!target || inputs.length < 2) throw new Error('Grid merge requires an output and at least two input files.'); const grids = await Promise.all(inputs.map(readGrid)); await writeJson(target, mergeGrids(grids)); console.log(JSON.stringify({ ok: true, output: target, grids: grids.length })); } else if (command === 'grid' && input === 'validate') { const grid = await readGrid(output); console.log(JSON.stringify({ ok: true, width: grid.width, height: grid.height, length: grid.length, cells: grid.cells.length })); }
   else if (command === 'materials') { const grid = await readGrid(input); const body = JSON.stringify(Object.fromEntries(countMaterials(grid)), null, 2); if (output) await writeFile(output, body); else console.log(body); }
   else if (command === 'render') { const mode = input; const grid = await readGrid(output); if (!extra) throw new Error('Render requires an output path.'); const image = mode === 'floor' ? renderFloor(grid) : mode === 'cutaway' ? renderCutaway(grid) : mode === 'exterior' ? renderExterior(grid) : (() => { throw new Error(`Unsupported render mode: ${mode}`); })(); await writeFile(extra, encodePng(image)); console.log(JSON.stringify({ ok: true, mode, output: extra })); }
   else if (command === 'export') { const format = input; const grid = await readGrid(output); if (!extra) throw new Error('Export requires an output path.'); let artifact: Uint8Array | string; if (format === 'schem') artifact = await serializeSchematic(grid); else if (format === 'litematic') artifact = await serializeLitematica(grid); else if (format === 'glb') artifact = serializeGlb(grid); else if (format === 'html') artifact = createHtmlViewer(grid); else throw new Error(`Unsupported export format: ${format}`); await writeArtifact(extra, artifact); console.log(JSON.stringify({ ok: true, format, output: extra })); }
@@ -24,3 +24,4 @@ function encodePng(image: RenderImage): Uint8Array { const rows = new Uint8Array
 function chunk(type: string, data: Uint8Array) { const typeBytes = new TextEncoder().encode(type); const bytes = new Uint8Array(12 + data.length); const view = new DataView(bytes.buffer); view.setUint32(0, data.length); bytes.set(typeBytes, 4); bytes.set(data, 8); view.setUint32(8 + data.length, crc32(bytes.slice(4, 8 + data.length))); return bytes; }
 function intBytes(values: number[]) { const bytes = new Uint8Array(values.length * 4); const view = new DataView(bytes.buffer); values.forEach((value, index) => view.setUint32(index * 4, value)); return bytes; }
 function crc32(bytes: Uint8Array) { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
+
