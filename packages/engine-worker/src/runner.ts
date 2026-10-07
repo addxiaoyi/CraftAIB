@@ -1,12 +1,13 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
 import { analyzeMaterials, applyGridEdit, countMaterials, renderCutaway, renderExterior, renderFloor, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
-import { createHtmlViewer, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
+import { createHtmlViewer, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
   return async (task, emit, signal) => {
     const grid = task.input as BlockGrid;
+    if (task.type === 'lego.parse') { return parseLDraw(String(task.input ?? '')); }
     if (task.type === 'lego.search') { return searchLegoCatalog(task.input as any, String((task.options as any)?.query ?? ''), Number((task.options as any)?.limit ?? 24)); }
     if (task.type === 'grid.edit') { return applyGridEdit(grid, task.options as any); }
     if (task.type === 'grid.validate') { const valid = validateGrid(grid); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'validated' }); return { ok: true, width: valid.width, height: valid.height, length: valid.length, cells: valid.cells.length }; }
@@ -25,6 +26,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
