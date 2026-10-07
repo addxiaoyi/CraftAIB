@@ -23,3 +23,11 @@
 node scripts/build-engine.mjs
 node scripts/engine-smoke.mjs
 ```
+## Continued implementation
+
+The second engine slice adds:
+
+- `ProjectState` persistence helpers: create, serialize, and validate project files.
+- A cancellable task registry for Worker-backed engine operations.
+- Core runner tasks for `grid.validate` and `materials.count`.
+- Smoke coverage for project round trips and Worker task events.

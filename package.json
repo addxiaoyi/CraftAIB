@@ -11,7 +11,7 @@
     "build:core": "node scripts/build-engine.mjs",
     "build:engine": "node scripts/build-engine.mjs",
     "typecheck:engine": "node scripts/build-engine.mjs --check",
-    "test:engine": "node scripts/build-engine.mjs && node scripts/engine-smoke.mjs",
+    "test:engine": "node scripts/build-engine.mjs && node scripts/engine-smoke.mjs && node scripts/worker-smoke.mjs",
     "build": "node scripts/build-engine.mjs",
     "dev:craftmatic": "pnpm --dir vendor/craftmatic dev:web",
     "dev:cartographer": "pnpm --dir vendor/cartographer watch",
