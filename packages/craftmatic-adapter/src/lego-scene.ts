@@ -1,4 +1,4 @@
-import type { SceneGraph } from '@craftaib/core';
+import { createGrid, type BlockGrid, type BlockState, type SceneGraph } from '@craftaib/core';
 import type { LDrawBrick } from './ldraw.js';
 
 export type LegoScene = SceneGraph & { metadata: { source: 'ldraw'; brickCount: number; parts: string[]; bounds: { min: [number, number, number]; max: [number, number, number] } } };
@@ -24,3 +24,4 @@ export function ldrawToBlockGrid(bricks: LDrawBrick[], options: LegoVoxelOptions
 }
 
 export function legoSceneToBlockGrid(scene: LegoScene, options: LegoVoxelOptions = {}) { return ldrawToBlockGrid((scene.metadata as any).bricks ?? [], options); }
+
