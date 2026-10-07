@@ -219,6 +219,16 @@ function drawCube(context, x, y, size, color) {
     context.beginPath(); context.moveTo(x, y + depth); context.lineTo(x + half, y + depth * 0.55); context.lineTo(x + half, y + depth * 0.55 + size * 0.5); context.lineTo(x, y + depth + size); context.closePath(); context.fillStyle = color.right; context.fill();
 }
 function blockPreviewColor(id) { let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; const hue = hash % 360; return { top: `hsl(${hue} 55% 58%)`, left: `hsl(${hue} 48% 38%)`, right: `hsl(${hue} 50% 46%)` }; }
+function runMapArtMode() {
+    const pixels = window.craftaibPixelMap; const data = getVoxelExportData();
+    if (!pixels || !data) { setWorkspaceMessage("Run voxelization once before generating Map Art.", true); return; }
+    const palette = data.palette.map((entry) => ({ block: { id: `minecraft:${entry[0]}` }, color: { r: entry[1] ?? 0, g: entry[2] ?? 0, b: entry[3] ?? 0 } }));
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `map-art-${Date.now()}`;
+    setWorkspaceMessage("Generating Map Art...");
+    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedGrid(message.output); renderImportedMaterials(message.output); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
+    worker.onerror = () => { setWorkspaceMessage("Map Art worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: true, staircasing: "baseline" } });
+}
 function runEngineExport(format) {
     const data = getVoxelExportData();
     if (!data) return;
@@ -350,6 +360,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
