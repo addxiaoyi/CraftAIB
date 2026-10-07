@@ -32,6 +32,7 @@ on("#grid-yaw", "input", () => rerenderImportedGrid());
 on("#grid-cutaway", "input", () => rerenderImportedGrid());
 on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#analyze-materials", "click", analyzeImportedMaterials);
+window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 on("#export-materials", "click", exportImportedMaterials);
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
@@ -334,6 +335,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
