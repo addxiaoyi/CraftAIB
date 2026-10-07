@@ -110,12 +110,18 @@ async function importGridFile(event) {
     if (!file) return;
     try {
         const grid = JSON.parse(await file.text());
-        window.craftaibImportedGrid = grid;
-        renderImportedMaterials(grid); rerenderImportedGrid();
-        setWorkspaceMessage("Grid imported.");
+        const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+        const taskId = `grid-validate-${Date.now()}`;
+        worker.onmessage = (messageEvent) => {
+            const message = messageEvent.data;
+            if (message.taskId !== taskId) return;
+            if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+            if (message.type === "result") { window.craftaibImportedGrid = grid; renderImportedMaterials(grid); rerenderImportedGrid(); setWorkspaceMessage("Grid imported and validated."); worker.terminate(); }
+        };
+        worker.onerror = () => { setWorkspaceMessage("Grid validation worker failed.", true); worker.terminate(); };
+        worker.postMessage({ id: taskId, type: "grid.validate", input: grid });
     } catch (error) { setWorkspaceMessage(error.message, true); }
-}
-async function importLitematicFile(event) {
+}async function importLitematicFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
@@ -402,6 +408,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
