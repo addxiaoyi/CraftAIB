@@ -32,6 +32,7 @@ on("#grid-yaw", "input", () => rerenderImportedGrid());
 on("#grid-cutaway", "input", () => rerenderImportedGrid());
 on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#grid-render-mode", "change", () => rerenderImportedGrid());
+on("#export-grid-preview", "click", exportGridPreview);
 on("#analyze-materials", "click", analyzeImportedMaterials);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 on("#export-materials", "click", exportImportedMaterials);
@@ -176,6 +177,11 @@ function renderImportedMaterials(grid) {
     const counts = new Map();
     for (const cell of grid.cells ?? []) { const id = cell.block?.id ?? "minecraft:air"; counts.set(id, (counts.get(id) ?? 0) + 1); }
     panel.innerHTML = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id, count]) => `<div class="material-row"><span>${id.replace("minecraft:", "")}</span><b>${count}</b></div>`).join("");
+}
+function exportGridPreview() {
+    const canvas = $("#canvas");
+    if (!window.craftaibImportedGrid || !canvas) { setWorkspaceMessage("Import a structure before exporting its preview.", true); return; }
+    canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib-${$("#grid-render-mode")?.value ?? "preview"}.png`; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Preview PNG exported."); }, "image/png");
 }
 function rerenderImportedGrid() {
     if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
@@ -342,6 +348,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
