@@ -161,7 +161,7 @@ function analyzeImportedMaterials() {
         if (message.type === "result") { renderMaterialGaps(message.output); setWorkspaceMessage("Inventory analyzed."); worker.terminate(); }
     };
     worker.onerror = () => { setWorkspaceMessage("Material analysis worker failed.", true); worker.terminate(); };
-    worker.postMessage({ id: taskId, type: "materials.analyze", input: grid, options: { inventory } });
+    worker.postMessage({ id: taskId, type: "materials.analyze", input: grid, options: { inventory, rules } });
 }
 
 function renderMaterialGaps(gaps) {
@@ -334,6 +334,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
