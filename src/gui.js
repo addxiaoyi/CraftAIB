@@ -43,6 +43,8 @@ on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Pro
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
 on("#open-litematic", "click", () => $("#litematic-input")?.click());
+on("#open-grid", "click", () => $("#grid-input")?.click());
+on("#grid-input", "change", importGridFile);
 on("#litematic-input", "change", importLitematicFile);
 on("#schematic-input", "change", importSchematicFile);
 on("#project-input", "change", async (event) => { try { await openProjectFile(event.target.files[0]); applyProcessing(); setWorkspaceMessage("Project restored."); } catch (error) { setWorkspaceMessage(error.message, true); } });
@@ -103,6 +105,16 @@ if (dropZone) {
     });
 }
 
+async function importGridFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+        const grid = JSON.parse(await file.text());
+        window.craftaibImportedGrid = grid;
+        renderImportedMaterials(grid); rerenderImportedGrid();
+        setWorkspaceMessage("Grid imported.");
+    } catch (error) { setWorkspaceMessage(error.message, true); }
+}
 async function importLitematicFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -390,6 +402,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
