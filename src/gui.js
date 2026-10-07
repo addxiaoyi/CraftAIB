@@ -37,6 +37,7 @@ on("#grid-render-mode", "change", () => rerenderImportedGrid());
 on("#export-grid-preview", "click", exportGridPreview);
 on("#analyze-materials", "click", analyzeImportedMaterials);
 on("#lego-default-colors", "click", loadLegoDefaultColors);
+on("#lego-export-colors", "click", exportLegoColors);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 window.addEventListener("craftaib:mode-restored", (event) => { const nav = document.querySelector(`[data-mode="${event.detail.toLowerCase().replace(" ", "-")}"]`); nav?.click(); });
 on("#export-materials", "click", exportImportedMaterials);
@@ -110,6 +111,10 @@ if (dropZone) {
     });
 }
 
+function exportLegoColors() {
+    const value = $("#lego-color-map")?.value?.trim() ?? "{}";
+    try { const formatted = JSON.stringify(JSON.parse(value), null, 2); const blob = new Blob([formatted], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "craftaib-lego-colors.json"; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("LEGO mapping exported."); } catch (error) { setWorkspaceMessage(error.message, true); }
+}
 async function loadLegoDefaultColors() {
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `lego-colors-${Date.now()}`;
     worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "result") { const textarea = $("#lego-color-map"); if (textarea) textarea.value = JSON.stringify(message.output, null, 2); setWorkspaceMessage("LEGO colors loaded."); worker.terminate(); } if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); } };
@@ -436,6 +441,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
