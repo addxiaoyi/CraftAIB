@@ -52,8 +52,22 @@ for (const nav of document.querySelectorAll(".nav-item")) {
     });
 }
 
+let gridPanX = 0; let gridPanY = 0; let dragState = null;
 const dropZone = $(".hero-canvas");
 if (dropZone) {
+    dropZone.addEventListener("pointerdown", (event) => {
+        if (!window.craftaibImportedGrid) return;
+        dragState = { x: event.clientX, y: event.clientY, yaw: Number($("#grid-yaw")?.value ?? 45) };
+        dropZone.setPointerCapture(event.pointerId);
+    });
+    dropZone.addEventListener("pointermove", (event) => {
+        if (!dragState) return;
+        const yaw = (dragState.yaw + (event.clientX - dragState.x) * 0.7 + 360) % 360;
+        const yawInput = $("#grid-yaw"); if (yawInput) yawInput.value = String(Math.round(yaw));
+        gridPanX = event.clientX - dragState.x; gridPanY = event.clientY - dragState.y;
+        rerenderImportedGrid();
+    });
+    dropZone.addEventListener("pointerup", () => { dragState = null; gridPanX = 0; gridPanY = 0; });
     for (const eventName of ["dragenter", "dragover"]) {
         dropZone.addEventListener(eventName, (event) => {
             event.preventDefault();
@@ -119,7 +133,7 @@ function renderImportedGrid(grid) {
     canvas.width = 900; canvas.height = 560;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "#111a25"; context.fillRect(0, 0, canvas.width, canvas.height);
-    const originX = canvas.width / 2; const originY = 180 + grid.height * tile * 0.35;
+    const originX = canvas.width / 2 + gridPanX; const originY = 180 + grid.height * tile * 0.35 + gridPanY;
     for (const cell of grid.cells) {
         const sx = originX + (cell.x - cell.z) * tile * 0.72;
         const sy = originY + (cell.x + cell.z) * tile * 0.36 - cell.y * tile * 0.72;
@@ -266,6 +280,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
