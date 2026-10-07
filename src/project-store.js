@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'craftaib.project.v1';
-const FIELD_IDS = ['brightness-number', 'contrast-number', 'saturation-number', 'temperature-number', 'resolution-number', 'fov-number', 'yaw-number', 'pitch-number', 'depth-min-number', 'depth-max-number', 'detail-number', 'discretize-checkbox', 'pixelart-checkbox', 'enforce-boundary-checkbox', 'dither-checkbox'];
+const FIELD_IDS = ['brightness-number', 'contrast-number', 'saturation-number', 'temperature-number', 'resolution-number', 'fov-number', 'yaw-number', 'pitch-number', 'depth-min-number', 'depth-max-number', 'detail-number', 'discretize-checkbox', 'pixelart-checkbox', 'enforce-boundary-checkbox', 'dither-checkbox', 'grid-render-mode', 'grid-yaw', 'grid-cutaway', 'grid-scale'];
 
 function readFormState() {
   const controls = {};
@@ -24,3 +24,4 @@ function parseProject(raw) { const project = JSON.parse(raw); if (project?.versi
 function downloadProject() { const project = saveProjectToStorage(); const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'craftaib-project.json'; link.click(); URL.revokeObjectURL(url); return project; }
 function openProjectFile(file) { return file.text().then((raw) => { const project = parseProject(raw); localStorage.setItem(STORAGE_KEY, JSON.stringify(project)); applyFormState(project.controls); if (project.importedGrid) { window.craftaibImportedGrid = project.importedGrid; window.dispatchEvent(new CustomEvent('craftaib:grid-restored', { detail: project.importedGrid })); } restoreMaterialState(project.materialInventory, project.materialRules); return project; }); }
 export { downloadProject, openProjectFile, restoreProjectFromStorage, saveProjectToStorage };
+
