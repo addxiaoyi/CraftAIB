@@ -36,6 +36,7 @@ on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#grid-render-mode", "change", () => rerenderImportedGrid());
 on("#export-grid-preview", "click", exportGridPreview);
 on("#analyze-materials", "click", analyzeImportedMaterials);
+on("#lego-default-colors", "click", loadLegoDefaultColors);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 window.addEventListener("craftaib:mode-restored", (event) => { const nav = document.querySelector(`[data-mode="${event.detail.toLowerCase().replace(" ", "-")}"]`); nav?.click(); });
 on("#export-materials", "click", exportImportedMaterials);
@@ -109,6 +110,12 @@ if (dropZone) {
     });
 }
 
+async function loadLegoDefaultColors() {
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `lego-colors-${Date.now()}`;
+    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "result") { const textarea = $("#lego-color-map"); if (textarea) textarea.value = JSON.stringify(message.output, null, 2); setWorkspaceMessage("LEGO colors loaded."); worker.terminate(); } if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); } };
+    worker.onerror = () => { setWorkspaceMessage("LEGO color worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: "lego.colors", input: null });
+}
 async function importLDrawFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
@@ -276,6 +283,8 @@ function drawCube(context, x, y, size, color) {
     context.beginPath(); context.moveTo(x, y + depth); context.lineTo(x + half, y + depth * 0.55); context.lineTo(x + half, y + depth * 0.55 + size * 0.5); context.lineTo(x, y + depth + size); context.closePath(); context.fillStyle = color.right; context.fill();
 }
 function blockPreviewColor(id) { let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; const hue = hash % 360; return { top: `hsl(${hue} 55% 58%)`, left: `hsl(${hue} 48% 38%)`, right: `hsl(${hue} 50% 46%)` }; }
+function parseLegoColorMap() { try { const parsed = JSON.parse($("#lego-color-map")?.value || "{}"); return parsed; } catch { setWorkspaceMessage("LEGO color mapping JSON is invalid.", true); return {}; } }
+
 function runMapArtMode() {
     const sourcePixels = window.craftaibPixelMap; const data = getVoxelExportData();
     if (!sourcePixels || !data) { setWorkspaceMessage("Run voxelization once before generating Map Art.", true); return; }
@@ -427,6 +436,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
