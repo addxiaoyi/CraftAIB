@@ -31,6 +31,7 @@ on("#pixelart-checkbox", "change", updatePixelArtVisibility);
 on("#grid-yaw", "input", () => rerenderImportedGrid());
 on("#grid-cutaway", "input", () => rerenderImportedGrid());
 on("#grid-scale", "input", () => rerenderImportedGrid());
+on("#grid-render-mode", "change", () => rerenderImportedGrid());
 on("#analyze-materials", "click", analyzeImportedMaterials);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 on("#export-materials", "click", exportImportedMaterials);
@@ -180,6 +181,8 @@ function rerenderImportedGrid() {
     if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
 }
 function renderImportedGrid(grid) {
+    if ($("#grid-render-mode")?.value === "floor") return renderFloorGrid(grid);
+    if ($("#grid-render-mode")?.value === "cutaway") return renderCutawayGrid(grid);
     const canvas = $("#canvas");
     const processing = $("#glcanvas");
     if (!canvas || !grid?.cells?.length) return;
@@ -197,6 +200,10 @@ function renderImportedGrid(grid) {
     canvas.style.display = "block";
     if (processing) processing.style.display = "none";
 }
+function renderFloorGrid(grid) {
+    const canvas = $("#canvas"); if (!canvas) return; const context = canvas.getContext("2d"); const cell = Math.max(3, Math.min(18, 760 / Math.max(grid.width, grid.length))); canvas.width = 900; canvas.height = 560; context.fillStyle = "#111a25"; context.fillRect(0, 0, canvas.width, canvas.height); const offsetX = (canvas.width - grid.width * cell) / 2; const offsetY = (canvas.height - grid.length * cell) / 2; const highest = new Map(); for (const item of grid.cells) { const key = `${item.x}:${item.z}`; if (!highest.has(key) || item.y > highest.get(key).y) highest.set(key, item); } for (const item of highest.values()) { context.fillStyle = blockPreviewColor(item.block?.id ?? "minecraft:stone").top; context.fillRect(offsetX + item.x * cell, offsetY + item.z * cell, Math.ceil(cell), Math.ceil(cell)); } canvas.style.display = "block"; $("#glcanvas").style.display = "none";
+}
+function renderCutawayGrid(grid) { renderImportedGrid({ ...grid, cells: grid.cells.filter((cell) => cell.y <= Math.max(1, grid.height - 1) * 0.55) }); }
 function drawCube(context, x, y, size, color) {
     const half = size / 2; const depth = size * 0.42;
     context.beginPath(); context.moveTo(x, y); context.lineTo(x + half, y + depth * 0.55); context.lineTo(x, y + depth); context.lineTo(x - half, y + depth * 0.55); context.closePath(); context.fillStyle = color.top; context.fill();
@@ -335,6 +342,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
