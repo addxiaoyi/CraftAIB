@@ -32,3 +32,12 @@ This matrix is the implementation index. `Direct` means the capability can be wr
 - Craftmatic is MIT: preserve its copyright and license notice.
 - Cartographer is GPLv3: keep its adapter/source boundary explicit for internal integration; reassess before external distribution.
 - This repository is currently an internal integration workspace, not a claim of unrestricted commercial redistribution.
+
+## 2026-10-08 implementation additions
+
+- Core render API now provides floor, cutaway, and exterior raster output; Worker tasks expose `render.floor`, `render.cutaway`, and `render.exterior`.
+- Export pipeline now covers Schematic, Litematic, GLB, HTML Viewer, and PNG CLI rendering.
+- LEGO adapter now covers catalog search, LDraw parsing, resource resolution/loading, scene metadata, part-dimension voxelization, rotation matrices, color mapping, and Worker tasks `lego.search`, `lego.parse`, `lego.load`, `lego.scene`, `lego.blockgrid`, `lego.scene-grid`, and `lego.colors`.
+- Geo adapter now covers roads, GeoJSON lines/polygons/points, OSM-like tag mapping, elevation/levels, vegetation, POIs, GeoProjection, and Worker tasks `geo.geojson`, `geo.blockgrid`, and `geo.poi`.
+- Scene composition now includes `mergeGrids`, `mergeScenes`, and Worker task `scene.merge`.
+- CLI now exposes validation, materials, unified export, PNG rendering, Map Art, GeoJSON, LEGO, and Grid merge commands.
