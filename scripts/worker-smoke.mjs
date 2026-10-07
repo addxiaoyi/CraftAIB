@@ -8,6 +8,8 @@ const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'minecraft:stone' } }]
 await registry.run({ id: 'schem', type: 'schematic.serialize', input: grid });
 const result = events.find((event) => event.taskId === 'schem' && event.type === 'result');
 assert.equal(result.output[0], 0x1f); assert.equal(result.output[1], 0x8b);
+const parseEvents = []; const parseRegistry = createTaskRegistry((event) => parseEvents.push(event), createCoreRunner()); await parseRegistry.run({ id: 'parse', type: 'schematic.parse', input: result.output }); assert.equal(parseEvents.at(-1).type, 'result'); assert.equal(parseEvents.at(-1).output.cells[0].block.id, 'minecraft:stone');
 const mapEvents = []; const mapRegistry = createTaskRegistry((event) => mapEvents.push(event), createCoreRunner()); await mapRegistry.run({ id: 'map', type: 'map-art.generate', input: { width: 1, height: 1, paletteId: 'smoke', pixels: [{ r: 255, g: 255, b: 255, a: 255 }] }, options: { palette: [{ block: { id: 'minecraft:white_concrete' }, color: { r: 255, g: 255, b: 255 } }] } }); assert.equal(mapEvents.at(-1).type, 'result');
 console.log('worker export task tests passed');
+
 
