@@ -8,7 +8,7 @@ import {
     updateTargetImage,
     voxelConvert,
 } from "./script.js";
-import { downloadProject, openProjectFile, restoreProjectFromStorage, saveProjectToStorage } from "./project-store.js";
+import { downloadProject, openProjectFile, recordProjectExport, restoreProjectFromStorage, saveProjectToStorage } from "./project-store.js";
 import { createEngineGrid } from "./exports.js";
 
 const DEFAULT_TARGET = "./res/upload.svg";
@@ -186,7 +186,7 @@ function renderImportedMaterials(grid) {
 function exportGridPreview() {
     const canvas = $("#canvas");
     if (!window.craftaibImportedGrid || !canvas) { setWorkspaceMessage("Import a structure before exporting its preview.", true); return; }
-    canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib-${$("#grid-render-mode")?.value ?? "preview"}.png`; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Preview PNG exported."); }, "image/png");
+    canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib-${$("#grid-render-mode")?.value ?? "preview"}.png`; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Preview PNG exported."); recordProjectExport("png", link.download); }, "image/png");
 }
 function rerenderImportedGrid() {
     if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
@@ -267,7 +267,7 @@ function runEngineExport(format) {
             const blob = new Blob([message.output], { type: format === "viewer" ? "text/html;charset=utf-8" : format === "glb" ? "model/gltf-binary" : "application/gzip" });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
-            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); worker.terminate();
+            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); recordProjectExport(extension, `craftaib.${extension}`); worker.terminate();
         }
     };
     worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
@@ -382,6 +382,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
