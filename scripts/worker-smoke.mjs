@@ -8,6 +8,7 @@ const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'minecraft:stone' } }]
 await registry.run({ id: 'schem', type: 'schematic.serialize', input: grid });
 const result = events.find((event) => event.taskId === 'schem' && event.type === 'result');
 assert.equal(result.output[0], 0x1f); assert.equal(result.output[1], 0x8b);
+const unifiedEvents = []; const unifiedRegistry = createTaskRegistry((event) => unifiedEvents.push(event), createCoreRunner()); await unifiedRegistry.run({ id: 'unified', type: 'export', input: grid, options: { format: 'schem' } }); assert.equal(unifiedEvents.at(-1).output[0], 0x1f);
 const parseEvents = []; const parseRegistry = createTaskRegistry((event) => parseEvents.push(event), createCoreRunner()); await parseRegistry.run({ id: 'parse', type: 'schematic.parse', input: result.output }); assert.equal(parseEvents.at(-1).type, 'result'); assert.equal(parseEvents.at(-1).output.cells[0].block.id, 'minecraft:stone');
 const mapEvents = []; const mapRegistry = createTaskRegistry((event) => mapEvents.push(event), createCoreRunner()); await mapRegistry.run({ id: 'map', type: 'map-art.generate', input: { width: 1, height: 1, paletteId: 'smoke', pixels: [{ r: 255, g: 255, b: 255, a: 255 }] }, options: { palette: [{ block: { id: 'minecraft:white_concrete' }, color: { r: 255, g: 255, b: 255 } }] } }); assert.equal(mapEvents.at(-1).type, 'result');
 const materialEvents = []; const materialRegistry = createTaskRegistry((event) => materialEvents.push(event), createCoreRunner()); await materialRegistry.run({ id: 'materials', type: 'materials.analyze', input: grid, options: { inventory: {} } }); assert.equal(materialEvents.at(-1).output[0].missing, 1);
@@ -27,5 +28,6 @@ const poiEvents = []; const poiRegistry = createTaskRegistry((event) => poiEvent
 
 const sceneEvents = []; const sceneRegistry = createTaskRegistry((event) => sceneEvents.push(event), createCoreRunner()); await sceneRegistry.run({ id: 'scene', type: 'scene.merge', input: { scenes: [{ version: 1, grids: [grid], metadata: { source: 'base' } }, { version: 1, grids: [grid], metadata: { source: 'second' } }] }, options: { offsets: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }] } }); assert.equal(sceneEvents.at(-1).output.grids.length, 1);
 const geoHeightEvents = []; const geoHeightRegistry = createTaskRegistry((event) => geoHeightEvents.push(event), createCoreRunner()); await geoHeightRegistry.run({ id: 'geo-height', type: 'geo.geojson', input: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[0,0],[0.00005,0],[0.00005,0.00005],[0,0.00005],[0,0]]] }, properties: { block: 'minecraft:stone', levels: 3 } }, { type: 'Feature', geometry: { type: 'Point', coordinates: [0,0] }, properties: { kind: 'tree', height: 4 } }] }, options: { center: { lat: 0, lng: 0 }, width: 16, length: 16 } }); assert.equal(geoHeightEvents.at(-1).output.height, 5);
+
 
 
