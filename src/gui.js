@@ -146,6 +146,10 @@ async function importSchematicFile(event) {
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
 }
+function renderExportHistory() {
+    const panel = $("#export-history"); if (!panel) return;
+    try { const project = JSON.parse(localStorage.getItem("craftaib.project.v1") ?? "{}"); const exports = (project.exports ?? []).slice(-6).reverse(); panel.innerHTML = exports.length ? `<div class="eyebrow history-label">EXPORT HISTORY</div>` + exports.map((item) => `<div class="history-row"><span>${item.name}</span><small>${new Date(item.createdAt).toLocaleString()}</small></div>`).join("") : ""; } catch { panel.textContent = ""; }
+}
 function exportImportedMaterials() {
     const grid = window.craftaibImportedGrid;
     if (!grid) { setWorkspaceMessage("Import a Schematic or Litematic first.", true); return; }
@@ -267,7 +271,7 @@ function runEngineExport(format) {
             const blob = new Blob([message.output], { type: format === "viewer" ? "text/html;charset=utf-8" : format === "glb" ? "model/gltf-binary" : "application/gzip" });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
-            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); recordProjectExport(extension, `craftaib.${extension}`); worker.terminate();
+            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); recordProjectExport(extension, `craftaib.${extension}`); renderExportHistory(); worker.terminate();
         }
     };
     worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
@@ -356,7 +360,9 @@ function resetImage() {
 
 function reset3D() {
     resetGroup("#settings-3d");
-    updatePixelArtVisibility();
+    
+renderExportHistory();
+updatePixelArtVisibility();
     applyProcessing();
 }
 
@@ -378,10 +384,13 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
+
+renderExportHistory();
 updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
