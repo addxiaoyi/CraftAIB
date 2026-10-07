@@ -22,3 +22,4 @@ const loadEvents = []; const loadRegistry = createTaskRegistry((event) => loadEv
 
 
 
+const poiEvents = []; const poiRegistry = createTaskRegistry((event) => poiEvents.push(event), createCoreRunner()); await poiRegistry.run({ id: 'poi', type: 'geo.poi', input: { center: { lat: 0, lng: 0 }, width: 16, length: 16, pois: [{ point: { lat: 0, lng: 0 }, kind: 'tree' }] } }); assert.ok(poiEvents.at(-1).output.cells.some((cell) => cell.block.id === 'minecraft:oak_log'));
