@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
 import { fromVoxelartcraft } from '../packages/voxelartcraft-adapter/dist/index.js';
 import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
-import { fromCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
+import { fromCraftmaticSchematic, toCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
 
 const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'stone' } }], { width: 1, height: 1, length: 1 });
 assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
@@ -13,7 +13,9 @@ const mapArt = generateMapArt({ width: 2, height: 2, paletteId: 'test', pixels: 
 const litematic = generateLitematicaSchema(mapArt, { name: 'Smoke Map', author: 'CraftAIB' }); assert.equal(litematic.value.Version.value, 5);
 const litematicBytes = await serializeLitematica(mapArt, { name: 'Smoke Map' }); assert.equal(litematicBytes[0], 0x1f); assert.equal(litematicBytes[1], 0x8b);
 const schem = fromCraftmaticSchematic({ width: 1, height: 1, length: 1, palette: ['minecraft:oak_planks'], cells: [{ x: 0, y: 0, z: 0, state: 0 }] }); assert.equal(schem.cells[0].source, 'craftmatic');
+const schemRoundTrip = toCraftmaticSchematic(schem); assert.equal(schemRoundTrip.palette[1], 'minecraft:oak_planks');
 console.log('core engine adapter tests passed');
+
 
 
 
