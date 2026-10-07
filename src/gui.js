@@ -227,7 +227,7 @@ function runMapArtMode() {
     setWorkspaceMessage("Generating Map Art...");
     worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedGrid(message.output); renderImportedMaterials(message.output); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
     worker.onerror = () => { setWorkspaceMessage("Map Art worker failed.", true); worker.terminate(); };
-    worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: true, staircasing: "baseline" } });
+    worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: $("#map-art-dither")?.checked ?? true, staircasing: $("#map-art-staircase")?.value ?? "baseline" } });
 }
 function runEngineExport(format) {
     const data = getVoxelExportData();
@@ -360,6 +360,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
