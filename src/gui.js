@@ -44,6 +44,8 @@ on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
 on("#open-litematic", "click", () => $("#litematic-input")?.click());
 on("#open-grid", "click", () => $("#grid-input")?.click());
+on("#open-geojson", "click", () => $("#geojson-input")?.click());
+on("#geojson-input", "change", importGeoJsonFile);
 on("#grid-input", "change", importGridFile);
 on("#litematic-input", "change", importLitematicFile);
 on("#schematic-input", "change", importSchematicFile);
@@ -105,6 +107,13 @@ if (dropZone) {
     });
 }
 
+async function importGeoJsonFile(event) {
+    const file = event.target.files?.[0]; if (!file) return;
+    try {
+        const geojson = JSON.parse(await file.text()); const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `geojson-${Date.now()}`;
+        setWorkspaceMessage("Reading GeoJSON..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); rerenderImportedGrid(); document.body.dataset.mode = "geo"; setWorkspaceMessage("GeoJSON imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("GeoJSON worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "geo.geojson", input: geojson, options: { center: { lat: 0, lng: 0 }, width: 128, length: 128 } });
+    } catch (error) { setWorkspaceMessage(error.message, true); }
+}
 async function importGridFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -408,6 +417,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
