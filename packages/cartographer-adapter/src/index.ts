@@ -25,3 +25,4 @@ export function toCartographerPixels(grid: BlockGrid): PixelMap {
   return { width: grid.width, height: grid.height, pixels, paletteId: 'minecraft-map-art' };
 }
 export * from './map-art.js';
+export * from './litematica.js';
