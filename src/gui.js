@@ -28,6 +28,9 @@ on("#reset-image-mini", "click", resetImage);
 on("#reset-3d", "click", reset3D);
 on("#reset-3d-mini", "click", reset3D);
 on("#pixelart-checkbox", "change", updatePixelArtVisibility);
+on("#grid-yaw", "input", () => rerenderImportedGrid());
+on("#grid-cutaway", "input", () => rerenderImportedGrid());
+on("#grid-scale", "input", () => rerenderImportedGrid());
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
@@ -103,6 +106,9 @@ function renderImportedMaterials(grid) {
     const counts = new Map();
     for (const cell of grid.cells ?? []) { const id = cell.block?.id ?? "minecraft:air"; counts.set(id, (counts.get(id) ?? 0) + 1); }
     panel.innerHTML = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id, count]) => `<div class="material-row"><span>${id.replace("minecraft:", "")}</span><b>${count}</b></div>`).join("");
+}
+function rerenderImportedGrid() {
+    if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
 }
 function renderImportedGrid(grid) {
     const canvas = $("#canvas");
@@ -260,6 +266,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
