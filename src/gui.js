@@ -1,7 +1,7 @@
 import {
     applyProcessing,
     downloadBlockGrid,
-    downloadNBT,
+    downloadNBT, downloadLitematic,
     downloadSchematic,
     stopVoxelization,
     updatePalette,
@@ -16,6 +16,7 @@ const on = (selector, event, handler) => $(selector)?.addEventListener(event, ha
 
 on("#convertButton", "click", voxelConvert);
 on("#downloadButton", "click", downloadNBT);
+on("#downloadLitematicButton", "click", downloadLitematic);
 on("#downloadSchematicButton", "click", downloadSchematic);
 on("#downloadGridButton", "click", downloadBlockGrid);
 on("#image-input", "change", imageUpdate);
@@ -179,6 +180,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 

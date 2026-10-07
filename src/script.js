@@ -1,6 +1,7 @@
 import { createStructureNBT } from "./schematic.js";
 import { image_update } from "./gui.js";
 import { dither, resetDither } from "./dither.js";
+import { createLitematicFile } from "./litematic.js";
 
 
 const textureAtlas = './atlas.png';
@@ -466,7 +467,7 @@ function updateMaterialList() {
         totalAmount += materialList[key];
     }
 
-    for (const id of ["downloadButton", "downloadSchematicButton", "downloadGridButton"]) {
+    for (const id of ["downloadButton", "downloadLitematicButton", "downloadSchematicButton", "downloadGridButton"]) {
         document.querySelector(`#${id}`).disabled = totalAmount == 0;
     }
     updateBlockTotal(totalAmount);
@@ -831,6 +832,11 @@ function downloadBlockGrid() {
     downloadFile(createGridFile(blocks, palette, materials));
 }
 
+async function downloadLitematic() {
+    if (!requireVoxelData()) return;
+    downloadFile(await createLitematicFile(blocks, palette, materials));
+}
+
 async function downloadNBT() {
     if (!requireVoxelData()) return;
     downloadFile(await createStructureNBT(blocks, palette, materials));
@@ -910,7 +916,7 @@ async function main() {
 
 main();
 
-export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downloadNBT, downloadSchematic, downloadBlockGrid, stopVoxelization };
+export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downloadNBT, downloadLitematic, downloadSchematic, downloadBlockGrid, stopVoxelization };
 
 
 //TODO:
@@ -937,6 +943,8 @@ export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downlo
 // - Block minecraft version
 // - Eastereggs
 // - default pallette category selection
+
+
 
 
 
