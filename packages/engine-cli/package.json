@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@craftaib/core": "workspace:*"
+    "@craftaib/core": "workspace:*",
+    "@craftaib/craftmatic-adapter": "workspace:*",
+    "@craftaib/cartographer-adapter": "workspace:*"
   },
-  "bin": {
-    "craftaib": "dist/cli.js"
-  }
+  "bin": { "craftaib": "dist/cli.js" }
 }
