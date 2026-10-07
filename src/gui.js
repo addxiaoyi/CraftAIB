@@ -31,6 +31,7 @@ on("#pixelart-checkbox", "change", updatePixelArtVisibility);
 on("#grid-yaw", "input", () => rerenderImportedGrid());
 on("#grid-cutaway", "input", () => rerenderImportedGrid());
 on("#grid-scale", "input", () => rerenderImportedGrid());
+on("#analyze-materials", "click", analyzeImportedMaterials);
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
@@ -135,6 +136,27 @@ async function importSchematicFile(event) {
     };
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
+}
+function analyzeImportedMaterials() {
+    const grid = window.craftaibImportedGrid;
+    if (!grid) { setWorkspaceMessage("Import a Schematic or Litematic first.", true); return; }
+    const inventory = {};
+    document.querySelectorAll("[data-material-id]").forEach((input) => { inventory[input.dataset.materialId] = Math.max(0, Number(input.value) || 0); });
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+    const taskId = `materials-${Date.now()}`;
+    worker.onmessage = (event) => {
+        const message = event.data;
+        if (message.taskId !== taskId) return;
+        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+        if (message.type === "result") { renderMaterialGaps(message.output); setWorkspaceMessage("Inventory analyzed."); worker.terminate(); }
+    };
+    worker.onerror = () => { setWorkspaceMessage("Material analysis worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: "materials.analyze", input: grid, options: { inventory } });
+}
+
+function renderMaterialGaps(gaps) {
+    const panel = $("#imported-materials"); if (!panel) return;
+    panel.innerHTML = gaps.slice(0, 12).map((gap) => `<div class="material-row ${gap.missing ? "is-missing" : "is-ready"}"><span>${gap.id.replace("minecraft:", "")}</span><input data-material-id="${gap.id}" type="number" min="0" value="${gap.available}"><b>${gap.missing ? `-${gap.missing}` : "ready"}</b></div>`).join("");
 }
 function renderImportedMaterials(grid) {
     const panel = $("#imported-materials");
@@ -302,6 +324,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
