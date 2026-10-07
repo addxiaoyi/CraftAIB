@@ -1,20 +1,26 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { countMaterials, validateGrid, type BlockGrid } from '@craftaib/core';
-import { generateMapArt } from '../../cartographer-adapter/dist/index.js';
-import { geoJsonToScene, geoSceneToBlockGrid, ldrawToBlockGrid, parseLDraw, createHtmlViewer, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
-import { serializeLitematica } from '../../cartographer-adapter/dist/index.js';
+import { deflateSync } from 'node:zlib';
+import { countMaterials, renderCutaway, renderExterior, renderFloor, validateGrid, type BlockGrid, type RenderImage } from '@craftaib/core';
+import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
+import { createHtmlViewer, geoJsonToScene, geoSceneToBlockGrid, ldrawToBlockGrid, parseLDraw, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 const [, , command, input, output, extra] = process.argv;
-if (!command || command === '--help') { console.log('craftaib grid validate <grid.json> | materials <grid.json> [output.json] | export <format> <grid.json> <output> | map-art <pixel.json> <output.json> | geo <geojson> <output.json> | lego <model.ldr> <output.json>'); process.exit(0); }
+if (!command || command === '--help') { console.log('craftaib grid validate <grid.json> | materials <grid.json> [output.json] | export <format> <grid.json> <output> | render <floor|cutaway|exterior> <grid.json> <output.png> | map-art <pixel.json> <output.json> | geo <geojson> <output.json> | lego <model.ldr> <output.json>'); process.exit(0); }
 async function readGrid(path: string): Promise<BlockGrid> { return validateGrid(JSON.parse(await readFile(path, 'utf8')) as BlockGrid); }
 async function writeJson(path: string, value: unknown) { await writeFile(path, JSON.stringify(value, null, 2)); }
 async function writeArtifact(path: string, artifact: Uint8Array | string) { await writeFile(path, typeof artifact === 'string' ? artifact : artifact); }
 try {
   if (command === 'grid' && input === 'validate') { const grid = await readGrid(output); console.log(JSON.stringify({ ok: true, width: grid.width, height: grid.height, length: grid.length, cells: grid.cells.length })); }
   else if (command === 'materials') { const grid = await readGrid(input); const body = JSON.stringify(Object.fromEntries(countMaterials(grid)), null, 2); if (output) await writeFile(output, body); else console.log(body); }
+  else if (command === 'render') { const mode = input; const grid = await readGrid(output); if (!extra) throw new Error('Render requires an output path.'); const image = mode === 'floor' ? renderFloor(grid) : mode === 'cutaway' ? renderCutaway(grid) : mode === 'exterior' ? renderExterior(grid) : (() => { throw new Error(`Unsupported render mode: ${mode}`); })(); await writeFile(extra, encodePng(image)); console.log(JSON.stringify({ ok: true, mode, output: extra })); }
   else if (command === 'export') { const format = input; const grid = await readGrid(output); if (!extra) throw new Error('Export requires an output path.'); let artifact: Uint8Array | string; if (format === 'schem') artifact = await serializeSchematic(grid); else if (format === 'litematic') artifact = await serializeLitematica(grid); else if (format === 'glb') artifact = serializeGlb(grid); else if (format === 'html') artifact = createHtmlViewer(grid); else throw new Error(`Unsupported export format: ${format}`); await writeArtifact(extra, artifact); console.log(JSON.stringify({ ok: true, format, output: extra })); }
   else if (command === 'map-art') { const inputData = JSON.parse(await readFile(input, 'utf8')); const grid = generateMapArt(inputData.pixelMap, inputData.options); await writeJson(output, grid); console.log(JSON.stringify({ ok: true, output, cells: grid.cells.length })); }
   else if (command === 'geo') { const source = JSON.parse(await readFile(input, 'utf8')); const options = JSON.parse(extra ?? '{"center":{"lat":0,"lng":0},"width":128,"length":128}'); await writeJson(output, geoSceneToBlockGrid(geoJsonToScene(source, options))); console.log(JSON.stringify({ ok: true, output })); }
   else if (command === 'lego') { const bricks = parseLDraw(await readFile(input, 'utf8')).bricks; await writeJson(output, ldrawToBlockGrid(bricks, {})); console.log(JSON.stringify({ ok: true, output, bricks: bricks.length })); }
   else throw new Error(`Unknown command: ${command}`);
 } catch (error) { console.error(error instanceof Error ? error.message : 'Command failed.'); process.exitCode = 2; }
+
+function encodePng(image: RenderImage): Uint8Array { const rows = new Uint8Array(image.height * (image.width * 4 + 1)); for (let y = 0; y < image.height; y += 1) { const row = y * (image.width * 4 + 1); rows[row] = 0; rows.set(image.pixels.slice(y * image.width * 4, (y + 1) * image.width * 4), row + 1); } const signature = new Uint8Array([137,80,78,71,13,10,26,10]); const header = chunk('IHDR', intBytes([image.width, image.height, 8, 6, 0, 0, 0])); const body = chunk('IDAT', new Uint8Array(deflateSync(rows))); const end = chunk('IEND', new Uint8Array()); const output = new Uint8Array(signature.length + header.length + body.length + end.length); output.set(signature, 0); output.set(header, signature.length); output.set(body, signature.length + header.length); output.set(end, signature.length + header.length + body.length); return output; }
+function chunk(type: string, data: Uint8Array) { const typeBytes = new TextEncoder().encode(type); const bytes = new Uint8Array(12 + data.length); const view = new DataView(bytes.buffer); view.setUint32(0, data.length); bytes.set(typeBytes, 4); bytes.set(data, 8); view.setUint32(8 + data.length, crc32(bytes.slice(4, 8 + data.length))); return bytes; }
+function intBytes(values: number[]) { const bytes = new Uint8Array(values.length * 4); const view = new DataView(bytes.buffer); values.forEach((value, index) => view.setUint32(index * 4, value)); return bytes; }
+function crc32(bytes: Uint8Array) { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
