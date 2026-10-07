@@ -16,7 +16,7 @@
     <header class="topbar">
       <div class="brand-lockup"><img src="res/logo.png" alt="CraftAIB" class="brand-mark" /><div><div class="brand-name">CraftAIB</div><div class="brand-subtitle">Minimal Voxel Studio</div></div></div>
       <nav class="topnav" aria-label="Main navigation"><button class="nav-item is-active" type="button">Edit</button><button class="nav-item" type="button">Preview</button><button class="nav-item" type="button">Assets</button><button class="nav-item" type="button">Settings</button></nav>
-      <div class="topbar-meta"><span class="save-state"><span class="status-dot"></span> Auto-saved locally</span><button class="quiet-button" type="button" id="open-project">Open</button><button class="quiet-button" type="button" id="save-project">Save</button><input id="project-input" type="file" accept="application/json" hidden><span class="clock">12:34</span><a href="https://github.com/addxiaoyi/CraftAIB" target="_blank" rel="noreferrer" class="icon-link" aria-label="Open GitHub">↗</a></div>
+      <div class="topbar-meta"><span class="save-state"><span class="status-dot"></span> Auto-saved locally</span><button class="quiet-button" type="button" id="open-schematic">Open .SCHEM</button><input id="schematic-input" type="file" accept=".schem,application/octet-stream" hidden><button class="quiet-button" type="button" id="open-project">Open</button><button class="quiet-button" type="button" id="save-project">Save</button><input id="project-input" type="file" accept="application/json" hidden><span class="clock">12:34</span><a href="https://github.com/addxiaoyi/CraftAIB" target="_blank" rel="noreferrer" class="icon-link" aria-label="Open GitHub">↗</a></div>
     </header>
     <div class="workspace">
       <aside class="toolrail" aria-label="Tools"><button class="tool-button is-active" type="button" aria-label="Select">↖</button><button class="tool-button" type="button" aria-label="Crop">⌗</button><button class="tool-button" type="button" aria-label="Voxel">◇</button><button class="tool-button" type="button" aria-label="Materials">▦</button><button class="tool-button" type="button" aria-label="Settings">⚙</button><div class="tool-spacer"></div><label class="asset-thumb is-selected" aria-label="Current image"><input id="image-input" type="file" accept="image/*" /><img src="res/upload.svg" alt="Upload image" /></label><button class="tool-button add-button" type="button" aria-label="Upload image" onclick="document.getElementById('image-input').click()">＋</button></aside>
@@ -29,6 +29,7 @@
   </main>
 </body>
 </html>
+
 
 
 
