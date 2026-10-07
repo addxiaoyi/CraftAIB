@@ -86,6 +86,7 @@ async function importSchematicFile(event) {
         if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
         if (message.type === "result") {
             window.craftaibImportedGrid = message.output;
+            renderImportedGrid(message.output);
             const size = $("#canvas-size");
             if (size) size.textContent = `${message.output.width} × ${message.output.height} × ${message.output.length} blocks`;
             setWorkspaceMessage("Schematic imported.");
@@ -95,6 +96,31 @@ async function importSchematicFile(event) {
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
 }
+function renderImportedGrid(grid) {
+    const canvas = $("#canvas");
+    const processing = $("#glcanvas");
+    if (!canvas || !grid?.cells?.length) return;
+    const context = canvas.getContext("2d");
+    const tile = Math.max(5, Math.min(22, 520 / Math.max(grid.width + grid.length, 1)));
+    canvas.width = 900; canvas.height = 560;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#111a25"; context.fillRect(0, 0, canvas.width, canvas.height);
+    const originX = canvas.width / 2; const originY = 180 + grid.height * tile * 0.35;
+    for (const cell of grid.cells) {
+        const sx = originX + (cell.x - cell.z) * tile * 0.72;
+        const sy = originY + (cell.x + cell.z) * tile * 0.36 - cell.y * tile * 0.72;
+        drawCube(context, sx, sy, tile * 0.72, blockPreviewColor(cell.block?.id ?? "minecraft:stone"));
+    }
+    canvas.style.display = "block";
+    if (processing) processing.style.display = "none";
+}
+function drawCube(context, x, y, size, color) {
+    const half = size / 2; const depth = size * 0.42;
+    context.beginPath(); context.moveTo(x, y); context.lineTo(x + half, y + depth * 0.55); context.lineTo(x, y + depth); context.lineTo(x - half, y + depth * 0.55); context.closePath(); context.fillStyle = color.top; context.fill();
+    context.beginPath(); context.moveTo(x - half, y + depth * 0.55); context.lineTo(x, y + depth); context.lineTo(x, y + depth + size); context.lineTo(x - half, y + depth * 0.55 + size * 0.5); context.closePath(); context.fillStyle = color.left; context.fill();
+    context.beginPath(); context.moveTo(x, y + depth); context.lineTo(x + half, y + depth * 0.55); context.lineTo(x + half, y + depth * 0.55 + size * 0.5); context.lineTo(x, y + depth + size); context.closePath(); context.fillStyle = color.right; context.fill();
+}
+function blockPreviewColor(id) { let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; const hue = hash % 360; return { top: `hsl(${hue} 55% 58%)`, left: `hsl(${hue} 48% 38%)`, right: `hsl(${hue} 50% 46%)` }; }
 function runEngineExport(format) {
     const data = getVoxelExportData();
     if (!data) return;
@@ -226,6 +252,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
