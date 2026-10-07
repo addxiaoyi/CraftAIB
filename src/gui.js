@@ -35,6 +35,7 @@ on("#grid-render-mode", "change", () => rerenderImportedGrid());
 on("#export-grid-preview", "click", exportGridPreview);
 on("#analyze-materials", "click", analyzeImportedMaterials);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
+window.addEventListener("craftaib:mode-restored", (event) => { const nav = document.querySelector(`[data-mode="${event.detail.toLowerCase().replace(" ", "-")}"]`); nav?.click(); });
 on("#export-materials", "click", exportImportedMaterials);
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
@@ -366,6 +367,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
