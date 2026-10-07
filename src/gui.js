@@ -113,7 +113,7 @@ async function importLitematicFile(event) {
         if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
         if (message.type === "result") {
             window.craftaibImportedGrid = message.output;
-            renderImportedGrid(message.output); renderImportedMaterials(message.output);
+            renderImportedMaterials(message.output); rerenderImportedGrid();
             const size = $("#canvas-size"); if (size) size.textContent = `${message.output.width} × ${message.output.height} × ${message.output.length} blocks`;
             setWorkspaceMessage("Litematic imported."); worker.terminate();
         }
@@ -189,6 +189,19 @@ function exportGridPreview() {
 function rerenderImportedGrid() {
     if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
 }
+function requestCoreRender(grid, mode) {
+    const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+    const taskId = `render-${mode}-${Date.now()}`;
+    worker.onmessage = (event) => {
+        const message = event.data; if (message.taskId !== taskId) return;
+        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+        if (message.type !== "result") return;
+        const image = message.output; const canvas = $("#canvas"); const context = canvas?.getContext("2d"); if (!canvas || !context) return;
+        canvas.width = image.width; canvas.height = image.height; context.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0); canvas.style.display = "block"; $("#glcanvas").style.display = "none"; worker.terminate();
+    };
+    worker.onerror = () => { setWorkspaceMessage("Render worker failed.", true); worker.terminate(); };
+    worker.postMessage({ id: taskId, type: `render.${mode}`, input: grid, options: { width: 900, height: 560, cutaway: Number($("#grid-cutaway")?.value ?? 100) / 100, scale: Number($("#grid-scale")?.value ?? 100) / 100 * 10 } });
+}
 function renderImportedGrid(grid) {
     if ($("#grid-render-mode")?.value === "floor") return renderFloorGrid(grid);
     if ($("#grid-render-mode")?.value === "cutaway") return renderCutawayGrid(grid);
@@ -227,7 +240,7 @@ function runMapArtMode() {
     const palette = data.palette.map((entry) => ({ block: { id: `minecraft:${entry[0]}` }, color: { r: entry[1] ?? 0, g: entry[2] ?? 0, b: entry[3] ?? 0 } }));
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `map-art-${Date.now()}`;
     setWorkspaceMessage("Generating Map Art...");
-    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedGrid(message.output); renderImportedMaterials(message.output); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
+    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); rerenderImportedGrid(); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
     worker.onerror = () => { setWorkspaceMessage("Map Art worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: $("#map-art-dither")?.checked ?? true, staircasing: $("#map-art-staircase")?.value ?? "baseline" } });
 }
@@ -367,6 +380,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
