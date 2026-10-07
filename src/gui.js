@@ -12,11 +12,13 @@ import { downloadProject, openProjectFile, recordProjectExport, restoreProjectFr
 import { createEngineGrid } from "./exports.js";
 
 const DEFAULT_TARGET = "./res/upload.svg";
+let activeExportCancel = null;
 const $ = (selector) => document.querySelector(selector);
 const on = (selector, event, handler) => $(selector)?.addEventListener(event, handler);
 
 on("#convertButton", "click", voxelConvert);
 on("#downloadButton", "click", downloadNBT);
+on("#cancel-export", "click", cancelActiveExport);
 on("#downloadLitematicButton", "click", () => runEngineExport("litematic"));
 on("#downloadViewerButton", "click", () => runEngineExport("viewer"));
 on("#downloadGlbButton", "click", () => runEngineExport("glb"));
@@ -306,26 +308,36 @@ function resizePixelMap(source, width, height) {
     for (let y = 0; y < targetHeight; y += 1) for (let x = 0; x < targetWidth; x += 1) { const sx = Math.min(source.width - 1, Math.floor(x * source.width / targetWidth)); const sy = Math.min(source.height - 1, Math.floor(y * source.height / targetHeight)); pixels.push(source.pixels[sy * source.width + sx]); }
     return { width: targetWidth, height: targetHeight, paletteId: source.paletteId, pixels };
 }
+function cancelActiveExport() {
+    activeExportCancel?.();
+    activeExportCancel = null;
+    const button = $("#cancel-export"); if (button) button.hidden = true;
+    setWorkspaceMessage("Export cancelled.");
+}
+
 function runEngineExport(format) {
     const data = getVoxelExportData();
-    if (!data) return;
+    const input = window.craftaibImportedGrid ?? (data ? createEngineGrid(data.blocks, data.palette, data.materials) : null);
+    if (!input) return;
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
     const taskId = `export-${format}-${Date.now()}`;
+    activeExportCancel = () => worker.postMessage({ type: "cancel", taskId });
+    const cancelButton = $("#cancel-export"); if (cancelButton) cancelButton.hidden = false;
     setWorkspaceMessage(`Exporting ${format}...`);
     worker.onmessage = (event) => {
         const message = event.data;
         if (message.taskId !== taskId) return;
-        if (message.type === "progress") return;
-        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
+        if (message.type === "progress") { setWorkspaceMessage(`${format.toUpperCase()}: ${message.stage}`); return; }
+        if (message.type === "cancelled") { setWorkspaceMessage("Export cancelled."); worker.terminate(); if (cancelButton) cancelButton.hidden = true; activeExportCancel = null; return; }
+        if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); if (cancelButton) cancelButton.hidden = true; activeExportCancel = null; return; }
         if (message.type === "result") {
             const extension = format === "litematic" ? "litematic" : format === "viewer" ? "html" : format === "glb" ? "glb" : "schem";
             const blob = new Blob([message.output], { type: format === "viewer" ? "text/html;charset=utf-8" : format === "glb" ? "model/gltf-binary" : "application/gzip" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
-            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); recordProjectExport(extension, `craftaib.${extension}`); renderExportHistory(); worker.terminate();
+            const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib.${extension}`; link.click(); URL.revokeObjectURL(url);
+            setWorkspaceMessage(`${extension.toUpperCase()} exported.`); recordProjectExport(extension, `craftaib.${extension}`); renderExportHistory(); worker.terminate(); if (cancelButton) cancelButton.hidden = true; activeExportCancel = null;
         }
     };
-    worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); };
+    worker.onerror = () => { setWorkspaceMessage("Export worker failed.", true); worker.terminate(); if (cancelButton) cancelButton.hidden = true; activeExportCancel = null; };
     worker.postMessage({ id: taskId, type: "export", input, options: { format: format === "viewer" ? "html" : format } });
 }
 function imageUpdate() {
@@ -441,6 +453,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
