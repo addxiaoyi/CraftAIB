@@ -234,10 +234,13 @@ function renderMaterialGaps(gaps) {
 }
 function renderSceneLayers(grid) {
     const panel = $("#scene-layers"); if (!panel) return;
-    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="${window.craftaibLayerName ?? "Imported structure"}"><input class="layer-offset" data-axis="x" type="number" value="${window.craftaibLayerOffset?.x ?? 0}"><input class="layer-offset" data-axis="y" type="number" value="${window.craftaibLayerOffset?.y ?? 0}"><input class="layer-offset" data-axis="z" type="number" value="${window.craftaibLayerOffset?.z ?? 0}"><small>${grid.cells?.length ?? 0} blocks</small></label>`;
-    panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); }); panel.querySelectorAll(".layer-offset").forEach((input) => input.addEventListener("change", (event) => { window.craftaibLayerOffset = { ...(window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }), [event.target.dataset.axis]: Number(event.target.value) || 0 }; saveProjectToStorage(); rerenderImportedGrid(); }));
-}
-function renderImportedMaterials(grid) {
+    const layerName = window.craftaibLayerName ?? "Imported structure";
+    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="${layerName}"><input class="layer-offset" data-axis="x" type="number" value="${window.craftaibLayerOffset?.x ?? 0}"><input class="layer-offset" data-axis="y" type="number" value="${window.craftaibLayerOffset?.y ?? 0}"><input class="layer-offset" data-axis="z" type="number" value="${window.craftaibLayerOffset?.z ?? 0}"><button class="layer-remove" type="button">×</button><small>${grid.cells?.length ?? 0} blocks</small></label>`;
+    panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); });
+    panel.querySelector(".layer-name")?.addEventListener("change", (event) => { window.craftaibLayerName = event.target.value.trim() || "Imported structure"; saveProjectToStorage(); });
+    panel.querySelectorAll(".layer-offset").forEach((input) => input.addEventListener("change", (event) => { window.craftaibLayerOffset = { ...(window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }), [event.target.dataset.axis]: Number(event.target.value) || 0 }; saveProjectToStorage(); rerenderImportedGrid(); }));
+    panel.querySelector(".layer-remove")?.addEventListener("click", () => { window.craftaibImportedGrid = { ...grid, cells: [] }; renderImportedMaterials(window.craftaibImportedGrid); rerenderImportedGrid(); saveProjectToStorage(); setWorkspaceMessage("Layer removed."); });
+}function renderImportedMaterials(grid) {
     const panel = $("#imported-materials");
     if (!panel) return;
     const counts = new Map();
@@ -460,6 +463,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
