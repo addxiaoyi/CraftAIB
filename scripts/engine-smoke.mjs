@@ -5,7 +5,7 @@ import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serial
 import { fromCraftmaticSchematic, parseLitematicaBytes, parseSchematicBytes, serializeSchematic, toCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
 
 const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'stone' } }], { width: 1, height: 1, length: 1 });
-assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); const gaps = analyzeMaterials(grid, { 'minecraft:stone': 0 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(gaps[0].missing, 1); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
+assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); const gaps = analyzeMaterials(grid, { 'minecraft:stone': 0 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(gaps[0].missing, 1); const covered = analyzeMaterials(grid, { 'minecraft:cobblestone': 1 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(covered[0].substituteCoverage, 1); assert.equal(covered[0].missing, 0); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
 const project = parseProject(serializeProject(createProject('Smoke'))); assert.equal(project.name, 'Smoke');
 const edited = applyGridEdit(grid, { type: 'replace', min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 }, from: { id: 'minecraft:stone' }, to: { id: 'minecraft:gold_block' } }); assert.equal(edited.cells[0].block.id, 'minecraft:gold_block');
 const merged = mergeGrids([grid, edited], [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }]); assert.equal(merged.width, 2);
@@ -20,6 +20,7 @@ const schemRoundTrip = toCraftmaticSchematic(schem); assert.equal(schemRoundTrip
 const schemBytes = await serializeSchematic(schem); assert.equal(schemBytes[0], 0x1f); assert.equal(schemBytes[1], 0x8b);
 const parsedSchem = await parseSchematicBytes(schemBytes); assert.equal(parsedSchem.width, 1); assert.equal(parsedSchem.cells[0].block.id, 'minecraft:oak_planks');
 console.log('core engine adapter tests passed');
+
 
 
 
