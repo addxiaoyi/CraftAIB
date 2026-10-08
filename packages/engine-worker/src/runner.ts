@@ -9,6 +9,7 @@ export function createCoreRunner(): EngineRunner {
     const grid = task.input as BlockGrid;
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
+    if (task.type === 'scene.layer.rename') { const { renameLayer } = await import('@craftaib/core'); return renameLayer(task.input as any, String((task.options as any)?.layerId), String((task.options as any)?.name ?? '')); }
     if (task.type === 'scene.layer.toggle') { return toggleLayerVisibility(task.input as any, String((task.options as any)?.layerId)); }
     if (task.type === 'scene.layer.visibility') { return setLayerVisibility(task.input as any, String((task.options as any)?.layerId), Boolean((task.options as any)?.visible)); }
     if (task.type === 'scene.merge') { return mergeScenes((task.input as any)?.scenes ?? [], (task.options as any)?.offsets); }
@@ -54,6 +55,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
