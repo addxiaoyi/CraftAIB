@@ -1,5 +1,5 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
-import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
+import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
 import { createHtmlSceneViewer, createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
@@ -9,6 +9,8 @@ export function createCoreRunner(): EngineRunner {
     const grid = task.input as BlockGrid;
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
+    if (task.type === 'scene.layer.offset') { return setLayerOffset(task.input as any, String((task.options as any)?.layerId), (task.options as any)?.offset ?? { x: 0, y: 0, z: 0 }); }
+    if (task.type === 'scene.to-grid') { return sceneToGrid(task.input as any); }
     if (task.type === 'scene.layer.rename') { const { renameLayer } = await import('@craftaib/core'); return renameLayer(task.input as any, String((task.options as any)?.layerId), String((task.options as any)?.name ?? '')); }
     if (task.type === 'scene.layer.toggle') { return toggleLayerVisibility(task.input as any, String((task.options as any)?.layerId)); }
     if (task.type === 'scene.layer.visibility') { return setLayerVisibility(task.input as any, String((task.options as any)?.layerId), Boolean((task.options as any)?.visible)); }
@@ -55,6 +57,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
