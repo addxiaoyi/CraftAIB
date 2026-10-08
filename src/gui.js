@@ -47,6 +47,7 @@ on("#export-materials", "click", exportImportedMaterials);
 on("#add-scene-layer", "click", addCurrentOutputAsLayer);
 on("#merge-scene-layers", "click", mergeVisibleSceneLayers);
 on("#open-unified-viewer", "click", openUnifiedViewer);
+on("#generate-structure", "click", generateStructure);
 window.addEventListener("craftaib:scene-changed", () => { renderSceneLayers(); composeVisibleScene(); });
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
@@ -289,6 +290,25 @@ function mergeVisibleSceneLayers() {
     if (!window.craftaibSceneGraph?.grids?.length) { setWorkspaceMessage("Add at least one scene layer first.", true); return; }
     composeVisibleScene();
     setWorkspaceMessage("Visible layers merged for preview and export.");
+}
+
+
+async function generateStructure() {
+    const options = {
+        type: $("#structure-type")?.value || "house",
+        style: $("#structure-style")?.value || "fantasy",
+        floors: clamp(Number($("#structure-floors")?.value) || 2, 1, 12),
+        width: clamp(Number($("#structure-width")?.value) || 24, 8, 256),
+        length: clamp(Number($("#structure-length")?.value) || 24, 8, 256),
+        seed: Number($("#structure-seed")?.value) || 42,
+    };
+    setWorkspaceMessage("Generating Craftmatic structure...");
+    try {
+        const grid = await runWorkerTask("structure.generate", null, options);
+        addImportedLayer(grid, "craftmatic", `${options.type} / ${options.style}`);
+        document.body.dataset.mode = "structure";
+        setWorkspaceMessage("Structure generated and added as a scene layer.");
+    } catch (error) { setWorkspaceMessage(error.message, true); }
 }
 
 async function openUnifiedViewer() {

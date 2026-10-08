@@ -26,3 +26,5 @@ body[data-mode="lego"] .canvas-title strong:after{content:" · LEGO";color:#ffb8
 .layer-remove{border:0;background:transparent;color:#ff9a9a;cursor:pointer;font-size:13px}.layer-remove:hover{color:#fff}
 
 .section-actions{display:flex;gap:4px;flex-wrap:wrap}.section-actions .quiet-button{font-size:9px;padding:4px 6px}.empty-state{margin:0;color:var(--muted);font-size:10px;line-height:1.5}.layer-visibility{display:flex;align-items:center}.layer-visibility input{margin:0}
+
+.structure-controls{display:grid;gap:6px;margin-top:10px}.structure-controls label{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:6px}.structure-controls select,.structure-controls input{min-width:0}

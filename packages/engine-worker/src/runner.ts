@@ -1,12 +1,13 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
 import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
-import { createHtmlSceneViewer, createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
+import { createHtmlSceneViewer, createHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
   return async (task, emit, signal) => {
     const grid = task.input as BlockGrid;
+    if (task.type === 'structure.generate') { emit({ type: 'progress', taskId: task.id, value: 0.1, stage: 'generating structure' }); const generated = await generateStructure(task.options as any); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'generated' }); return generated; }
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
     if (task.type === 'scene.layer.remove') { const scene = task.input as any; const id = String((task.options as any)?.layerId); const layers = (scene.layers ?? []).filter((layer: any) => layer.id !== id); const keep = new Set(layers.map((layer: any) => layer.gridIndex)); return { ...scene, grids: scene.grids.filter((_: any, index: number) => keep.has(index)), layers: layers.map((layer: any, index: number) => ({ ...layer, gridIndex: index })) }; }

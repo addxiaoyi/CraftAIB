@@ -1,7 +1,7 @@
 import { restoreSceneLayers, sceneToProjectState, setSceneLayers } from './scene-store.js';
 
 const STORAGE_KEY = 'craftaib.project.v1';
-const FIELD_IDS = ['brightness-number', 'contrast-number', 'saturation-number', 'temperature-number', 'resolution-number', 'fov-number', 'yaw-number', 'pitch-number', 'depth-min-number', 'depth-max-number', 'detail-number', 'discretize-checkbox', 'pixelart-checkbox', 'enforce-boundary-checkbox', 'dither-checkbox', 'grid-render-mode', 'grid-yaw', 'grid-cutaway', 'grid-scale', 'map-art-dither', 'map-art-staircase', 'map-art-width', 'map-art-height', 'lego-color-map', 'geo-center-lat', 'geo-center-lng', 'geo-width', 'geo-length', 'geo-ground-block', 'geo-road-block', 'geo-building-block', 'geo-elevation', 'geo-vegetation', 'geo-vegetation-block'];
+const FIELD_IDS = ['brightness-number', 'contrast-number', 'saturation-number', 'temperature-number', 'resolution-number', 'fov-number', 'yaw-number', 'pitch-number', 'depth-min-number', 'depth-max-number', 'detail-number', 'discretize-checkbox', 'pixelart-checkbox', 'enforce-boundary-checkbox', 'dither-checkbox', 'grid-render-mode', 'grid-yaw', 'grid-cutaway', 'grid-scale', 'map-art-dither', 'map-art-staircase', 'map-art-width', 'map-art-height', 'lego-color-map', 'geo-center-lat', 'geo-center-lng', 'geo-width', 'geo-length', 'geo-ground-block', 'geo-road-block', 'geo-building-block', 'geo-elevation', 'geo-vegetation', 'geo-vegetation-block', 'structure-type', 'structure-style', 'structure-floors', 'structure-width', 'structure-length', 'structure-seed'];
 
 function readFormState() {
   const controls = {};
