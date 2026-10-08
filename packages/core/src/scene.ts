@@ -1,7 +1,7 @@
-import type { BlockGrid, SceneGraph } from './types.js';
+import type { BlockGrid, SceneGraph, SceneLayer } from './types.js';
 import { mergeGrids } from './merge.js';
 
-function layersFor(scene: SceneGraph) { return scene.layers ?? scene.grids.map((_, index) => ({ id: `layer-${index}`, name: `Layer ${index + 1}`, visible: true, gridIndex: index })); }
+function layersFor(scene: SceneGraph): SceneLayer[] { return scene.layers ?? scene.grids.map((_, index) => ({ id: `layer-${index}`, name: `Layer ${index + 1}`, visible: true, gridIndex: index })); }
 
 export function mergeScenes(scenes: SceneGraph[], offsets?: Array<{ x: number; y: number; z: number }>): SceneGraph {
   if (!scenes.length) throw new Error('At least one SceneGraph is required.');
@@ -15,3 +15,4 @@ export function toggleLayerVisibility(scene: SceneGraph, layerId: string): Scene
 export function setLayerOffset(scene: SceneGraph, layerId: string, offset: { x: number; y: number; z: number }): SceneGraph { return { ...scene, layers: layersFor(scene).map((layer) => layer.id === layerId ? { ...layer, offset } : { ...layer }) }; }
 export function visibleSceneGrids(scene: SceneGraph): BlockGrid[] { const layers = layersFor(scene); const visibleIndexes = new Set(layers.filter((layer) => layer.visible).map((layer) => layer.gridIndex)); return scene.grids.filter((_, index) => visibleIndexes.has(index)); }
 export function sceneToGrid(scene: SceneGraph): BlockGrid { const layers = layersFor(scene).filter((layer) => layer.visible); const grids = layers.map((layer) => scene.grids[layer.gridIndex]).filter(Boolean); const offsets = layers.map((layer) => layer.offset ?? { x: 0, y: 0, z: 0 }); if (!grids.length) throw new Error('Scene has no visible layers.'); return mergeGrids(grids, offsets); }
+
