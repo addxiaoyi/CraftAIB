@@ -9,7 +9,7 @@ function readFormState() {
   return controls;
 }
 function applyFormState(controls) {
-  for (const [id, value] of Object.entries(controls ?? {})) { const input = document.getElementById(id); if (!input) continue; if (input.type === 'checkbox') input.checked = Boolean(value); else input.value = String(value); input.dispatchEvent(new Event('change', { bubbles: true })); }
+  for (const [id, value] of Object.entries(controls ?? {})) { const input = document.getElementById(id); if (!input) continue; if (input.type === 'checkbox') input.checked = Boolean(value); else input.value = String(value); }
 }
 function readMaterialState() {
   const inventory = {}; const rules = {};

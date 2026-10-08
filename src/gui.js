@@ -545,7 +545,7 @@ function clamp(value, min, max) {
 renderExportHistory();
 updatePixelArtVisibility();
 syncDepthRange("depth-max");
-setTimeout(() => { try { restoreProjectFromStorage(); } catch (error) { setWorkspaceMessage(`Project restore failed: ${error.message}`, true); } }, 0);
+setTimeout(() => { try { restoreProjectFromStorage(); applyProcessing(); } catch (error) { setWorkspaceMessage(`Project restore failed: ${error.message}`, true); } }, 120);
 
 export { imageUpdate, imageUpdate as image_update };
 
