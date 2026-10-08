@@ -9,6 +9,7 @@ export function createCoreRunner(): EngineRunner {
     const grid = task.input as BlockGrid;
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
+    if (task.type === 'scene.layer.remove') { const scene = task.input as any; const id = String((task.options as any)?.layerId); const layers = (scene.layers ?? []).filter((layer: any) => layer.id !== id); const keep = new Set(layers.map((layer: any) => layer.gridIndex)); return { ...scene, grids: scene.grids.filter((_: any, index: number) => keep.has(index)), layers: layers.map((layer: any, index: number) => ({ ...layer, gridIndex: index })) }; }
     if (task.type === 'scene.layer.offset') { return setLayerOffset(task.input as any, String((task.options as any)?.layerId), (task.options as any)?.offset ?? { x: 0, y: 0, z: 0 }); }
     if (task.type === 'scene.to-grid') { return sceneToGrid(task.input as any); }
     if (task.type === 'scene.layer.rename') { const { renameLayer } = await import('@craftaib/core'); return renameLayer(task.input as any, String((task.options as any)?.layerId), String((task.options as any)?.name ?? '')); }
@@ -57,6 +58,8 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
+
 
 
 
