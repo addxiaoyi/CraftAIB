@@ -135,7 +135,7 @@ async function importGeoJsonFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
         const geojson = JSON.parse(await file.text()); const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `geojson-${Date.now()}`;
-        setWorkspaceMessage("Reading GeoJSON..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); rerenderImportedGrid(); document.body.dataset.mode = "geo"; setWorkspaceMessage("GeoJSON imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("GeoJSON worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "geo.geojson", input: geojson, options: { center: { lat: Number($("#geo-center-lat")?.value ?? 0), lng: Number($("#geo-center-lng")?.value ?? 0) }, width: Math.max(1, Number($("#geo-width")?.value ?? 128)), length: Math.max(1, Number($("#geo-length")?.value ?? 128)), ground: { id: $("#geo-ground-block")?.value || "minecraft:grass_block" }, road: { id: $("#geo-road-block")?.value || "minecraft:gray_concrete" }, building: { id: $("#geo-building-block")?.value || "minecraft:stone" } } });
+        setWorkspaceMessage("Reading GeoJSON..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); rerenderImportedGrid(); document.body.dataset.mode = "geo"; setWorkspaceMessage("GeoJSON imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("GeoJSON worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "geo.geojson", input: geojson, options: { center: { lat: Number($("#geo-center-lat")?.value ?? 0), lng: Number($("#geo-center-lng")?.value ?? 0) }, width: Math.max(1, Number($("#geo-width")?.value ?? 128)), length: Math.max(1, Number($("#geo-length")?.value ?? 128)), ground: { id: $("#geo-ground-block")?.value || "minecraft:grass_block" }, road: { id: $("#geo-road-block")?.value || "minecraft:gray_concrete" }, building: { id: $("#geo-building-block")?.value || "minecraft:stone" }, elevation: String($("#geo-elevation")?.value || "").split(",").map(Number).filter(Number.isFinite), vegetation: $("#geo-vegetation")?.checked ?? false } });
     } catch (error) { setWorkspaceMessage(error.message, true); }
 }
 async function importGridFile(event) {
@@ -453,6 +453,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
