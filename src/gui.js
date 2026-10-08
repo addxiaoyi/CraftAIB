@@ -197,6 +197,7 @@ async function importSchematicFile(event) {
     worker.onerror = () => { setWorkspaceMessage("Schematic import worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "schematic.parse", input: new Uint8Array(await file.arrayBuffer()) });
 }
+function csvEscape(value) { const text = String(value ?? ""); return /[",\\n]/.test(text) ? `"${text.replaceAll("\\\"", "\\\"\\\"")}"` : text; }
 function renderExportHistory() {
     const panel = $("#export-history"); if (!panel) return;
     try { const project = JSON.parse(localStorage.getItem("craftaib.project.v1") ?? "{}"); const exports = (project.exports ?? []).slice(-6).reverse(); panel.innerHTML = exports.length ? `<div class="eyebrow history-label">EXPORT HISTORY</div>` + exports.map((item) => `<div class="history-row"><span>${item.name}</span><small>${new Date(item.createdAt).toLocaleString()}</small></div>`).join("") : ""; } catch { panel.textContent = ""; }
@@ -207,7 +208,7 @@ function exportImportedMaterials() {
     const counts = new Map();
     for (const cell of grid.cells ?? []) { const id = cell.block?.id ?? "minecraft:air"; counts.set(id, (counts.get(id) ?? 0) + 1); }
     const rows = ["block,required,available,missing,substitutes"];
-    for (const [id, required] of counts) { const input = document.querySelector(`[data-material-id="${id}"]`); const available = Math.max(0, Number(input?.value) || 0); rows.push([id, required, available, Math.max(0, required - available), ""].join(",")); }
+    for (const [id, required] of counts) { const input = document.querySelector(`[data-material-id="${id}"]`); const available = Math.max(0, Number(input?.value) || 0); rows.push([id, required, available, Math.max(0, required - available), document.querySelector(`[data-substitute-id="${id}"]`)?.value ?? ""].map(csvEscape).join(",")); }
     const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "craftaib-materials.csv"; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Materials exported.");
 }
 function analyzeImportedMaterials() {
@@ -453,6 +454,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
