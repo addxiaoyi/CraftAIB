@@ -1,8 +1,8 @@
 import type { BlockGrid } from '@craftaib/core';
-import { mergeGrids, validateGrid, visibleSceneGrids, type SceneGraph } from '@craftaib/core';
+import { sceneToGrid, validateGrid, type SceneGraph } from '@craftaib/core';
 import { serializeGlb } from './glb.js';
 
-export function createHtmlSceneViewer(scene: SceneGraph): string { return createHtmlViewer(mergeGrids(visibleSceneGrids(scene))); }
+export function createHtmlSceneViewer(scene: SceneGraph): string { return createHtmlViewer(sceneToGrid(scene)); }
 
 export function createHtmlViewer(grid: BlockGrid): string {
   validateGrid(grid);
