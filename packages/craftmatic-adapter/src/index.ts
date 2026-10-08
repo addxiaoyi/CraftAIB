@@ -31,3 +31,4 @@ export * from './geo-poi.js';
 export * from './lego-colors.js';
 
 export * from './structure.js';
+export * from './textured-viewer.js';

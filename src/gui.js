@@ -319,7 +319,7 @@ async function openUnifiedViewer() {
     viewer.document.title = "CraftAIB Viewer";
     viewer.document.body.textContent = "Preparing viewer...";
     try {
-        const html = await runWorkerTask("viewer.html", grid, null);
+        const html = await runWorkerTask("viewer.textured-html", grid, null);
         const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
         viewer.location.href = url;
         setTimeout(() => URL.revokeObjectURL(url), 60_000);

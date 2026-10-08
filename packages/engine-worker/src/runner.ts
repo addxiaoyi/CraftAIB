@@ -1,7 +1,7 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
 import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
-import { createHtmlSceneViewer, createHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
+import { createHtmlSceneViewer, createHtmlViewer, createTexturedHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
@@ -48,6 +48,7 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'glb.serialize') { validateGrid(grid); return serializeGlb(grid); }
     if (task.type === 'viewer.scene.html') { return createHtmlSceneViewer(task.input as any); }
     if (task.type === 'viewer.html') { validateGrid(grid); return createHtmlViewer(grid); }
+    if (task.type === 'viewer.textured-html') { validateGrid(grid); return createTexturedHtmlViewer(grid); }
     if (task.type === 'render.floor') { validateGrid(grid); return renderFloor(grid, task.options as any); }
     if (task.type === 'render.cutaway') { validateGrid(grid); return renderCutaway(grid, task.options as any); }
     if (task.type === 'render.exterior') { validateGrid(grid); return renderExterior(grid, task.options as any); }
