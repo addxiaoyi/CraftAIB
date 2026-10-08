@@ -40,4 +40,4 @@ This matrix is the implementation index. `Direct` means the capability can be wr
 - LEGO adapter now covers catalog search, LDraw parsing, resource resolution/loading, scene metadata, part-dimension voxelization, rotation matrices, color mapping, and Worker tasks `lego.search`, `lego.parse`, `lego.load`, `lego.scene`, `lego.blockgrid`, `lego.scene-grid`, and `lego.colors`.
 - Geo adapter now covers roads, GeoJSON lines/polygons/points, OSM-like tag mapping, elevation/levels, vegetation, POIs, GeoProjection, and Worker tasks `geo.geojson`, `geo.blockgrid`, and `geo.poi`.
 - Scene composition now includes `mergeGrids`, `mergeScenes`, and Worker task `scene.merge`.
-- CLI now exposes validation, materials, unified export, PNG rendering, Map Art, GeoJSON, LEGO, and Grid merge commands.
+- CLI now exposes validation, materials, unified export, PNG rendering, Map Art, GeoJSON, LEGO, Grid merge, and Craftmatic structure generation commands. `structure.generate` is available in the Worker and the CLI; it builds the pinned Craftmatic submodule before engine package checks.

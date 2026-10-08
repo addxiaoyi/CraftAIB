@@ -12,7 +12,7 @@
 
 - Move Voxelartcraft's image-processing and WebGL state behind an explicit adapter API instead of DOM/global state.
 - Add Cartographer palette matching, dithering, staircasing, balanced material allocation, and Litematica serialization.
-- Add Craftmatic Schematic v2 reader/writer, structure generators, PNG renderers, Three.js scene adapter, GLB, and HTML viewer exports.
+- Add Craftmatic Schematic v2 reader/writer, structure generators, PNG renderers, Three.js scene adapter, GLB, and HTML viewer exports. Structure generation is now exposed through the unified Worker and Node CLI.
 - Add Worker task registry and cancellation propagation for heavy operations.
 - Add unified project persistence and connect the current minimal studio to engine tasks.
 - Add isolated LEGO/LDraw and geospatial scene adapters after core Minecraft paths are stable.
