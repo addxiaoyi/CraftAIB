@@ -1,7 +1,7 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
 import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, setLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
-import { createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
+import { createHtmlSceneViewer, createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
@@ -40,6 +40,7 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'materials.analyze') { validateGrid(grid); return analyzeMaterials(grid, (task.options as any)?.inventory ?? {}, (task.options as any)?.rules ?? {}); }
     if (task.type === 'materials.count') { validateGrid(grid); if (signal.aborted) throw new Error('Task cancelled.'); return Object.fromEntries(countMaterials(grid)); }
     if (task.type === 'glb.serialize') { validateGrid(grid); return serializeGlb(grid); }
+    if (task.type === 'viewer.scene.html') { return createHtmlSceneViewer(task.input as any); }
     if (task.type === 'viewer.html') { validateGrid(grid); return createHtmlViewer(grid); }
     if (task.type === 'render.floor') { validateGrid(grid); return renderFloor(grid, task.options as any); }
     if (task.type === 'render.cutaway') { validateGrid(grid); return renderCutaway(grid, task.options as any); }
@@ -52,6 +53,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 

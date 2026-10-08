@@ -1,6 +1,8 @@
 import type { BlockGrid } from '@craftaib/core';
-import { validateGrid } from '@craftaib/core';
+import { mergeGrids, validateGrid, visibleSceneGrids, type SceneGraph } from '@craftaib/core';
 import { serializeGlb } from './glb.js';
+
+export function createHtmlSceneViewer(scene: SceneGraph): string { return createHtmlViewer(mergeGrids(visibleSceneGrids(scene))); }
 
 export function createHtmlViewer(grid: BlockGrid): string {
   validateGrid(grid);
@@ -18,6 +20,8 @@ button.onclick=async()=>{canvas.style.display='none';panel.style.display='block'
 </script>`;
 }
 function bytesToBase64(bytes: Uint8Array) { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); }
+
+
 
 
 
