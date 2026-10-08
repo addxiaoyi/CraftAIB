@@ -41,9 +41,12 @@ export type BlockGrid = {
   origin: { x: number; y: number; z: number };
 };
 
+export type SceneLayer = { id: string; name: string; visible: boolean; gridIndex: number };
+
 export type SceneGraph = {
   version: 1;
   grids: BlockGrid[];
+  layers?: SceneLayer[];
   entities?: unknown[];
   metadata: Record<string, unknown>;
 };
@@ -62,3 +65,6 @@ export type EngineEvent =
   | { type: 'cancelled'; taskId: string };
 
 export type ExportFormat = 'json' | 'nbt' | 'schem' | 'litematic' | 'png' | 'jpeg' | 'glb' | 'html';
+
+
+
