@@ -230,7 +230,7 @@ function analyzeImportedMaterials() {
 
 function renderMaterialGaps(gaps) {
     const panel = $("#imported-materials"); if (!panel) return;
-    panel.innerHTML = gaps.slice(0, 12).map((gap) => `<div class="material-row ${gap.missing ? "is-missing" : "is-ready"}"><span>${gap.id.replace("minecraft:", "")}</span><input data-material-id="${gap.id}" type="number" min="0" value="${gap.available}"><b>${gap.missing ? `-${gap.missing}` : "ready"}</b></div>`).join("");
+    panel.innerHTML = gaps.slice(0, 12).map((gap) => `<div class="material-row ${gap.missing ? "is-missing" : "is-ready"}"><span>${gap.id.replace("minecraft:", "")}</span><input data-material-id="${gap.id}" type="number" min="0" value="${gap.available}"><small title="direct missing / substitute coverage">${gap.directMissing} / ${gap.substituteCoverage}</small><b>${gap.missing ? `-${gap.missing}` : "ready"}</b></div>`).join("");
 }
 function renderImportedMaterials(grid) {
     const panel = $("#imported-materials");
@@ -454,6 +454,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
