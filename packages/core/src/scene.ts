@@ -19,3 +19,9 @@ export function visibleSceneGrids(scene: SceneGraph): BlockGrid[] {
   return scene.grids.filter((_, index) => visibleIndexes.has(index));
 }
 
+
+export function toggleLayerVisibility(scene: SceneGraph, layerId: string): SceneGraph {
+  const layer = (scene.layers ?? []).find((candidate) => candidate.id === layerId);
+  if (!layer) throw new Error(`Scene layer '${layerId}' was not found.`);
+  return setLayerVisibility(scene, layerId, !layer.visible);
+}
