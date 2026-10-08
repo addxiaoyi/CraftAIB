@@ -4,13 +4,12 @@ import type { SchematicLike } from './index.js';
 
 export async function serializeSchematic(grid: BlockGrid): Promise<Uint8Array> {
   validateGrid(grid);
-  const schematic = toSchematicLike(grid);
   const palette = new Map<string, number>([['minecraft:air', 0]]);
-  for (const state of schematic.palette) if (!palette.has(state)) palette.set(state, palette.size);
+  const byPosition = new Map(grid.cells.map((cell) => [`${cell.x}:${cell.y}:${cell.z}`, formatState(cell.block)]));
+  for (const state of byPosition.values()) if (!palette.has(state)) palette.set(state, palette.size);
   const blockData: number[] = [];
   for (let y = 0; y < grid.height; y += 1) for (let z = 0; z < grid.length; z += 1) for (let x = 0; x < grid.width; x += 1) {
-    const cell = grid.cells.find((candidate) => candidate.x === x && candidate.y === y && candidate.z === z);
-    blockData.push(...encodeVarint(cell ? palette.get(cell.block.id) ?? 0 : 0));
+    blockData.push(...encodeVarint(palette.get(byPosition.get(`${x}:${y}:${z}`) ?? 'minecraft:air') ?? 0));
   }
   const writer = new Writer();
   writer.tag(10, 'Schematic');

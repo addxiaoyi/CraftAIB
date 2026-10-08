@@ -6,7 +6,7 @@ export async function parseLitematicaBytes(input: Uint8Array): Promise<BlockGrid
   const region = root.Regions.value.map.value;
   const size = region.Size.value;
   const width = Math.abs(size.x.value); const height = Math.abs(size.y.value); const length = Math.abs(size.z.value);
-  const palette = region.BlockStatePalette.value.value.map((entry: any) => entry.Name.value);
+  const palette = region.BlockStatePalette.value.value.map((entry: any) => formatState(entry));
   const words = region.BlockStates.value;
   const bits = Math.max(2, Math.ceil(Math.log2(palette.length))); const perWord = Math.floor(64 / bits); const mask = (1n << BigInt(bits)) - 1n;
   const cells = [];
@@ -18,5 +18,6 @@ export async function parseLitematicaBytes(input: Uint8Array): Promise<BlockGrid
   }
   return createGrid(cells, { width, height, length }, 'craftmatic');
 }
+function formatState(entry: any) { const name = entry.Name?.value ?? 'minecraft:air'; const properties = entry.Properties?.value ?? {}; const pairs = Object.entries(properties).map(([key, value]: [string, any]) => `${key}=${value.value}`); return pairs.length ? `${name}[${pairs.join(',')}]` : name; }
 function parseState(value: string) { const match = value.match(/^([^[]+)(?:\[(.*)\])?$/); if (!match) return { id: value }; const properties = match[2] ? Object.fromEntries(match[2].split(',').map((item) => item.split('='))) : undefined; return { id: match[1], ...(properties ? { properties } : {}) }; }
 
