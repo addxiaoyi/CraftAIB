@@ -46,6 +46,7 @@ window.addEventListener("craftaib:mode-restored", (event) => { const nav = docum
 on("#export-materials", "click", exportImportedMaterials);
 on("#add-scene-layer", "click", addCurrentOutputAsLayer);
 on("#merge-scene-layers", "click", mergeVisibleSceneLayers);
+on("#open-unified-viewer", "click", openUnifiedViewer);
 window.addEventListener("craftaib:scene-changed", () => { renderSceneLayers(); composeVisibleScene(); });
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
@@ -288,6 +289,25 @@ function mergeVisibleSceneLayers() {
     if (!window.craftaibSceneGraph?.grids?.length) { setWorkspaceMessage("Add at least one scene layer first.", true); return; }
     composeVisibleScene();
     setWorkspaceMessage("Visible layers merged for preview and export.");
+}
+
+async function openUnifiedViewer() {
+    const grid = window.craftaibImportedGrid;
+    if (!grid?.cells?.length) { setWorkspaceMessage("Create or import a structure before opening the 3D viewer.", true); return; }
+    const viewer = window.open("about:blank", "craftaib-viewer");
+    if (!viewer) { setWorkspaceMessage("The browser blocked the viewer window. Allow pop-ups and retry.", true); return; }
+    viewer.document.title = "CraftAIB Viewer";
+    viewer.document.body.textContent = "Preparing viewer...";
+    try {
+        const html = await runWorkerTask("viewer.html", grid, null);
+        const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        viewer.location.href = url;
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        setWorkspaceMessage("3D viewer opened in a new tab.");
+    } catch (error) {
+        viewer.close();
+        setWorkspaceMessage(error.message, true);
+    }
 }
 
 function runWorkerTask(type, input, options) {
