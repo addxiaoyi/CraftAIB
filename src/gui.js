@@ -234,7 +234,7 @@ function renderMaterialGaps(gaps) {
 }
 function renderSceneLayers(grid) {
     const panel = $("#scene-layers"); if (!panel) return;
-    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><span>Imported structure</span><small>${grid.cells?.length ?? 0} blocks</small></label>`;
+    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="Imported structure"><small>${grid.cells?.length ?? 0} blocks</small></label>`;
     panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); });
 }
 function renderImportedMaterials(grid) {
@@ -459,6 +459,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
