@@ -234,8 +234,8 @@ function renderMaterialGaps(gaps) {
 }
 function renderSceneLayers(grid) {
     const panel = $("#scene-layers"); if (!panel) return;
-    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="Imported structure"><small>${grid.cells?.length ?? 0} blocks</small></label>`;
-    panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); });
+    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="${window.craftaibLayerName ?? "Imported structure"}"><input class="layer-offset" data-axis="x" type="number" value="${window.craftaibLayerOffset?.x ?? 0}"><input class="layer-offset" data-axis="y" type="number" value="${window.craftaibLayerOffset?.y ?? 0}"><input class="layer-offset" data-axis="z" type="number" value="${window.craftaibLayerOffset?.z ?? 0}"><small>${grid.cells?.length ?? 0} blocks</small></label>`;
+    panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); }); panel.querySelectorAll(".layer-offset").forEach((input) => input.addEventListener("change", (event) => { window.craftaibLayerOffset = { ...(window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }), [event.target.dataset.axis]: Number(event.target.value) || 0 }; saveProjectToStorage(); rerenderImportedGrid(); }));
 }
 function renderImportedMaterials(grid) {
     const panel = $("#imported-materials");
@@ -249,8 +249,9 @@ function exportGridPreview() {
     if (!window.craftaibImportedGrid || !canvas) { setWorkspaceMessage("Import a structure before exporting its preview.", true); return; }
     canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib-${$("#grid-render-mode")?.value ?? "preview"}.png`; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Preview PNG exported."); recordProjectExport("png", link.download); }, "image/png");
 }
+function offsetGrid(grid) { const offset = window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }; return { ...grid, cells: grid.cells.map((cell) => ({ ...cell, x: cell.x + offset.x, y: cell.y + offset.y, z: cell.z + offset.z })) }; }
 function rerenderImportedGrid() {
-    if (window.craftaibImportedGrid) renderImportedGrid(window.craftaibImportedGrid);
+    if (window.craftaibImportedGrid) renderImportedGrid(offsetGrid(window.craftaibImportedGrid));
 }
 function requestCoreRender(grid, mode) {
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
@@ -459,6 +460,7 @@ updatePixelArtVisibility();
 syncDepthRange("depth-max");
 
 export { imageUpdate, imageUpdate as image_update };
+
 
 
 
