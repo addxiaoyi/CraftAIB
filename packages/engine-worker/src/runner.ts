@@ -1,5 +1,5 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
-import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, renderCutaway, renderExterior, renderFloor, validateGrid } from '@craftaib/core';
+import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
 import { createHtmlViewer, defaultLDrawColorBlocks, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
 
@@ -19,6 +19,8 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'lego.scene') { return ldrawToScene((task.input as any)?.bricks ?? []); }
     if (task.type === 'lego.parse') { return parseLDraw(String(task.input ?? '')); }
     if (task.type === 'lego.search') { return searchLegoCatalog(task.input as any, String((task.options as any)?.query ?? ''), Number((task.options as any)?.limit ?? 24)); }
+    if (task.type === 'checkpoint.save') { return serializeCheckpoint(validateGrid(grid)); }
+    if (task.type === 'checkpoint.load') { return parseCheckpoint(String(task.input ?? '')); }
     if (task.type === 'grid.edit') { return applyGridEdit(grid, task.options as any); }
     if (task.type === 'export') {
       const format = (task.options as any)?.format;
@@ -49,6 +51,7 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
+
 
 
 
