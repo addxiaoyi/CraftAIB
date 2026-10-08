@@ -24,3 +24,5 @@ body[data-mode="lego"] .canvas-title strong:after{content:" · LEGO";color:#ffb8
 .layer-name{min-width:0;width:100%;border:0;background:transparent;color:var(--text-dim);font-size:10px;padding:0 2px}.layer-name:focus{outline:1px solid var(--blue);border-radius:3px}
 .layer-row{grid-template-columns:16px minmax(80px,1fr) 28px 28px 28px auto}.layer-offset{width:26px;min-width:0;border:1px solid var(--line);border-radius:3px;background:var(--surface-3);color:var(--muted);font-size:8px;padding:3px}
 .layer-remove{border:0;background:transparent;color:#ff9a9a;cursor:pointer;font-size:13px}.layer-remove:hover{color:#fff}
+
+.section-actions{display:flex;gap:4px;flex-wrap:wrap}.section-actions .quiet-button{font-size:9px;padding:4px 6px}.empty-state{margin:0;color:var(--muted);font-size:10px;line-height:1.5}.layer-visibility{display:flex;align-items:center}.layer-visibility input{margin:0}

@@ -10,6 +10,7 @@ import {
 } from "./script.js";
 import { downloadProject, openProjectFile, recordProjectExport, restoreProjectFromStorage, saveProjectToStorage } from "./project-store.js";
 import { createEngineGrid } from "./exports.js";
+import { addSceneLayer, getSceneLayers, removeSceneLayer, updateSceneLayer } from "./scene-store.js";
 
 const DEFAULT_TARGET = "./res/upload.svg";
 let activeExportCancel = null;
@@ -43,6 +44,9 @@ on("#lego-export-colors", "click", exportLegoColors);
 window.addEventListener("craftaib:grid-restored", (event) => { renderImportedGrid(event.detail); renderImportedMaterials(event.detail); });
 window.addEventListener("craftaib:mode-restored", (event) => { const nav = document.querySelector(`[data-mode="${event.detail.toLowerCase().replace(" ", "-")}"]`); nav?.click(); });
 on("#export-materials", "click", exportImportedMaterials);
+on("#add-scene-layer", "click", addCurrentOutputAsLayer);
+on("#merge-scene-layers", "click", mergeVisibleSceneLayers);
+window.addEventListener("craftaib:scene-changed", () => { renderSceneLayers(); composeVisibleScene(); });
 on("#save-project", "click", () => { downloadProject(); setWorkspaceMessage("Project saved."); });
 on("#open-project", "click", () => $("#project-input")?.click());
 on("#open-schematic", "click", () => $("#schematic-input")?.click());
@@ -127,7 +131,7 @@ async function importLDrawFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
         const text = await file.text(); const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `ldraw-${Date.now()}`;
-        setWorkspaceMessage("Reading LDraw model..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); renderSceneLayers(message.output); rerenderImportedGrid(); document.body.dataset.mode = "lego"; setWorkspaceMessage("LDraw model imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("LDraw worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "lego.blockgrid", input: { bricks: (await runLDrawParse(text)).bricks }, options: { lduPerBlock: 20, defaultBlock: { id: "minecraft:stone" } } });
+        setWorkspaceMessage("Reading LDraw model..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { addImportedLayer(message.output, "lego", "LDraw model"); document.body.dataset.mode = "lego"; setWorkspaceMessage("LDraw model imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("LDraw worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "lego.blockgrid", input: { bricks: (await runLDrawParse(text)).bricks }, options: { lduPerBlock: 20, defaultBlock: { id: "minecraft:stone" } } });
     } catch (error) { setWorkspaceMessage(error.message, true); }
 }
 async function runLDrawParse(text) { return new Promise((resolve, reject) => { const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `ldraw-parse-${Date.now()}`; worker.onmessage = (event) => { if (event.data.taskId !== taskId) return; if (event.data.type === "result") { resolve(event.data.output); worker.terminate(); } if (event.data.type === "error") { reject(new Error(event.data.message)); worker.terminate(); } }; worker.onerror = () => { reject(new Error("LDraw parser worker failed.")); worker.terminate(); }; worker.postMessage({ id: taskId, type: "lego.parse", input: text }); }); }
@@ -135,7 +139,7 @@ async function importGeoJsonFile(event) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
         const geojson = JSON.parse(await file.text()); const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `geojson-${Date.now()}`;
-        setWorkspaceMessage("Reading GeoJSON..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); renderSceneLayers(message.output); rerenderImportedGrid(); document.body.dataset.mode = "geo"; setWorkspaceMessage("GeoJSON imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("GeoJSON worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "geo.geojson", input: geojson, options: { center: { lat: Number($("#geo-center-lat")?.value ?? 0), lng: Number($("#geo-center-lng")?.value ?? 0) }, width: Math.max(1, Number($("#geo-width")?.value ?? 128)), length: Math.max(1, Number($("#geo-length")?.value ?? 128)), ground: { id: $("#geo-ground-block")?.value || "minecraft:grass_block" }, road: { id: $("#geo-road-block")?.value || "minecraft:gray_concrete" }, building: { id: $("#geo-building-block")?.value || "minecraft:stone" }, elevation: String($("#geo-elevation")?.value || "").split(",").map(Number).filter(Number.isFinite), vegetation: $("#geo-vegetation")?.checked ?? false, vegetationBlock: { id: $("#geo-vegetation-block")?.value || "minecraft:oak_leaves" } } });
+        setWorkspaceMessage("Reading GeoJSON..."); worker.onmessage = (messageEvent) => { const message = messageEvent.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { addImportedLayer(message.output, "geo", "GeoJSON scene"); document.body.dataset.mode = "geo"; setWorkspaceMessage("GeoJSON imported."); worker.terminate(); } }; worker.onerror = () => { setWorkspaceMessage("GeoJSON worker failed.", true); worker.terminate(); }; worker.postMessage({ id: taskId, type: "geo.geojson", input: geojson, options: { center: { lat: Number($("#geo-center-lat")?.value ?? 0), lng: Number($("#geo-center-lng")?.value ?? 0) }, width: Math.max(1, Number($("#geo-width")?.value ?? 128)), length: Math.max(1, Number($("#geo-length")?.value ?? 128)), ground: { id: $("#geo-ground-block")?.value || "minecraft:grass_block" }, road: { id: $("#geo-road-block")?.value || "minecraft:gray_concrete" }, building: { id: $("#geo-building-block")?.value || "minecraft:stone" }, elevation: String($("#geo-elevation")?.value || "").split(",").map(Number).filter(Number.isFinite), vegetation: $("#geo-vegetation")?.checked ?? false, vegetationBlock: { id: $("#geo-vegetation-block")?.value || "minecraft:oak_leaves" } } });
     } catch (error) { setWorkspaceMessage(error.message, true); }
 }
 async function importGridFile(event) {
@@ -149,7 +153,7 @@ async function importGridFile(event) {
             const message = messageEvent.data;
             if (message.taskId !== taskId) return;
             if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
-            if (message.type === "result") { window.craftaibImportedGrid = grid; renderImportedMaterials(grid); rerenderImportedGrid(); setWorkspaceMessage("Grid imported and validated."); worker.terminate(); }
+            if (message.type === "result") { addImportedLayer(grid, "user", "Imported grid"); setWorkspaceMessage("Grid imported and validated."); worker.terminate(); }
         };
         worker.onerror = () => { setWorkspaceMessage("Grid validation worker failed.", true); worker.terminate(); };
         worker.postMessage({ id: taskId, type: "grid.validate", input: grid });
@@ -165,8 +169,7 @@ async function importGridFile(event) {
         if (message.taskId !== taskId) return;
         if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
         if (message.type === "result") {
-            window.craftaibImportedGrid = message.output;
-            renderImportedMaterials(message.output); renderSceneLayers(message.output); rerenderImportedGrid();
+            addImportedLayer(message.output, "craftmatic", "Litematic structure");
             const size = $("#canvas-size"); if (size) size.textContent = `${message.output.width} × ${message.output.height} × ${message.output.length} blocks`;
             setWorkspaceMessage("Litematic imported."); worker.terminate();
         }
@@ -185,7 +188,7 @@ async function importSchematicFile(event) {
         if (message.taskId !== taskId) return;
         if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; }
         if (message.type === "result") {
-            window.craftaibImportedGrid = message.output;
+            addImportedLayer(message.output, "craftmatic", "Schematic structure");
             renderImportedGrid(message.output);
             renderImportedMaterials(message.output);
             const size = $("#canvas-size");
@@ -232,15 +235,76 @@ function renderMaterialGaps(gaps) {
     const panel = $("#imported-materials"); if (!panel) return;
     panel.innerHTML = gaps.slice(0, 12).map((gap) => `<div class="material-row ${gap.missing ? "is-missing" : "is-ready"}"><span>${gap.id.replace("minecraft:", "")}</span><input data-material-id="${gap.id}" type="number" min="0" value="${gap.available}"><small title="direct missing / substitute coverage">${gap.directMissing} / ${gap.substituteCoverage}</small><b>${gap.missing ? `-${gap.missing}` : "ready"}</b></div>`).join("");
 }
-function renderSceneLayers(grid) {
+function addImportedLayer(grid, source = "user", name = "") {
+    addSceneLayer(grid, source, name);
+    composeVisibleScene();
+    renderSceneLayers();
+    renderImportedMaterials(grid);
+    saveProjectToStorage();
+}
+
+function addCurrentOutputAsLayer() {
+    const grid = window.craftaibImportedGrid;
+    if (!grid?.cells?.length) { setWorkspaceMessage("Create or import a structure first.", true); return; }
+    addImportedLayer(grid, "user", `Layer ${getSceneLayers().length + 1}`);
+    setWorkspaceMessage("Current output added as a scene layer.");
+}
+
+function renderSceneLayers() {
     const panel = $("#scene-layers"); if (!panel) return;
-    const layerName = window.craftaibLayerName ?? "Imported structure";
-    panel.innerHTML = `<label class="layer-row"><input type="checkbox" data-layer-visible checked><input class="layer-name" value="${layerName}"><input class="layer-offset" data-axis="x" type="number" value="${window.craftaibLayerOffset?.x ?? 0}"><input class="layer-offset" data-axis="y" type="number" value="${window.craftaibLayerOffset?.y ?? 0}"><input class="layer-offset" data-axis="z" type="number" value="${window.craftaibLayerOffset?.z ?? 0}"><button class="layer-remove" type="button">×</button><small>${grid.cells?.length ?? 0} blocks</small></label>`;
-    panel.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { window.craftaibLayerVisible = event.target.checked; rerenderImportedGrid(); });
-    panel.querySelector(".layer-name")?.addEventListener("change", (event) => { window.craftaibLayerName = event.target.value.trim() || "Imported structure"; saveProjectToStorage(); });
-    panel.querySelectorAll(".layer-offset").forEach((input) => input.addEventListener("change", (event) => { window.craftaibLayerOffset = { ...(window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }), [event.target.dataset.axis]: Number(event.target.value) || 0 }; saveProjectToStorage(); rerenderImportedGrid(); }));
-    panel.querySelector(".layer-remove")?.addEventListener("click", () => { window.craftaibImportedGrid = { ...grid, cells: [] }; renderImportedMaterials(window.craftaibImportedGrid); rerenderImportedGrid(); saveProjectToStorage(); setWorkspaceMessage("Layer removed."); });
-}function renderImportedMaterials(grid) {
+    const layers = getSceneLayers();
+    if (!layers.length) { panel.innerHTML = '<p class="empty-state">No layers yet. Import a structure or generate Map Art.</p>'; return; }
+    panel.innerHTML = layers.map((layer) => `<div class="layer-row" data-layer-id="${layer.id}">
+        <label class="layer-visibility"><input type="checkbox" data-layer-visible ${layer.visible ? "checked" : ""} aria-label="Show ${layer.name}"></label>
+        <input class="layer-name" value="${escapeHtml(layer.name)}" aria-label="Layer name">
+        <input class="layer-offset" data-axis="x" type="number" value="${layer.offset?.x ?? 0}" aria-label="X offset">
+        <input class="layer-offset" data-axis="y" type="number" value="${layer.offset?.y ?? 0}" aria-label="Y offset">
+        <input class="layer-offset" data-axis="z" type="number" value="${layer.offset?.z ?? 0}" aria-label="Z offset">
+        <button class="layer-remove" type="button" aria-label="Remove ${layer.name}">×</button>
+        <small>${layer.grid.cells?.length ?? 0} blocks</small>
+    </div>`).join("");
+    for (const row of panel.querySelectorAll("[data-layer-id]")) {
+        const layerId = row.dataset.layerId;
+        row.querySelector("[data-layer-visible]")?.addEventListener("change", (event) => { updateSceneLayer(layerId, { visible: event.target.checked }); saveProjectToStorage(); });
+        row.querySelector(".layer-name")?.addEventListener("change", (event) => { updateSceneLayer(layerId, { name: event.target.value.trim() || "Unnamed layer" }); saveProjectToStorage(); });
+        row.querySelectorAll(".layer-offset").forEach((input) => input.addEventListener("change", () => { const layer = getSceneLayers().find((item) => item.id === layerId); updateSceneLayer(layerId, { offset: { ...(layer?.offset ?? {}), [input.dataset.axis]: Number(input.value) || 0 } }); saveProjectToStorage(); }));
+        row.querySelector(".layer-remove")?.addEventListener("click", () => { removeSceneLayer(layerId); saveProjectToStorage(); setWorkspaceMessage("Scene layer removed."); });
+    }
+}
+
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char])); }
+
+function composeVisibleScene() {
+    const scene = window.craftaibSceneGraph;
+    if (!scene?.grids?.length) { window.craftaibImportedGrid = null; renderSceneLayers(); return; }
+    runWorkerTask("scene.to-grid", scene, null).then((grid) => {
+        window.craftaibImportedGrid = grid;
+        renderImportedMaterials(grid);
+        rerenderImportedGrid();
+    }).catch((error) => setWorkspaceMessage(error.message, true));
+}
+
+function mergeVisibleSceneLayers() {
+    if (!window.craftaibSceneGraph?.grids?.length) { setWorkspaceMessage("Add at least one scene layer first.", true); return; }
+    composeVisibleScene();
+    setWorkspaceMessage("Visible layers merged for preview and export.");
+}
+
+function runWorkerTask(type, input, options) {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" });
+        const taskId = `${type.replaceAll(".", "-")}-${Date.now()}`;
+        worker.onmessage = (event) => {
+            const message = event.data; if (message.taskId !== taskId) return;
+            if (message.type === "result") { resolve(message.output); worker.terminate(); return; }
+            if (message.type === "error") { reject(new Error(message.message)); worker.terminate(); }
+        };
+        worker.onerror = () => { reject(new Error(`${type} worker failed.`)); worker.terminate(); };
+        worker.postMessage({ id: taskId, type, input, options });
+    });
+}
+
+function renderImportedMaterials(grid) {
     const panel = $("#imported-materials");
     if (!panel) return;
     const counts = new Map();
@@ -252,7 +316,7 @@ function exportGridPreview() {
     if (!window.craftaibImportedGrid || !canvas) { setWorkspaceMessage("Import a structure before exporting its preview.", true); return; }
     canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `craftaib-${$("#grid-render-mode")?.value ?? "preview"}.png`; link.click(); URL.revokeObjectURL(url); setWorkspaceMessage("Preview PNG exported."); recordProjectExport("png", link.download); }, "image/png");
 }
-function offsetGrid(grid) { const offset = window.craftaibLayerOffset ?? { x: 0, y: 0, z: 0 }; return { ...grid, cells: grid.cells.map((cell) => ({ ...cell, x: cell.x + offset.x, y: cell.y + offset.y, z: cell.z + offset.z })) }; }
+function offsetGrid(grid) { return grid; }
 function rerenderImportedGrid() {
     if (window.craftaibImportedGrid) renderImportedGrid(offsetGrid(window.craftaibImportedGrid));
 }
@@ -309,7 +373,7 @@ function runMapArtMode() {
     const palette = data.palette.map((entry) => ({ block: { id: `minecraft:${entry[0]}` }, color: { r: entry[1] ?? 0, g: entry[2] ?? 0, b: entry[3] ?? 0 } }));
     const worker = new Worker("./packages/engine-worker/dist/browser-worker.js", { type: "module" }); const taskId = `map-art-${Date.now()}`;
     setWorkspaceMessage("Generating Map Art...");
-    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { window.craftaibImportedGrid = message.output; renderImportedMaterials(message.output); renderSceneLayers(message.output); rerenderImportedGrid(); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
+    worker.onmessage = (event) => { const message = event.data; if (message.taskId !== taskId) return; if (message.type === "error") { setWorkspaceMessage(message.message, true); worker.terminate(); return; } if (message.type === "result") { addImportedLayer(message.output, "cartographer", "Map Art"); setWorkspaceMessage("Map Art generated."); worker.terminate(); } };
     worker.onerror = () => { setWorkspaceMessage("Map Art worker failed.", true); worker.terminate(); };
     worker.postMessage({ id: taskId, type: "map-art.generate", input: pixels, options: { palette, dither: $("#map-art-dither")?.checked ?? true, staircasing: $("#map-art-staircase")?.value ?? "baseline" } });
 }
@@ -461,6 +525,7 @@ function clamp(value, min, max) {
 renderExportHistory();
 updatePixelArtVisibility();
 syncDepthRange("depth-max");
+try { restoreProjectFromStorage(); } catch (error) { setWorkspaceMessage(`Project restore failed: ${error.message}`, true); }
 
 export { imageUpdate, imageUpdate as image_update };
 
