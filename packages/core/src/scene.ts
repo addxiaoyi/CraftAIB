@@ -8,7 +8,7 @@ export function mergeScenes(scenes: SceneGraph[], offsets?: Array<{ x: number; y
 }
 
 
-export function setLayerVisibility(scene: SceneGraph, layerId: string, visible: boolean): SceneGraph {
+export function renameLayer(scene: SceneGraph, layerId: string, name: string): SceneGraph { const layers = (scene.layers ?? []).map((layer) => layer.id === layerId ? { ...layer, name: name.trim() || layer.name } : { ...layer }); return { ...scene, layers }; }export function setLayerVisibility(scene: SceneGraph, layerId: string, visible: boolean): SceneGraph {
   const layers = (scene.layers ?? scene.grids.map((_, index) => ({ id: `layer-${index}`, name: `Layer ${index + 1}`, visible: true, gridIndex: index }))).map((layer) => layer.id === layerId ? { ...layer, visible } : { ...layer });
   return { ...scene, layers };
 }
@@ -25,3 +25,6 @@ export function toggleLayerVisibility(scene: SceneGraph, layerId: string): Scene
   if (!layer) throw new Error(`Scene layer '${layerId}' was not found.`);
   return setLayerVisibility(scene, layerId, !layer.visible);
 }
+
+
+
