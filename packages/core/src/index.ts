@@ -6,3 +6,4 @@ export * from './render.js';
 export * from './editing.js';
 export * from './merge.js';
 export * from './scene.js';
+export * from './checkpoint.js';
