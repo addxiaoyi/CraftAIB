@@ -6,7 +6,17 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+
+  packages/ai-planner:
+    dependencies:
+      '@craftaib/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/cartographer-adapter:
     dependencies:
@@ -24,15 +34,33 @@ importers:
 
   packages/engine-cli:
     dependencies:
+      '@craftaib/ai-planner':
+        specifier: workspace:*
+        version: link:../ai-planner
+      '@craftaib/cartographer-adapter':
+        specifier: workspace:*
+        version: link:../cartographer-adapter
       '@craftaib/core':
         specifier: workspace:*
         version: link:../core
+      '@craftaib/craftmatic-adapter':
+        specifier: workspace:*
+        version: link:../craftmatic-adapter
 
   packages/engine-worker:
     dependencies:
+      '@craftaib/ai-planner':
+        specifier: workspace:*
+        version: link:../ai-planner
+      '@craftaib/cartographer-adapter':
+        specifier: workspace:*
+        version: link:../cartographer-adapter
       '@craftaib/core':
         specifier: workspace:*
         version: link:../core
+      '@craftaib/craftmatic-adapter':
+        specifier: workspace:*
+        version: link:../craftmatic-adapter
 
   packages/voxelartcraft-adapter:
     dependencies:

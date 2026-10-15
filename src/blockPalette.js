@@ -1,4 +1,4 @@
-import { updatePalette } from "./script.js";
+import { updatePalette } from "./script.js?v=20261013-28";
 
 const categories = ["any", "survival", "renewable", "expensive", "gravity", "randomTickAffected", "lightEmitting", "dyed", "grayscale", "high_variance", "low_variance"];
 const categoryNames = { "any": "everything", "survival": "survival", "renewable": "renewable", "expensive": "expensive", "gravity": "falling", "randomTickAffected": "unstable", "lightEmitting": "glowing", "dyed": "dyed", "grayscale": "grayscale", "high_variance": "messy", "low_variance": "clean" };
@@ -172,3 +172,4 @@ for (var i = 0; i < categories.length; i++) {
 
 paletteHeader.insertBefore(categoriesDiv, paletteHeader.childNodes[2]);
 updateSelection();
+window.dispatchEvent(new Event("craftaib:palette-ready"));

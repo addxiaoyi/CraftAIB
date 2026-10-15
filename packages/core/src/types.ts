@@ -39,6 +39,13 @@ export type BlockGrid = {
   palette: BlockState[];
   coordinateSystem: 'xyz';
   origin: { x: number; y: number; z: number };
+  metadata?: {
+    entities?: unknown[];
+    blockEntities?: unknown[];
+    pendingBlockTicks?: unknown[];
+    placements?: unknown;
+    [key: string]: unknown;
+  };
 };
 
 export type SceneLayer = { id: string; name: string; visible: boolean; gridIndex: number; offset?: { x: number; y: number; z: number } };

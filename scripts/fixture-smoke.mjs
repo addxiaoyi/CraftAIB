@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { validateGrid } from '../packages/core/dist/index.js';
+import { parseLitematicaBytes, parseSchematicBytes } from '../packages/craftmatic-adapter/dist/index.js';
+
+const schem = await parseSchematicBytes(new Uint8Array(await readFile(new URL('../fixtures/smoke.schem', import.meta.url))));
+const litematic = await parseLitematicaBytes(new Uint8Array(await readFile(new URL('../fixtures/smoke.litematic', import.meta.url))));
+const multiLitematic = await parseLitematicaBytes(new Uint8Array(await readFile(new URL('../fixtures/smoke-multi-region.litematic', import.meta.url))));
+const aiSmoke = await parseLitematicaBytes(new Uint8Array(await readFile(new URL('../fixtures/ai-smoke.litematic', import.meta.url))));
+const twoRegions = await parseLitematicaBytes(new Uint8Array(await readFile(new URL('../fixtures/smoke-two-regions.litematic', import.meta.url))));
+validateGrid(schem);
+validateGrid(litematic);
+assert.equal(schem.cells.length, 3);
+assert.equal(litematic.cells.length, 3);
+assert.equal(multiLitematic.width, 3);
+assert.equal(aiSmoke.cells.length > 0, true);
+assert.equal(twoRegions.width, 4);
+assert.equal(twoRegions.cells.length, 2);
+assert.equal(twoRegions.cells.find((cell) => cell.x === 0).block.id, 'minecraft:stone');
+assert.equal(twoRegions.cells.find((cell) => cell.x === 3).block.id, 'minecraft:gold_block');
+assert.equal(multiLitematic.cells.length, 2);
+assert.equal(multiLitematic.cells.find((cell) => cell.x === 2).block.id, 'minecraft:gold_block');
+assert.equal(new Set(multiLitematic.cells.map((cell) => `${cell.x},${cell.y},${cell.z}`)).size, multiLitematic.cells.length);
+assert.equal(schem.cells.find((cell) => cell.block.id === 'minecraft:oak_log').block.properties.axis, 'y');
+assert.equal(litematic.cells.find((cell) => cell.block.id === 'minecraft:oak_log').block.properties.axis, 'y');
+await assert.rejects(() => parseSchematicBytes(new Uint8Array([0x1f, 0x8b, 0x00])), /Unexpected end|BlockData|gzip|TypeError|Unable to decompress/);
+await assert.rejects(() => parseLitematicaBytes(new Uint8Array([0x1f, 0x8b, 0x00])), /Unexpected end|region|gzip|TypeError|Unable to decompress/);
+console.log('binary fixture round-trip tests passed');

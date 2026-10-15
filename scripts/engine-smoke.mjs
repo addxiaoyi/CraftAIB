@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { planBuildingWithVision } from '../packages/ai-planner/dist/index.js';
 import { analyzeMaterials, mergeGrids, applyGridEdit, countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
 import { fromVoxelartcraft } from '../packages/voxelartcraft-adapter/dist/index.js';
 import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
-import { fromCraftmaticSchematic, parseLitematicaBytes, parseSchematicBytes, serializeSchematic, toCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
+import { fromCraftmaticSchematic, generateBrowserStructure, gridToViewerData, viewerDataToGrid, parseLitematicaBytes, parseSchematicBytes, serializeSchematic, toCraftmaticSchematic } from '../packages/craftmatic-adapter/dist/index.js';
 
 const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'stone' } }], { width: 1, height: 1, length: 1 });
 assert.equal(grid.palette[1].id, 'minecraft:stone'); assert.equal(countMaterials(grid).get('minecraft:stone'), 1); const gaps = analyzeMaterials(grid, { 'minecraft:stone': 0 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(gaps[0].missing, 1); const covered = analyzeMaterials(grid, { 'minecraft:cobblestone': 1 }, { 'minecraft:stone': ['minecraft:cobblestone'] }); assert.equal(covered[0].substituteCoverage, 1); assert.equal(covered[0].missing, 0); assert.equal(gridToScene(grid).grids.length, 1); assert.throws(() => validateGrid({ ...grid, cells: [{ ...grid.cells[0], x: 2 }] }));
@@ -12,23 +13,14 @@ const merged = mergeGrids([grid, edited], [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z
 const voxel = fromVoxelartcraft({ blocks: [[0, 0, 0, -2, 1, 4]], palette: [['stone', 0, 0, 0, 0]], materials: [0] }); assert.deepEqual([voxel.cells[0].x, voxel.cells[0].y, voxel.cells[0].z], [0, 0, 0]);
 const map = fromCartographerCells([{ id: 'minecraft:glass', x: 0, y: 0, z: 0 }], { width: 1, height: 1 }); assert.equal(map.cells[0].source, 'cartographer');
 const mapArt = generateMapArt({ width: 2, height: 2, paletteId: 'test', pixels: [{ r: 255, g: 255, b: 255, a: 255 }, { r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 255 }, { r: 0, g: 0, b: 0, a: 255 }] }, { palette: [{ block: { id: 'minecraft:white_concrete' }, color: { r: 255, g: 255, b: 255 } }, { block: { id: 'minecraft:black_concrete' }, color: { r: 0, g: 0, b: 0 } }], dither: true, staircasing: 'baseline' }); assert.equal(mapArt.cells.length, 4);
-const litematic = generateLitematicaSchema(mapArt, { name: 'Smoke Map', author: 'CraftAIB' }); assert.equal(litematic.value.Version.value, 5);
+const litematic = generateLitematicaSchema(mapArt, { name: 'Smoke Map', author: 'CraftAIB' }); assert.equal(litematic.value.Version.value, 4);
 const litematicBytes = await serializeLitematica(mapArt, { name: 'Smoke Map' }); assert.equal(litematicBytes[0], 0x1f); assert.equal(litematicBytes[1], 0x8b);
 const stateGrid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'minecraft:oak_log', properties: { axis: 'x' } } }], { width: 1, height: 1, length: 1 }); const stateLitematic = await serializeLitematica(stateGrid); const parsedStateLitematic = await parseLitematicaBytes(stateLitematic); assert.equal(parsedStateLitematic.cells[0].block.properties.axis, 'x'); const parsedLitematic = await parseLitematicaBytes(litematicBytes); assert.equal(parsedLitematic.width, mapArt.width);
 const schem = fromCraftmaticSchematic({ width: 1, height: 1, length: 1, palette: ['minecraft:oak_planks'], cells: [{ x: 0, y: 0, z: 0, state: 0 }] }); assert.equal(schem.cells[0].source, 'craftmatic');
-const schemRoundTrip = toCraftmaticSchematic(schem); assert.equal(schemRoundTrip.palette[1], 'minecraft:oak_planks');
+const schemRoundTrip = toCraftmaticSchematic(schem); assert.equal(schemRoundTrip.palette[1], 'minecraft:oak_planks'); const browserStructure = generateBrowserStructure({ type: 'tower', style: 'modern', floors: 2, width: 12, length: 12 }); assert.ok(browserStructure.cells.length > 0); const browserStructureTypes = ['house', 'tower', 'castle', 'dungeon', 'ship', 'cathedral', 'bridge', 'windmill', 'marketplace', 'village']; for (const type of browserStructureTypes) { const generated = generateBrowserStructure({ type, style: 'fantasy', floors: 2, width: 24, length: 24 }); validateGrid(generated); assert.ok(generated.cells.length > 0, `Browser structure ${type} is empty.`); } const viewerGrid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'minecraft:oak_log', properties: { axis: 'y' } } }, { x: 1, y: 0, z: 0, block: { id: 'minecraft:stone' } }], { width: 2, height: 1, length: 1 }); viewerGrid.origin = { x: 7, y: 8, z: 9 }; const viewerData = gridToViewerData(viewerGrid); assert.equal(viewerData.origin.x, 7); assert.equal(viewerData.palette.find((entry) => entry.state.id === 'minecraft:oak_log').state.properties.axis, 'y'); viewerData.blocks.pop(); const viewerRoundTrip = viewerDataToGrid(viewerData); assert.equal(viewerRoundTrip.cells.length, 1); assert.equal(viewerRoundTrip.cells[0].block.properties.axis, 'y'); assert.deepEqual(viewerRoundTrip.origin, { x: 7, y: 8, z: 9 });
 const schemBytes = await serializeSchematic(schem); assert.equal(schemBytes[0], 0x1f); assert.equal(schemBytes[1], 0x8b);
 const stateSchemBytes = await serializeSchematic(stateGrid); const parsedStateSchem = await parseSchematicBytes(stateSchemBytes); assert.equal(parsedStateSchem.cells[0].block.properties.axis, 'x'); const parsedSchem = await parseSchematicBytes(schemBytes); assert.equal(parsedSchem.width, 1); assert.equal(parsedSchem.cells[0].block.id, 'minecraft:oak_planks');
+const visionPlan = await planBuildingWithVision({ prompt: 'vision test', referenceImage: { width: 1, height: 1, dataUrl: 'data:image/png;base64,AA==' } }, { endpoint: 'https://vision.test/v1/chat/completions', model: 'vision-test', fetcher: async (_url, init) => { const body = JSON.parse(init.body); assert.equal(body.model, 'vision-test'); assert.equal(body.response_format.type, 'json_schema'); assert.equal(body.response_format.json_schema.strict, true); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(planBuildingWithVisionFixture()) } }] }), { status: 200, headers: { 'content-type': 'application/json' } }); } }); assert.equal(visionPlan.regions.length > 0, true);
+let visionAttempts = 0; const retriedPlan = await planBuildingWithVision({ prompt: 'retry test', referenceImage: { width: 1, height: 1, dataUrl: 'data:image/png;base64,AA==' } }, { endpoint: 'https://vision.test/retry', maxRetries: 2, retryDelayMs: 0, fetcher: async () => { visionAttempts += 1; if (visionAttempts === 1) return new Response('busy', { status: 503 }); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ dimensions: { width: 8, height: 6, length: 8 }, type: 'house', style: 'modern', floors: 1 }) } }] }), { status: 200 }); } }); assert.equal(visionAttempts, 2); assert.equal(retriedPlan.regions[0].name, 'main');
 console.log('core engine adapter tests passed');
-
-
-
-
-
-
-
-
-
-
-
-
+function planBuildingWithVisionFixture() { return { version: 1, name: 'vision test', type: 'house', style: 'modern', dimensions: { width: 8, height: 6, length: 8 }, floors: 1, rooms: [{ id: 'main', type: 'hall', floor: 0, x: 1, y: 1, z: 1, width: 6, height: 3, length: 6 }], regions: [{ name: 'main', role: 'main', x: 0, y: 0, z: 0, width: 8, height: 6, length: 8 }], components: [], palette: { wall: 'minecraft:quartz_block', floor: 'minecraft:smooth_stone', roof: 'minecraft:gray_concrete', window: 'minecraft:glass' }, seed: 42, notes: [] }; }

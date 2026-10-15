@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require=createRequire(import.meta.url);const{chromium}=require('../node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core');
+const browser=await chromium.launch({headless:true,executablePath:'C:/Users/l/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe',args:['--use-gl=swiftshader']});const page=await browser.newPage();const errors=[];const failed=[];page.on('pageerror',e=>errors.push(e.message));page.on('requestfailed',r=>failed.push(r.url()+': '+r.failure()?.errorText));
+await page.goto('http://127.0.0.1:4183/?browser-import-verified=1');
+await page.locator('#schematic-input').setInputFiles(fileURLToPath(new URL('../fixtures/smoke.schem',import.meta.url)));
+await page.waitForFunction(()=>document.querySelector('.canvas-hint')?.textContent==='Schematic imported.',null,{timeout:8000});
+const schemMaterials=await page.locator('#imported-materials').innerText();assert.match(schemMaterials,/stone/);assert.match(schemMaterials,/oak_log/);const layerOne=await page.locator('#scene-layers').innerText();assert.match(layerOne,/Schematic structure/);
+await page.locator('#litematic-input').setInputFiles(fileURLToPath(new URL('../fixtures/smoke-two-regions.litematic',import.meta.url)));
+await page.waitForFunction(()=>document.querySelector('.canvas-hint')?.textContent==='Litematic imported.',null,{timeout:8000});
+const materials=await page.locator('#imported-materials').innerText();assert.match(materials,/gold_block/);const size=await page.locator('#canvas-size').innerText();assert.match(size,/4 x 1 x 1/);assert.match(await page.locator('#scene-layers').innerText(),/Litematic structure/);assert.deepEqual(errors,[]);assert.deepEqual(failed,[]);console.log(JSON.stringify({schemMaterials,materials,size,sceneLayers:await page.locator('#scene-layers').innerText(),errors,failed},null,2));await browser.close();

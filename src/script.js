@@ -1,5 +1,5 @@
 import { createStructureNBT } from "./schematic.js";
-import { image_update } from "./gui.js";
+import { image_update } from "./gui.js?v=20261013-37";
 import { dither, resetDither } from "./dither.js";
 import { createLitematicFile } from "./litematic.js";
 
@@ -218,6 +218,10 @@ function createShaderProgram(vertexShaderFile, voxelShaderFile) {
     }
 
     gl.linkProgram(voxelShader);
+    if (!gl.getProgramParameter(voxelShader, gl.LINK_STATUS)) {
+        console.error('ERROR linking shader program!', gl.getProgramInfoLog(voxelShader));
+        return;
+    }
     gl.useProgram(voxelShader);
 
     var vertexBuffer = gl.createBuffer();
@@ -311,6 +315,8 @@ function render(depth) {
 
 
 function applyProcessing() {
+    // A project can restore before the default image finishes loading; defer GPU work until a texture exists.
+    if (!texture || !processedImage) return;
     setVoxelProgress(0);
     showProcessingCanvas();
     loadSettingsFromUI();
@@ -342,7 +348,11 @@ function applyProcessing() {
 
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, processingFrameBuffer);
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        console.warn('Processing framebuffer is incomplete; skipping this frame.');
+        return;
+    }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     readPixelsAsync(gl.UNSIGNED_BYTE, canvas.width, canvas.height, processedImage);
@@ -698,7 +708,7 @@ function setupFramebuffer(type = gl.FLOAT) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex1, 0);
 
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    // The single color attachment is selected by default for WebGL2.
     gl.bindTexture(gl.TEXTURE_2D, texture);
 
     return [fb, tex1];
@@ -814,9 +824,9 @@ function downloadFile(file) {
     URL.revokeObjectURL(url);
 }
 
-function requireVoxelData() {
+function requireVoxelData(silent = false) {
     if (!voxelized || !blocks?.length || !materials?.length) {
-        alert("Please wait for the voxelization to finish");
+        if (!silent) alert("Please wait for the voxelization to finish");
         return false;
     }
     return true;
@@ -832,8 +842,8 @@ function downloadBlockGrid() {
     downloadFile(createGridFile(blocks, palette, materials));
 }
 
-function getVoxelExportData() {
-    if (!requireVoxelData()) return null;
+function getVoxelExportData({ silent = false } = {}) {
+    if (!requireVoxelData(silent)) return null;
     return { blocks, palette, materials };
 }
 async function downloadLitematic() {
@@ -905,6 +915,8 @@ async function main() {
     const textureAtlasImage = new Image();
     textureAtlasImage.src = textureAtlas;
     await loadTexture(textureAtlasImage, gl.TEXTURE2, gl.NEAREST);
+    // image_update() runs concurrently; restore the intended program after its texture upload completes.
+    gl.useProgram(discretizeShader);
     const textureAtlasUniform = gl.getUniformLocation(discretizeShader, "u_textureAtlas");
     gl.uniform1i(textureAtlasUniform, 2);
     const textureAtlasSizeUniform = gl.getUniformLocation(discretizeShader, "u_textureAtlasSize");
@@ -947,12 +959,3 @@ export { voxelConvert, updateTargetImage, updatePalette, applyProcessing, downlo
 // - Block minecraft version
 // - Eastereggs
 // - default pallette category selection
-
-
-
-
-
-
-
-
-

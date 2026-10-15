@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-canvas: #07090e;
+    --bg-surface: #0c0f17;
+    --bg-surface-elevated: #111622;
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-muted: rgba(255, 255, 255, 0.12);
+    --accent-emerald: #10b981;
+    --accent-emerald-glow: rgba(16, 185, 129, 0.25);
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #07090e;
+    color: #e4e4e7;
+    overflow: hidden;
+    letter-spacing: -0.015em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Minimalist precision scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Ambient CAD backdrop effects */
+.bg-radial-ambient {
+  background: radial-gradient(ellipse 70% 40% at 50% -10%, rgba(16, 185, 129, 0.08), transparent 70%);
+}
+
+.bg-cad-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+/* Architectural studio glass surfaces with silky diffusion & specular edge */
+.studio-glass {
+  background: rgba(11, 14, 21, 0.85);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px -4px rgba(0, 0, 0, 0.5);
+}
+
+.studio-glass-subtle {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.studio-panel {
+  background: #0c0f17;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.studio-input {
+  background: rgba(7, 9, 14, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f4f4f5;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.studio-input:focus {
+  border-color: rgba(255, 255, 255, 0.32);
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Silky interactive button states */
+.btn-primary {
+  background: linear-gradient(180deg, #ffffff 0%, #f4f4f5 100%);
+  color: #07090e;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(255, 255, 255, 0.08);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-primary:hover {
+  background: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(255, 255, 255, 0.16);
+}
+.btn-primary:active {
+  transform: translateY(0);
+  background: #e4e4e7;
+}
+
+.btn-luxury-emerald {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.08) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.1), 0 4px 14px rgba(16, 185, 129, 0.12);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-luxury-emerald:hover {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.15) 100%);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #6ee7b7;
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15), 0 6px 20px rgba(16, 185, 129, 0.25);
+}
+.btn-luxury-emerald:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+.btn-secondary:active {
+  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Custom silky slider */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.1);
+  height: 4px;
+  border-radius: 9999px;
+  outline: none;
+  transition: background 0.2s ease;
+}
+input[type="range"]:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6);
+  border: 1.5px solid rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  background: #ffffff;
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1);
+  background: #10b981;
+}
+
+/* Subtle Shimmer for AI Generation */
+@keyframes luxuryShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer-active {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: luxuryShimmer 2s infinite ease-in-out;
+}
+
+/* Smooth fade in animation */
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fadeInSlide 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

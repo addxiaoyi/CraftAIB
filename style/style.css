@@ -28,3 +28,170 @@ body[data-mode="lego"] .canvas-title strong:after{content:" · LEGO";color:#ffb8
 .section-actions{display:flex;gap:4px;flex-wrap:wrap}.section-actions .quiet-button{font-size:9px;padding:4px 6px}.empty-state{margin:0;color:var(--muted);font-size:10px;line-height:1.5}.layer-visibility{display:flex;align-items:center}.layer-visibility input{margin:0}
 
 .structure-controls{display:grid;gap:6px;margin-top:10px}.structure-controls label{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:6px}.structure-controls select,.structure-controls input{min-width:0}
+
+.viewer-host{position:absolute;inset:18px;z-index:20;display:grid;grid-template-rows:38px minmax(0,1fr);background:#0d141d;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}.viewer-host[hidden]{display:none}.viewer-host-toolbar{display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid var(--line);color:var(--text-dim);font-size:11px}.viewer-host iframe{width:100%;height:100%;border:0;background:#0d141d}
+.layer-row{grid-template-columns:16px minmax(80px,1fr) 80px 42px 42px 42px 28px auto auto auto auto}.layer-row.is-selected{outline:1px solid rgba(90,166,255,.7);background:rgba(90,166,255,.09)}.layer-select{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:0;color:var(--text-dim);text-align:left;cursor:pointer}.layer-color{width:24px;height:20px;padding:0;border:0;background:transparent}.layer-lock,.layer-up,.layer-down,.layer-remove{padding:3px 5px;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--muted);cursor:pointer;font-size:9px}.layer-lock:hover,.layer-up:hover,.layer-down:hover,.layer-remove:hover{color:var(--text);background:var(--surface-3)}
+
+.litematic-info{display:grid;gap:8px}.litematic-meta,.litematic-region,.litematic-placement{display:grid;gap:3px;padding:8px 0;border-top:1px solid var(--line,#d9d9d9)}.litematic-region span,.litematic-region small,.litematic-meta span,.litematic-placement span{font-size:11px;color:var(--muted,#6e6e6e)}.litematic-regions{display:grid;gap:2px}
+
+/* Responsive workbench fixes: keep controls inside the viewport and show only the active mode panel. */
+.editor-column{min-height:0}
+#settings-image,#settings-3d,.geo-controls,.lego-controls,.map-art-controls,.litematic-info-section{display:none}
+body[data-mode="image"] #settings-image{display:block}
+body[data-mode="voxel"] #settings-3d,body[data-mode="structure"] #settings-3d,body[data-mode="map-art"] #settings-3d,body[data-mode="geo"] #settings-3d,body[data-mode="lego"] #settings-3d{display:block}
+body[data-mode="map-art"] .map-art-controls,body[data-mode="geo"] .geo-controls,body[data-mode="lego"] .lego-controls{display:grid}
+body[data-mode="schematic"] .litematic-info-section,body[data-mode="viewer"] .litematic-info-section{display:block}
+@media (max-width: 1400px){
+  .topbar{height:auto;min-height:68px;flex-wrap:wrap;gap:8px 16px;padding:8px 16px}
+  .brand-lockup{min-width:190px}
+  .topnav{min-width:0;flex:1 1 auto;overflow-x:auto;scrollbar-width:thin}
+  .nav-item{padding:0 10px;white-space:nowrap}
+  .nav-item.is-active:after{left:10px;right:10px}
+  .topbar-meta{order:3;flex:1 0 100%;min-width:0;margin-left:0;padding-top:6px;border-top:1px solid var(--line);overflow-x:auto;justify-content:flex-start;scrollbar-width:thin}
+  .workspace{height:calc(100vh - 118px)}
+}
+@media (max-width:980px){
+  .topbar-meta{display:flex}
+  .workspace{min-height:calc(100vh - 118px);height:auto}
+}
+@media (max-width:620px){
+  .topbar{padding:8px 10px}
+  .brand-lockup{min-width:150px}
+  .topnav{flex-basis:100%;order:2;height:38px}
+  .topbar-meta{order:3}
+}
+
+#settings-3d .structure-controls{display:none}body[data-mode="voxel"] #settings-3d .structure-controls,body[data-mode="structure"] #settings-3d .structure-controls{display:grid}
+
+.settings-project{display:none;gap:8px;padding:16px 0;border-bottom:1px solid var(--line)}body[data-mode="settings"] #settings-project{display:grid}.settings-project .quiet-button{width:100%;margin-top:8px}.settings-project pre{max-height:160px;overflow:auto;white-space:pre-wrap;color:var(--muted);font:10px/1.4 monospace}
+
+/* Each mode owns a small, deliberate inspector surface. */
+.inspector > .scene-layers,.inspector > .palette-section,.inspector > .litematic-info-section,.inspector > #settings-image,.inspector > #settings-3d,.inspector > .geo-controls,.inspector > .lego-controls,.inspector > .map-art-controls,.inspector > #settings-project{display:none}
+body[data-mode="image"] .inspector > #settings-image,body[data-mode="image"] .inspector > .palette-section{display:block}
+body[data-mode="map-art"] .inspector > .palette-section,body[data-mode="map-art"] .inspector > .map-art-controls{display:block}
+body[data-mode="voxel"] .inspector > .scene-layers,body[data-mode="voxel"] .inspector > .palette-section,body[data-mode="voxel"] .inspector > #settings-3d{display:block}
+body[data-mode="structure"] .inspector > .scene-layers,body[data-mode="structure"] .inspector > .palette-section,body[data-mode="structure"] .inspector > .litematic-info-section,body[data-mode="structure"] .inspector > #settings-3d{display:block}
+body[data-mode="schematic"] .inspector > .scene-layers,body[data-mode="schematic"] .inspector > .palette-section,body[data-mode="schematic"] .inspector > .litematic-info-section{display:block}
+body[data-mode="viewer"] .inspector > .scene-layers,body[data-mode="viewer"] .inspector > .litematic-info-section{display:block}
+body[data-mode="materials"] .inspector > .palette-section{display:block}
+body[data-mode="lego"] .inspector > .scene-layers,body[data-mode="lego"] .inspector > .lego-controls{display:block}
+body[data-mode="geo"] .inspector > .scene-layers,body[data-mode="geo"] .inspector > .geo-controls{display:block}
+body[data-mode="settings"] .inspector > #settings-project{display:grid}
+
+/* Keep mode controls together and ahead of secondary inspection panels. */
+.inspector{display:flex;flex-direction:column}
+.inspector>*{flex:0 0 auto}
+body[data-mode="image"] .inspector>#settings-image{order:2}
+body[data-mode="image"] .inspector>.palette-section{order:3}
+body[data-mode="map-art"] .inspector>#settings-3d{order:2}
+body[data-mode="map-art"] .inspector>.palette-section{order:3}
+body[data-mode="voxel"] .inspector>#settings-3d{order:2}
+body[data-mode="voxel"] .inspector>.scene-layers{order:3}
+body[data-mode="voxel"] .inspector>.palette-section{order:4}
+body[data-mode="structure"] .inspector>#settings-3d{order:2}
+body[data-mode="structure"] .inspector>.scene-layers{order:3}
+body[data-mode="structure"] .inspector>.litematic-info-section{order:4}
+body[data-mode="structure"] .inspector>.palette-section{order:5}
+body[data-mode="schematic"] .inspector>.litematic-info-section{order:2}
+body[data-mode="schematic"] .inspector>.scene-layers{order:3}
+body[data-mode="schematic"] .inspector>.palette-section{order:4}
+body[data-mode="viewer"] .inspector>.scene-layers{order:2}
+body[data-mode="viewer"] .inspector>.litematic-info-section{order:3}
+body[data-mode="materials"] .inspector>.palette-section{order:2}
+body[data-mode="geo"] .inspector>#settings-3d{order:2}
+body[data-mode="geo"] .inspector>.scene-layers{order:3}
+body[data-mode="lego"] .inspector>#settings-3d{order:2}
+body[data-mode="lego"] .inspector>.scene-layers{order:3}
+body[data-mode="settings"] .inspector>#settings-3d{display:block;order:2}
+#settings-3d>*{display:none!important}
+body[data-mode="voxel"] #settings-3d>.section-title,
+body[data-mode="voxel"] #settings-3d>.toggle-row{display:flex!important}
+body[data-mode="voxel"] #settings-3d>.grid-view-controls{display:grid!important}
+body[data-mode="structure"] #settings-3d>.structure-controls,
+body[data-mode="geo"] #settings-3d>.geo-controls,
+body[data-mode="lego"] #settings-3d>.lego-controls,
+body[data-mode="map-art"] #settings-3d>.map-art-controls{display:grid!important}
+body[data-mode="settings"] #settings-3d>#settings-project{display:grid!important}
+
+@media(max-width:620px){
+  .topnav .nav-item:nth-child(n+3){display:block}
+  .topnav{overflow-x:auto;scrollbar-width:thin}
+  .topbar-meta>*{flex:0 0 auto;white-space:nowrap}
+  .save-state{flex:0 0 auto;white-space:nowrap}
+}
+
+.structure-controls,.geo-controls,.lego-controls{gap:8px}
+.structure-controls label,.geo-controls>label{display:grid;grid-template-columns:82px minmax(0,1fr);align-items:center;gap:8px;color:var(--text-dim);font-size:10px;line-height:1.35}
+.structure-controls input,.structure-controls select,.structure-controls textarea,.geo-controls input,.lego-controls textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--line);border-radius:4px;background:var(--surface-3);color:var(--text);font:10px/1.35 'DM Sans',system-ui,sans-serif;padding:6px 8px}
+.structure-controls textarea,.lego-controls textarea{resize:vertical}
+.structure-controls>.section-title{order:0}
+.structure-controls>label:has(#ai-building-prompt){order:1}
+#generate-ai-building{order:2}
+#generate-reference-building{order:3}
+
+/* Mode workspaces: one task, one visible set of controls. */
+.mode-dashboard{display:none;min-height:0;height:100%;overflow:auto;padding:clamp(22px,4vw,52px);border:1px solid var(--line);border-radius:12px;background:#111822}
+.mode-dashboard[hidden]{display:none}
+.mode-dashboard-head{max-width:760px;padding-bottom:24px;border-bottom:1px solid var(--line)}
+.mode-dashboard-head h1{margin:10px 0 8px;font:600 30px/1.1 'Space Grotesk',sans-serif;color:var(--text)}
+.mode-dashboard-head p{max-width:620px;margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+.mode-dashboard-actions{display:flex;gap:8px;padding:18px 0}
+.mode-dashboard-status{min-height:0;margin:0;color:var(--green);font-size:12px}
+.mode-dashboard-status:empty{display:none}
+.mode-dashboard-status.is-error{color:#ff9a9a}
+.mode-dashboard-content{max-width:940px}
+.mode-dashboard-content>.palette-section,.mode-dashboard-content>#settings-project{display:block!important;width:100%;padding:0;border:0}
+.mode-dashboard-content .blockList{grid-template-columns:repeat(auto-fill,minmax(34px,1fr));max-width:760px}
+.mode-dashboard-content .blockList-container{max-height:220px}
+.mode-dashboard-content .palette-header,.mode-dashboard-content .blockList-container{display:none}
+.mode-dashboard-content .imported-materials{max-height:none;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:start}
+.materials-empty-state{max-width:560px;margin:16px 0;padding:14px 16px;border-left:2px solid var(--mode-accent);background:rgba(255,255,255,.025);color:var(--muted);font-size:12px;line-height:1.6}
+.materials-empty-state[hidden]{display:none}
+body[data-mode="materials"] .editor-column,body[data-mode="settings"] .editor-column{display:block;padding:18px}
+body[data-mode="materials"] .workspace,body[data-mode="settings"] .workspace{grid-template-columns:58px minmax(0,1fr)}
+body[data-mode="materials"] .canvas-stage,body[data-mode="materials"] .timeline-panel,body[data-mode="settings"] .canvas-stage,body[data-mode="settings"] .timeline-panel{display:none}
+body[data-mode="materials"] #mode-dashboard,body[data-mode="settings"] #mode-dashboard{display:block}
+body[data-mode="materials"] .inspector,body[data-mode="settings"] .inspector{display:none}
+body[data-mode="materials"] .toolrail .asset-thumb,body[data-mode="materials"] .toolrail .add-button,body[data-mode="settings"] .toolrail .asset-thumb,body[data-mode="settings"] .toolrail .add-button{display:none}
+body[data-mode="image"]{--mode-accent:#4d9dff}
+body[data-mode="map-art"]{--mode-accent:#e3b341}
+body[data-mode="voxel"]{--mode-accent:#38d4d8}
+body[data-mode="structure"]{--mode-accent:#db8064}
+body[data-mode="schematic"]{--mode-accent:#a577ff}
+body[data-mode="viewer"]{--mode-accent:#42cf9d}
+body[data-mode="lego"]{--mode-accent:#ffb86a}
+body[data-mode="geo"]{--mode-accent:#64c6a6}
+body[data-mode="materials"]{--mode-accent:#e3b341}
+body[data-mode="settings"]{--mode-accent:#91a4bd}
+.nav-item.is-active:after{background:var(--mode-accent,var(--blue))}
+.inspector-header h1,.canvas-title strong{color:var(--mode-accent,var(--text))}
+.map-art-generate{width:100%;margin-top:6px}
+.topbar-meta #open-geojson,.topbar-meta #open-ldraw,.topbar-meta #open-grid,.topbar-meta #open-litematic,.topbar-meta #open-placement,.topbar-meta #open-schematic,.topbar-meta #open-project,.topbar-meta #save-project{display:none}
+body[data-mode="image"] .topbar-meta #open-project,body[data-mode="image"] .topbar-meta #save-project,
+body[data-mode="settings"] .topbar-meta #open-project,body[data-mode="settings"] .topbar-meta #save-project,
+body[data-mode="schematic"] .topbar-meta #open-grid,body[data-mode="schematic"] .topbar-meta #open-litematic,body[data-mode="schematic"] .topbar-meta #open-placement,body[data-mode="schematic"] .topbar-meta #open-schematic,
+body[data-mode="viewer"] .topbar-meta #open-litematic,body[data-mode="viewer"] .topbar-meta #open-schematic,
+body[data-mode="materials"] .topbar-meta #open-grid,body[data-mode="materials"] .topbar-meta #open-litematic,body[data-mode="materials"] .topbar-meta #open-schematic,
+body[data-mode="lego"] .topbar-meta #open-ldraw,
+body[data-mode="geo"] .topbar-meta #open-geojson{display:inline-flex}
+.inspector{min-height:0}
+.inspector-section,.inspector>.geo-controls,.inspector>.lego-controls,.inspector>.map-art-controls{min-width:0}
+@media(max-width:980px){body[data-mode="materials"] .editor-column,body[data-mode="settings"] .editor-column{min-height:70vh}.mode-dashboard{min-height:65vh}}
+@media(max-width:620px){.mode-dashboard{padding:22px 16px}.mode-dashboard-head h1{font-size:24px}.mode-dashboard-content .imported-materials{grid-template-columns:1fr}}
+#generate-structure,.structure-controls>label:has(#vision-endpoint),.structure-controls>label:has(#vision-model){display:none!important}
+.structure-controls>button{width:100%;margin:0}
+.geo-controls .section-title,.lego-controls .section-title,.map-art-controls .section-title{margin-bottom:2px}
+.geo-controls .section-title h2,.lego-controls .section-title h2,.map-art-controls .section-title h2{font:600 12px 'Space Grotesk',sans-serif}
+.geo-controls .toggle-row{display:flex}
+.geo-controls .toggle-row>label{width:auto;flex:0 0 auto;display:block;white-space:nowrap}
+.geo-controls .toggle-row>input{width:27px;height:15px;flex:0 0 27px;padding:0;border:0;background:var(--surface-3)}
+
+@media(max-width:620px){
+  .topnav .nav-item{display:block;flex:0 0 auto}
+  .topbar-meta{width:100%;min-width:0;overflow-x:auto;justify-content:flex-start}
+  .editor-column{min-width:0}
+  .timeline-panel{min-width:0}
+  .timeline-actions{min-width:max-content}
+  .timeline-head{overflow-x:auto;scrollbar-width:thin;gap:12px}
+  .timeline-actions .quiet-button{display:inline-flex}
+}

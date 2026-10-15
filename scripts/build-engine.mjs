@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 const root = process.cwd();
 const tsc = resolve(root, 'node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/bin/tsc');
 const check = process.argv.includes('--check');
-const packages = ['core', 'voxelartcraft-adapter', 'cartographer-adapter', 'craftmatic-adapter', 'engine-worker', 'engine-cli'];
+const packages = ['core', 'ai-planner', 'voxelartcraft-adapter', 'cartographer-adapter', 'craftmatic-adapter', 'engine-worker', 'engine-cli'];
 const runTsc = (project, noEmit = false) => {
   const args = [tsc, '-p', project];
   if (noEmit) args.push('--noEmit');

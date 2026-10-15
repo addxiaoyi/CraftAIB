@@ -32,3 +32,5 @@ export * from './lego-colors.js';
 
 export * from './structure.js';
 export * from './textured-viewer.js';
+
+export * from './litematica-placement.js';

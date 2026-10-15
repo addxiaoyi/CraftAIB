@@ -13,3 +13,5 @@ outputs/
 craftaib-redesign.png
 current-ui.png
 packages/**/dist/
+dist/
+frontend/public/engine-worker.js

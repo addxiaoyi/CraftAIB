@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "width": 2,
+  "height": 1,
+  "length": 1,
+  "cells": [
+    {
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "block": {
+        "id": "minecraft:stone"
+      },
+      "source": "user"
+    }
+  ],
+  "palette": [
+    {
+      "id": "minecraft:air"
+    },
+    {
+      "id": "minecraft:stone"
+    }
+  ],
+  "coordinateSystem": "xyz",
+  "origin": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  }
+}

@@ -1,12 +1,21 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
-import { analyzeMaterials, applyGridEdit, countMaterials, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
-import { generateMapArt, serializeLitematica } from '../../cartographer-adapter/dist/index.js';
-import { createHtmlSceneViewer, createHtmlViewer, createTexturedHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic } from '../../craftmatic-adapter/dist/index.js';
+import { planBuilding, planBuildingFromReference, planBuildingWithModel, planBuildingWithVision, structurePlanToGrid, structurePlanToRegionGrids } from '../../ai-planner/dist/index.js';
+import { analyzeMaterials, applyGridEdit, countMaterials, createGrid, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
+import { generateMapArt, serializeLitematica, serializeLitematicaRegions } from '../../cartographer-adapter/dist/index.js';
+import { createHtmlSceneViewer, createHtmlViewer, createTexturedHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseLitematicaDocumentBytes, parseLitematicaPlacements, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic, summarizeLitematicaDocument } from '../../craftmatic-adapter/dist/index.js';
 
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
   return async (task, emit, signal) => {
     const grid = task.input as BlockGrid;
+    if (task.type === 'ai.plan-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning building' }); return planBuilding(task.input as any); }
+    if (task.type === 'ai.reference-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'analyzing reference image' }); const plan = planBuildingFromReference(task.input as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'generating blocks' }); return structurePlanToGrid(plan); }
+    if (task.type === 'ai.reference-building-vision') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'calling vision planner' }); const input = task.input as any; const plan = await planBuildingWithVision(input, (task.options ?? {}) as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'generating regions' }); return structurePlanToGrid(plan); }
+    if (task.type === 'ai.structure-plan') { const input = task.input as any; const referenceImage = input.referenceImage ? { width: input.referenceImage.width, height: input.referenceImage.height, dataUrl: input.referenceImage.dataUrl, sourceName: input.referenceImage.sourceName } : undefined; const request = { prompt: input.prompt, seed: input.seed, constraints: input.constraints, referenceImage }; emit({ type: 'progress', taskId: task.id, value: 0.15, stage: 'requesting structure plan' }); const response = await fetch('/api/ai/structure-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal }); const payload = await response.json() as any; if (!response.ok || payload?.ok !== true) throw new Error(payload?.error?.message || `AI planning request failed (${response.status}).`); emit({ type: 'progress', taskId: task.id, value: 0.7, stage: 'building block grid' }); return { plan: payload.plan, grid: structurePlanToGrid(payload.plan), source: 'ai' }; }
+    if (task.type === 'ai.local-structure-plan') { const input = task.input as any; emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning local preview' }); const plan = input?.referenceImage ? planBuildingFromReference(input) : planBuilding(input); return { plan, grid: structurePlanToGrid(plan), source: 'local' }; }
+    if (task.type === 'ai.export-plan-litematic') { const plan = task.input as any; emit({ type: 'progress', taskId: task.id, value: 0.4, stage: 'encoding named regions' }); return serializeLitematicaRegions(structurePlanToRegionGrids(plan), { name: plan.name, author: 'CraftAIB', description: 'Generated from an AI StructurePlan.' }); }
+    if (task.type === 'ai.generate-litematic') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning named regions' }); const plan = planBuilding(task.input as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'encoding litematic regions' }); return serializeLitematicaRegions(structurePlanToRegionGrids(plan), { name: plan.name, author: 'CraftAIB', description: 'Generated from an AI StructurePlan.' }); }
+    if (task.type === 'ai.generate-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning building' }); const plan = planBuilding(task.input as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'generating blocks' }); return structurePlanToGrid(plan); }
     if (task.type === 'structure.generate') { emit({ type: 'progress', taskId: task.id, value: 0.1, stage: 'generating structure' }); const generated = await generateStructure(task.options as any); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'generated' }); return generated; }
     if (task.type === 'geo.geojson') { return geoSceneToBlockGrid(geoJsonToScene(task.input, task.options as any)); }
     if (task.type === 'geo.poi') { return geoPoisToBlockGrid(task.input as any); }
@@ -48,11 +57,14 @@ export function createCoreRunner(): EngineRunner {
     if (task.type === 'glb.serialize') { validateGrid(grid); return serializeGlb(grid); }
     if (task.type === 'viewer.scene.html') { return createHtmlSceneViewer(task.input as any); }
     if (task.type === 'viewer.html') { validateGrid(grid); return createHtmlViewer(grid); }
-    if (task.type === 'viewer.textured-html') { validateGrid(grid); return createTexturedHtmlViewer(grid); }
+    if (task.type === 'viewer.textured-html') { validateGrid(grid); return createTexturedHtmlViewer(grid, task.options as any); }
     if (task.type === 'render.floor') { validateGrid(grid); return renderFloor(grid, task.options as any); }
     if (task.type === 'render.cutaway') { validateGrid(grid); return renderCutaway(grid, task.options as any); }
     if (task.type === 'render.exterior') { validateGrid(grid); return renderExterior(grid, task.options as any); }
     if (task.type === 'map-art.generate') { emit({ type: 'progress', taskId: task.id, value: 0.1, stage: 'matching palette' }); const result = generateMapArt(task.input as any, task.options as any); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'generated' }); return result; }
+    if (task.type === 'image.pixel-art') { const input = task.input as any; emit({ type: 'progress', taskId: task.id, value: 0.5, stage: 'normalizing pixel-art grid' }); const result = createGrid(input.cells ?? [], { width: input.width, height: input.height, length: input.length ?? 1 }, 'voxelartcraft'); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'normalized' }); return result; }
+    if (task.type === 'litematic.placements.parse') { return parseLitematicaPlacements(String(task.input ?? '')); }
+    if (task.type === 'litematic.inspect') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'reading litematic metadata' }); const document = await parseLitematicaDocumentBytes(task.input as Uint8Array); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'inspected' }); return summarizeLitematicaDocument(document); }
     if (task.type === 'litematic.parse') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'reading litematic' }); const result = await parseLitematicaBytes(task.input as Uint8Array); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'parsed' }); return result; }
     if (task.type === 'schematic.parse') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'reading schematic' }); const result = await parseSchematicBytes(task.input as Uint8Array); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'parsed' }); return result; }
     if (task.type === 'schematic.serialize') { validateGrid(grid); emit({ type: 'progress', taskId: task.id, value: 0.4, stage: 'encoding schematic' }); const bytes = await serializeSchematic(grid); emit({ type: 'progress', taskId: task.id, value: 1, stage: 'compressed' }); return bytes; }
@@ -60,43 +72,4 @@ export function createCoreRunner(): EngineRunner {
     throw new Error(`Unsupported engine task: ${task.type}`);
   };
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

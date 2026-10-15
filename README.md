@@ -43,21 +43,56 @@ pnpm install --offline --ignore-scripts
 node scripts/build-engine.mjs
 node scripts/engine-smoke.mjs
 pnpm matrix
+npm run build:browser-worker
 ```
 
-The direct build script is used for the new engine packages because upstream native postinstall scripts (`esbuild`, `sharp`, `workerd`) may be blocked by pnpm approval policy. Upstream builds remain available separately:
+The engine test also rebuilds the browser Worker with the native Windows esbuild binary through `scripts/build-browser-worker.ps1`; this avoids the Windows Node child-process `spawn EPERM` path. The direct build script is used for the new engine packages because upstream native postinstall scripts (`esbuild`, `sharp`, `workerd`) may be blocked by pnpm approval policy. Upstream builds remain available separately:
 
 ```powershell
 pnpm build:craftmatic
 pnpm build:cartographer
 ```
 
-The Voxelartcraft-led browser workbench remains available through the static server:
+The new React workbench is the active frontend. The former Voxelartcraft-led HTML UI is kept only as legacy engine/test source and is not served by `npm start`:
 
 ```powershell
-python -m http.server 4182
+npm start
+# http://127.0.0.1:4183
 ```
+
+For hot reload, use `npm run dev`; it starts the API server and Vite frontend together. The imported frontend from `minecraft-architect-studio` lives under `frontend/` and keeps the 10-workspace information architecture, while structure parsing, Worker rendering, real projection encoding, materials, and AI planning are wired to the CraftAIB engine.
+
+See `docs/license-distribution-audit.md` for the current distribution audit and `docs/staged-change-map.md` for the four review stages.
 
 ## License boundary
 
 This is an internal integration workspace. Craftmatic is MIT, Cartographer is GPLv3, and the Voxelartcraft baseline carries an All Rights Reserved notice. The matrix records provenance and distribution risk; do not treat the current workspace as unrestricted commercial redistribution.
+
+## Litematica-aware AI building
+
+CraftAIB now models the important distinction in Litematica between the compressed `.litematic` schematic and the separate placement JSON used by the client:
+
+- `parseLitematicaDocumentBytes` keeps metadata, named regions, negative region sizes, block-state properties, and entity/block-tick counts.
+- `parseLitematicaPlacements` and `serializeLitematicaPlacements` handle placement position, rotation, mirror, enabled/locked state, coordinate locks, and sub-region settings.
+- `structurePlanToRegionGrids` converts an AI `StructurePlan` into non-overlapping named regions such as `main`, `roof`, `courtyard`, and `tower`.
+- `serializeLitematicaRegions` writes those regions with tight long-array block-state packing and Litematica-compatible metadata.
+
+Example CLI flow:
+
+```powershell
+craftaib ai plan prompt.json plan.json
+craftaib ai vision prompt.json plan.json
+craftaib ai vision-litematic prompt.json building.litematic
+craftaib ai litematic prompt.json building.litematic
+craftaib litematic info building.litematic
+```
+
+The browser Worker exposes `litematic.inspect` and `ai.generate-litematic`. The Litematica Java runtime itself (Easy Place, verifier, client mixins, and schematic-world rendering) is not copied into the browser; CraftAIB implements the file and placement semantics at the adapter boundary.
+
+To use a real reference-image vision model, set `CRAFTAIB_VISION_API_URL`, `CRAFTAIB_VISION_API_KEY`, and optionally `CRAFTAIB_VISION_MODEL`. The adapter sends an OpenAI-compatible multimodal request and validates the returned StructurePlan before any blocks are generated.
+# AI building server
+
+Run `npm start`; its prestart step builds the shared engine and browser Worker. The server serves the workspace and exposes `GET /api/ai/status` and `POST /api/ai/structure-plan` on the same origin. Copy `.env.example` to `.env` and configure the text and/or vision API URL and model; the API key is optional for trusted local endpoints. Credentials are never sent to the browser or saved in project files. Without a configured model, the workspace creates a clearly labeled local preview; AI request failures require an explicit choice to retry or use that preview.
+
+
+See [`docs/frontend-api-contract.md`](docs/frontend-api-contract.md) for request/response schemas, limits, error codes, and the endpoints the frontend expects. No server-side project, materials, or export endpoints are needed.
