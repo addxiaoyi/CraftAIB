@@ -21,11 +21,11 @@ try {
 
 function serviceConfig(withImage) {
   const prefix = withImage ? 'CRAFTAIB_VISION' : 'CRAFTAIB_TEXT';
-  const endpoint = process.env[`${prefix}_API_URL`]?.trim();
-  const apiKey = process.env[`${prefix}_API_KEY`]?.trim();
-  const model = process.env[`${prefix}_MODEL`]?.trim();
-  const timeoutMs = Number(process.env[`${prefix}_TIMEOUT_MS`]);
-  const retries = Number(process.env[`${prefix}_MAX_RETRIES`]);
+  const endpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env[`${prefix}_API_URL`])?.trim();
+  const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env[`${prefix}_API_KEY`])?.trim();
+  const model = (process.env.CRAFTAIB_MODEL || process.env[`${prefix}_MODEL`])?.trim();
+  const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env[`${prefix}_TIMEOUT_MS`]);
+  const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env[`${prefix}_MAX_RETRIES`]);
   return endpoint && model ? { endpoint, apiKey, model,
     timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, Math.floor(timeoutMs))) : 30000,
     retries: Number.isFinite(retries) ? Math.max(0, Math.min(5, Math.floor(retries))) : 1,
@@ -49,13 +49,17 @@ async function saveModelConfig(input) {
   let content = '';
   try { content = await readFile(envPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const values = {};
-  for (const kind of ['text', 'vision']) {
-    const source = input?.[kind] ?? {};
-    values[`CRAFTAIB_${kind.toUpperCase()}_API_URL`] = validEndpoint(String(source.endpoint ?? '').trim());
-    values[`CRAFTAIB_${kind.toUpperCase()}_MODEL`] = String(source.model ?? '').trim().slice(0, 160);
-    if (source.apiKey) values[`CRAFTAIB_${kind.toUpperCase()}_API_KEY`] = String(source.apiKey).trim();
-    values[`CRAFTAIB_${kind.toUpperCase()}_TIMEOUT_MS`] = String(Math.max(1000, Math.min(120000, Number(source.timeoutMs) || 30000)));
-    values[`CRAFTAIB_${kind.toUpperCase()}_MAX_RETRIES`] = String(Math.max(0, Math.min(5, Number(source.retries) || 0)));
+  const shared = input?.generation ?? input?.text ?? {};
+  values.CRAFTAIB_MODEL_API_URL = validEndpoint(String(shared.endpoint ?? '').trim());
+  values.CRAFTAIB_MODEL = String(shared.model ?? '').trim().slice(0, 160);
+  if (shared.apiKey) values.CRAFTAIB_MODEL_API_KEY = String(shared.apiKey).trim();
+  values.CRAFTAIB_MODEL_TIMEOUT_MS = String(Math.max(1000, Math.min(120000, Number(shared.timeoutMs) || 30000)));
+  values.CRAFTAIB_MODEL_MAX_RETRIES = String(Math.max(0, Math.min(5, Number(shared.retries) || 0)));
+  const vision = input?.vision ?? {};
+  if (vision.endpoint || vision.model || vision.apiKey) {
+    values.CRAFTAIB_VISION_API_URL = validEndpoint(String(vision.endpoint ?? '').trim());
+    values.CRAFTAIB_VISION_MODEL = String(vision.model ?? '').trim().slice(0, 160);
+    if (vision.apiKey) values.CRAFTAIB_VISION_API_KEY = String(vision.apiKey).trim();
   }
   const lines = content.split(/\r?\n/).filter((line) => !Object.prototype.hasOwnProperty.call(values, /^\s*([A-Z_][A-Z0-9_]*)\s*=/.exec(line)?.[1] ?? ''));
   for (const [key, value] of Object.entries(values)) lines.push(`${key}=${String(value).replace(/[\r\n]/g, '')}`);
@@ -95,7 +99,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/ai/status') {
     const text = serviceConfig(false);
     const vision = serviceConfig(true);
-    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textEndpoint: text?.endpoint ?? null, visionEndpoint: vision?.endpoint ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
+    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), generationEndpoint: text?.endpoint ?? null, generationModel: text?.model ?? null, textEndpoint: text?.endpoint ?? null, visionEndpoint: vision?.endpoint ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {

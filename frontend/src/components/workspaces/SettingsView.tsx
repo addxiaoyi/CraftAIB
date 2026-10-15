@@ -93,7 +93,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const elapsed = Math.round(performance.now() - start);
       setLatency(elapsed);
       setHealthStatus(data);
-      setConfig((current) => ({ ...current, textEndpoint: data.textEndpoint ?? current.textEndpoint, textModel: data.textModel ?? current.textModel, visionEndpoint: data.visionEndpoint ?? current.visionEndpoint, visionModel: data.visionModel ?? current.visionModel, timeoutMs: data.textTimeoutMs ?? current.timeoutMs, retries: data.textRetries ?? current.retries }));
+      setConfig((current) => ({ ...current, textEndpoint: data.generationEndpoint ?? data.textEndpoint ?? current.textEndpoint, textModel: data.generationModel ?? data.textModel ?? current.textModel, visionEndpoint: data.visionEndpoint ?? current.visionEndpoint, visionModel: data.visionModel ?? current.visionModel, timeoutMs: data.textTimeoutMs ?? current.timeoutMs, retries: data.textRetries ?? current.retries }));
     } catch (err) {
       console.error('Health check failed:', err);
       setHealthStatus({ ok: false, text: false, vision: false });
@@ -117,7 +117,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const saveConfig = async () => {
     setConfigMessage(null);
     try {
-      const response = await fetch('/api/ai/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey, timeoutMs: config.timeoutMs, retries: config.retries } }) });
+      const response = await fetch('/api/ai/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey } }) });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error?.message || 'Configuration could not be saved.');
       setConfigMessage(lang === 'zh' ? '模型配置已保存，密钥不会显示。' : 'Model configuration saved. Keys are never displayed.');
@@ -239,7 +239,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <p className="text-[11px] text-zinc-500">{lang === 'zh' ? '配置保存在本机服务端 .env，浏览器不会保存或回显密钥。' : 'Configuration is stored in the local server .env. Keys are never saved in the browser or displayed.'}</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(['text', 'vision'] as const).map((kind) => <div key={kind} className="space-y-2">
-            <div className="text-xs text-zinc-300">{kind === 'text' ? (lang === 'zh' ? '文本模型' : 'Text model') : (lang === 'zh' ? '视觉模型' : 'Vision model')}</div>
+            <div className="text-xs text-zinc-300">{kind === 'text' ? (lang === 'zh' ? '建筑生成模型（统一）' : 'Building generation model (shared)') : (lang === 'zh' ? '视觉模型覆盖（可选）' : 'Vision override (optional)')}</div>
             <input aria-label={`${kind} endpoint`} placeholder="https://api.example.com/v1/chat/completions" value={kind === 'text' ? config.textEndpoint : config.visionEndpoint} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textEndpoint' : 'visionEndpoint']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
             <input aria-label={`${kind} model`} placeholder="model name" value={kind === 'text' ? config.textModel : config.visionModel} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textModel' : 'visionModel']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
             <input aria-label={`${kind} API key`} type="password" placeholder={lang === 'zh' ? 'API 密钥（仅写入服务端）' : 'API key (server-side only)'} value={kind === 'text' ? config.textKey : config.visionKey} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textKey' : 'visionKey']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
