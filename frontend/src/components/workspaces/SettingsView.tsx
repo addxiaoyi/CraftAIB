@@ -30,6 +30,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [latency, setLatency] = useState<number | null>(null);
   const [cacheSize, setCacheSize] = useState<string>('1.4 MB');
   const [clearedToast, setClearedToast] = useState<boolean>(false);
+  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', timeoutMs: 30000, retries: 1 });
+  const [configMessage, setConfigMessage] = useState<string | null>(null);
 
   const base = {
     en: {
@@ -91,6 +93,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const elapsed = Math.round(performance.now() - start);
       setLatency(elapsed);
       setHealthStatus(data);
+      setConfig((current) => ({ ...current, textEndpoint: data.textEndpoint ?? current.textEndpoint, textModel: data.textModel ?? current.textModel, visionEndpoint: data.visionEndpoint ?? current.visionEndpoint, visionModel: data.visionModel ?? current.visionModel, timeoutMs: data.textTimeoutMs ?? current.timeoutMs, retries: data.textRetries ?? current.retries }));
     } catch (err) {
       console.error('Health check failed:', err);
       setHealthStatus({ ok: false, text: false, vision: false });
@@ -109,6 +112,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setCacheSize('0.0 MB');
     setClearedToast(true);
     setTimeout(() => setClearedToast(false), 2500);
+  };
+
+  const saveConfig = async () => {
+    setConfigMessage(null);
+    try {
+      const response = await fetch('/api/ai/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey, timeoutMs: config.timeoutMs, retries: config.retries } }) });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error?.message || 'Configuration could not be saved.');
+      setConfigMessage(lang === 'zh' ? '模型配置已保存，密钥不会显示。' : 'Model configuration saved. Keys are never displayed.');
+      await checkHealth();
+    } catch (error) { setConfigMessage(error instanceof Error ? error.message : 'Configuration could not be saved.'); }
   };
 
   return (
@@ -217,6 +231,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span>{t.cacheCleared}</span>
           </div>
         )}
+      </div>
+
+      {/* System Diagnostics */}
+      <div className="bg-[#0e1118] border border-white/[0.07] rounded-lg p-5 space-y-4">
+        <h3 className="text-xs font-semibold text-white">{lang === 'zh' ? '大模型配置' : 'Model Configuration'}</h3>
+        <p className="text-[11px] text-zinc-500">{lang === 'zh' ? '配置保存在本机服务端 .env，浏览器不会保存或回显密钥。' : 'Configuration is stored in the local server .env. Keys are never saved in the browser or displayed.'}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(['text', 'vision'] as const).map((kind) => <div key={kind} className="space-y-2">
+            <div className="text-xs text-zinc-300">{kind === 'text' ? (lang === 'zh' ? '文本模型' : 'Text model') : (lang === 'zh' ? '视觉模型' : 'Vision model')}</div>
+            <input aria-label={`${kind} endpoint`} placeholder="https://api.example.com/v1/chat/completions" value={kind === 'text' ? config.textEndpoint : config.visionEndpoint} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textEndpoint' : 'visionEndpoint']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
+            <input aria-label={`${kind} model`} placeholder="model name" value={kind === 'text' ? config.textModel : config.visionModel} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textModel' : 'visionModel']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
+            <input aria-label={`${kind} API key`} type="password" placeholder={lang === 'zh' ? 'API 密钥（仅写入服务端）' : 'API key (server-side only)'} value={kind === 'text' ? config.textKey : config.visionKey} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textKey' : 'visionKey']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
+          </div>)}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-zinc-400">Timeout <input type="number" min="1000" max="120000" value={config.timeoutMs} onChange={(e) => setConfig((current) => ({ ...current, timeoutMs: Number(e.target.value) }))} className="studio-input ml-1 w-24 rounded px-2 py-1 text-xs" /></label>
+          <label className="text-xs text-zinc-400">Retries <input type="number" min="0" max="5" value={config.retries} onChange={(e) => setConfig((current) => ({ ...current, retries: Number(e.target.value) }))} className="studio-input ml-1 w-16 rounded px-2 py-1 text-xs" /></label>
+          <button type="button" onClick={() => void saveConfig()} className="ml-auto px-3 py-1.5 btn-primary rounded text-xs">{lang === 'zh' ? '保存配置' : 'Save configuration'}</button>
+        </div>
+        {configMessage && <p role="status" className="text-xs text-emerald-300">{configMessage}</p>}
       </div>
 
       {/* System Diagnostics */}

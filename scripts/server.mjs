@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { planBuildingWithModel, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
@@ -37,6 +37,32 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function validEndpoint(value) {
+  if (!value) return '';
+  const parsed = new URL(value);
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Model endpoint must use HTTP or HTTPS.');
+  return parsed.toString().replace(/\/$/, '');
+}
+
+async function saveModelConfig(input) {
+  const envPath = resolve('.env');
+  let content = '';
+  try { content = await readFile(envPath, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const values = {};
+  for (const kind of ['text', 'vision']) {
+    const source = input?.[kind] ?? {};
+    values[`CRAFTAIB_${kind.toUpperCase()}_API_URL`] = validEndpoint(String(source.endpoint ?? '').trim());
+    values[`CRAFTAIB_${kind.toUpperCase()}_MODEL`] = String(source.model ?? '').trim().slice(0, 160);
+    if (source.apiKey) values[`CRAFTAIB_${kind.toUpperCase()}_API_KEY`] = String(source.apiKey).trim();
+    values[`CRAFTAIB_${kind.toUpperCase()}_TIMEOUT_MS`] = String(Math.max(1000, Math.min(120000, Number(source.timeoutMs) || 30000)));
+    values[`CRAFTAIB_${kind.toUpperCase()}_MAX_RETRIES`] = String(Math.max(0, Math.min(5, Number(source.retries) || 0)));
+  }
+  const lines = content.split(/\r?\n/).filter((line) => !Object.prototype.hasOwnProperty.call(values, /^\s*([A-Z_][A-Z0-9_]*)\s*=/.exec(line)?.[1] ?? ''));
+  for (const [key, value] of Object.entries(values)) lines.push(`${key}=${String(value).replace(/[\r\n]/g, '')}`);
+  await writeFile(envPath, `${lines.filter(Boolean).join('\n')}\n`, 'utf8');
+  for (const [key, value] of Object.entries(values)) process.env[key] = value;
+}
+
 async function readJson(request) {
   const chunks = [];
   let size = 0;
@@ -69,7 +95,18 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/ai/status') {
     const text = serviceConfig(false);
     const vision = serviceConfig(true);
-    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
+    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textEndpoint: text?.endpoint ?? null, visionEndpoint: vision?.endpoint ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/api/ai/config') {
+    try {
+      await saveModelConfig(await readJson(request));
+      const text = serviceConfig(false);
+      const vision = serviceConfig(true);
+      sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textModel: text?.model ?? null, visionModel: vision?.model ?? null });
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: { code: 'INVALID_CONFIG', message: error instanceof Error ? error.message : 'Model configuration is invalid.' } });
+    }
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/structure-plan') {
