@@ -17,7 +17,15 @@ const DEFAULT_REPAIR_ATTEMPTS = 1;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
-export function structurePlanJsonSchema() { return STRUCTURE_PLAN_SCHEMA; }
+export function structurePlanJsonSchema() {
+  return {
+    ...STRUCTURE_PLAN_SCHEMA,
+    properties: {
+      ...STRUCTURE_PLAN_SCHEMA.properties,
+      inference: { type: 'object', additionalProperties: false, properties: { source: { type: 'string' }, detectedType: { type: 'string' }, detectedStyle: { type: 'string' }, confidence: { type: 'number' }, reasoning: { type: 'string' } } },
+    },
+  };
+}
 
 const STRUCTURE_PLAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['version', 'name', 'type', 'style', 'dimensions', 'floors', 'rooms', 'regions', 'components', 'palette', 'seed', 'notes'], properties: { version: { type: 'integer', const: 1 }, name: { type: 'string' }, type: { type: 'string' }, style: { type: 'string' }, dimensions: { type: 'object', additionalProperties: false, required: ['width', 'height', 'length'], properties: { width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, length: { type: 'integer', minimum: 1 } } }, floors: { type: 'integer', minimum: 1 }, rooms: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'type', 'floor', 'x', 'y', 'z', 'width', 'height', 'length'], properties: { id: { type: 'string' }, type: { type: 'string' }, floor: { type: 'integer' }, x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, length: { type: 'integer', minimum: 1 } } } }, regions: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: false, required: ['name', 'role', 'x', 'y', 'z', 'width', 'height', 'length'], properties: { name: { type: 'string' }, role: { type: 'string' }, x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, z: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, length: { type: 'integer', minimum: 1 } } } }, components: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'type', 'x', 'y', 'z', 'options'], properties: { id: { type: 'string' }, type: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' }, options: { type: 'object' } } } }, palette: { type: 'object', additionalProperties: { type: 'string' }, required: ['wall', 'floor', 'roof', 'window'] }, seed: { type: 'integer' }, notes: { type: 'array', items: { type: 'string' } } } } as const;
 
@@ -62,7 +70,7 @@ function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, 
   return {
     model: model ?? 'gpt-4o-mini',
     temperature: 0,
-    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: STRUCTURE_PLAN_SCHEMA } } : { type: 'json_object' },
+    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: structurePlanJsonSchema() } } : { type: 'json_object' },
     messages: [
       { role: 'system', content: createLitematicaPlannerInstruction() },
       { role: 'user', content: imageUrl ? [
@@ -77,7 +85,7 @@ function buildRepairRequest(plan: unknown, error: unknown, model?: string, stric
   return {
     model: model ?? 'gpt-4o-mini',
     temperature: 0,
-    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: STRUCTURE_PLAN_SCHEMA } } : { type: 'json_object' },
+    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: structurePlanJsonSchema() } } : { type: 'json_object' },
     messages: [
       { role: 'system', content: `${createLitematicaPlannerInstruction()} Repair the supplied JSON only. Return a complete valid StructurePlan JSON object. Do not add markdown.` },
       { role: 'user', content: `Invalid StructurePlan: ${JSON.stringify(plan)}\nValidation error: ${error instanceof Error ? error.message : 'schema mismatch'}` },
@@ -101,13 +109,13 @@ async function requestWithRetry(endpoint: string, headers: Record<string, string
         clearTimeout(timeout);
       }
       if (response.ok || !isRetryableStatus(response.status) || attempt === maxRetries) {
-        if (!response.ok) throw new Error(`Vision planner request failed (${response.status}): ${(await response.text()).slice(0, 400)}`);
+        if (!response.ok) throw Object.assign(new Error(`Vision planner request failed (${response.status}).`), { statusCode: response.status, code: response.status === 429 ? 'RATE_LIMITED' : 'MODEL_REQUEST_FAILED' });
         return response;
       }
       lastError = new Error(`Vision planner request failed (${response.status}).`);
     } catch (error) {
       lastError = error instanceof DOMException && error.name === 'AbortError'
-        ? new Error(`Vision planner request timed out after ${timeoutMs}ms.`)
+      ? Object.assign(new Error(`Vision planner request timed out after ${timeoutMs}ms.`), { statusCode: 504, code: 'MODEL_TIMEOUT' })
         : error;
       if (attempt === maxRetries) throw lastError;
     }

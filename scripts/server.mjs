@@ -151,8 +151,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { ok: true, plan });
     } catch (error) {
       const status = Number(error?.statusCode) || 502;
-      const message = status === 502 ? 'The AI service could not produce a valid building plan. Check the service configuration and retry.' : error.message;
-      return sendJson(response, status, { ok: false, error: { code: status === 502 ? 'MODEL_REQUEST_FAILED' : 'INVALID_REQUEST', message } });
+      const code = error?.code || (status === 422 ? 'INVALID_STRUCTURE_PLAN' : status === 502 ? 'MODEL_REQUEST_FAILED' : 'INVALID_REQUEST');
+      const message = error?.message || 'The AI service could not produce a valid building plan.';
+      return sendJson(response, status, { ok: false, error: { code, message } });
     }
   }
   if (request.method === 'GET' && await serveStatic(url.pathname, response)) return;
