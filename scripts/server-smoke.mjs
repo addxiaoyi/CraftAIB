@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { unlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { planBuilding } from '../packages/ai-planner/dist/index.js';
 
@@ -63,4 +64,5 @@ try {
   child.kill();
   await new Promise((resolve) => child.once('exit', resolve));
   await new Promise((resolve) => upstream.close(resolve));
+  await unlink('.env').catch(() => {});
 }

@@ -288,9 +288,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: Math.max(1, Math.min(12, Math.round(dimY / 6))),
-        width: dimX,
-        length: dimZ,
+        floors: style === 'AI_AUTO' ? undefined : Math.max(1, Math.min(12, Math.round(dimY / 6))),
+        width: style === 'AI_AUTO' ? undefined : dimX,
+        length: style === 'AI_AUTO' ? undefined : dimZ,
         seed: 42,
       }, controller.signal, (value, stage) => setLoadingStep(Math.round(value * 100) + '% · ' + stage), forceLocal);
       onStructureChange(result.structure);

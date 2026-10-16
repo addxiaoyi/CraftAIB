@@ -6,9 +6,9 @@ type BuildOptions = {
   referenceImage?: string;
   type: string;
   style: string;
-  floors: number;
-  width: number;
-  length: number;
+  floors?: number;
+  width?: number;
+  length?: number;
   seed: number;
 };
 
@@ -23,7 +23,7 @@ export async function generateBuilding(
   const prompt = options.prompt.trim();
   if (!prompt && !options.referenceImage) throw new Error('Describe the building or add a reference image.');
   const referenceImage = options.referenceImage ? await imagePayload(options.referenceImage) : undefined;
-  const constraints = { type: options.type, style: options.style, floors: options.floors, width: options.width, length: options.length };
+  const constraints = { type: options.type, style: options.style, floors: options.floors || undefined, width: options.width || undefined, length: options.length || undefined };
   const status = forceLocal ? null : await modelStatus(signal);
   const useVision = Boolean(referenceImage);
   const useModel = Boolean(useVision ? status?.vision : status?.text);
@@ -34,7 +34,7 @@ export async function generateBuilding(
   }
 
   if (!useModel) {
-    const localPrompt = [constraints.style, constraints.type, `${constraints.floors} floors`, `${constraints.width} x ${constraints.length}`, prompt].filter(Boolean).join(', ');
+    const localPrompt = [constraints.style, constraints.type, constraints.floors ? `${constraints.floors} floors` : '', constraints.width && constraints.length ? `${constraints.width} x ${constraints.length}` : '', prompt].filter(Boolean).join(', ');
     const planned = await runEngineTask<{ plan: NamedStructurePlan; grid: any; source: 'local' }>(
       'ai.local-structure-plan',
       { ...input, prompt: localPrompt },
