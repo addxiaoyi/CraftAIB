@@ -8,6 +8,9 @@ import { planBuildingWithModel, validateStructurePlan } from '../packages/ai-pla
 
 const root = resolve(process.env.CRAFTAIB_PUBLIC_DIR || 'dist');
 const maxBodyBytes = 8 * 1024 * 1024;
+const planRateWindowMs = 60_000;
+const planRateLimit = Math.max(1, Number(process.env.CRAFTAIB_PLAN_RATE_LIMIT || 30));
+const planRateBuckets = new Map();
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.wasm': 'application/wasm' };
 
 try {
@@ -36,6 +39,23 @@ function serviceConfig(withImage) {
 function sendJson(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(body));
+}
+
+function allowPlanRequest(request, response) {
+  const address = request.socket.remoteAddress || request.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
+  const now = Date.now();
+  const current = planRateBuckets.get(address);
+  if (!current || now - current.startedAt >= planRateWindowMs) {
+    planRateBuckets.set(address, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= planRateLimit) {
+    response.setHeader('retry-after', '60');
+    sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'Too many planning requests. Retry shortly.' } });
+    return false;
+  }
+  current.count += 1;
+  return true;
 }
 
 function configAdminAuthorized(request) {
@@ -111,7 +131,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/ai/status') {
     const text = serviceConfig(false);
     const vision = serviceConfig(true);
-    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), generationEndpoint: text?.endpoint ?? null, generationModel: text?.model ?? null, textEndpoint: text?.endpoint ?? null, visionEndpoint: vision?.endpoint ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
+    sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), generationModel: text?.model ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {
@@ -127,6 +147,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/structure-plan') {
+    if (!allowPlanRequest(request, response)) return;
     try {
       const input = await readJson(request);
       const prompt = typeof input?.prompt === 'string' ? input.prompt.trim() : '';
