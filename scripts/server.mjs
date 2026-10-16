@@ -11,6 +11,8 @@ const maxBodyBytes = 8 * 1024 * 1024;
 const planRateWindowMs = 60_000;
 const planRateLimit = Math.max(1, Number(process.env.CRAFTAIB_PLAN_RATE_LIMIT || 30));
 const planRateBuckets = new Map();
+const maxPlanningConcurrency = Math.max(1, Number(process.env.CRAFTAIB_PLAN_MAX_CONCURRENCY || 4));
+let planningInFlight = 0;
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.wasm': 'application/wasm' };
 
 try {
@@ -109,6 +111,12 @@ async function configAdminAuthorized(request) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function originAllowed(request) {
+  const allowed = process.env.CRAFTAIB_ALLOWED_ORIGIN?.trim();
+  if (!allowed) return true;
+  return request.headers.origin === allowed || request.headers.referer?.startsWith(`${allowed}/`);
+}
+
 function validEndpoint(value) {
   if (!value) return '';
   const parsed = new URL(value);
@@ -175,6 +183,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {
+    if (!originAllowed(request)) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Request origin is not allowed.' } });
     if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
     try {
       await saveModelConfig(await readJson(request));
@@ -188,6 +197,8 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/structure-plan') {
     if (!allowPlanRequest(request, response)) return;
+    if (planningInFlight >= maxPlanningConcurrency) return sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'The planning service is busy. Retry shortly.' } });
+    planningInFlight += 1;
     try {
       const input = await readJson(request);
       const prompt = typeof input?.prompt === 'string' ? input.prompt.trim() : '';
@@ -215,6 +226,8 @@ const server = createServer(async (request, response) => {
       const code = error?.code || (status === 422 ? 'INVALID_STRUCTURE_PLAN' : status === 502 ? 'MODEL_REQUEST_FAILED' : 'INVALID_REQUEST');
       const message = error?.message || 'The AI service could not produce a valid building plan.';
       return sendJson(response, status, { ok: false, error: { code, message } });
+    } finally {
+      planningInFlight -= 1;
     }
   }
   if (request.method === 'GET' && await serveStatic(url.pathname, response)) return;
