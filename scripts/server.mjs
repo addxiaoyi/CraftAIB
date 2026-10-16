@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
@@ -21,11 +22,11 @@ try {
 
 function serviceConfig(withImage) {
   const prefix = withImage ? 'CRAFTAIB_VISION' : 'CRAFTAIB_TEXT';
-  const endpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env[`${prefix}_API_URL`])?.trim();
-  const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env[`${prefix}_API_KEY`])?.trim();
-  const model = (process.env.CRAFTAIB_MODEL || process.env[`${prefix}_MODEL`])?.trim();
-  const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env[`${prefix}_TIMEOUT_MS`]);
-  const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env[`${prefix}_MAX_RETRIES`]);
+  const endpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env[`${prefix}_API_URL`] || (withImage ? process.env.CRAFTAIB_TEXT_API_URL : ''))?.trim();
+  const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env[`${prefix}_API_KEY`] || (withImage ? process.env.CRAFTAIB_TEXT_API_KEY : ''))?.trim();
+  const model = (process.env.CRAFTAIB_MODEL || process.env[`${prefix}_MODEL`] || (withImage ? process.env.CRAFTAIB_TEXT_MODEL : ''))?.trim();
+  const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env[`${prefix}_TIMEOUT_MS`] || (withImage ? process.env.CRAFTAIB_TEXT_TIMEOUT_MS : ''));
+  const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env[`${prefix}_MAX_RETRIES`] || (withImage ? process.env.CRAFTAIB_TEXT_MAX_RETRIES : ''));
   return endpoint && model ? { endpoint, apiKey, model,
     timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, Math.floor(timeoutMs))) : 30000,
     retries: Number.isFinite(retries) ? Math.max(0, Math.min(5, Math.floor(retries))) : 1,
@@ -35,6 +36,17 @@ function serviceConfig(withImage) {
 function sendJson(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(body));
+}
+
+function configAdminAuthorized(request) {
+  const required = process.env.CRAFTAIB_ADMIN_TOKEN?.trim();
+  if (!required) return true;
+  const supplied = (request.headers.authorization || '').startsWith('Bearer ')
+    ? request.headers.authorization.slice(7).trim()
+    : '';
+  const expected = Buffer.from(required);
+  const actual = Buffer.from(supplied);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 function validEndpoint(value) {
@@ -103,13 +115,14 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {
+    if (!configAdminAuthorized(request)) return sendJson(response, 401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Administrator authorization is required.' } });
     try {
       await saveModelConfig(await readJson(request));
       const text = serviceConfig(false);
       const vision = serviceConfig(true);
       sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textModel: text?.model ?? null, visionModel: vision?.model ?? null });
     } catch (error) {
-      sendJson(response, 400, { ok: false, error: { code: 'INVALID_CONFIG', message: error instanceof Error ? error.message : 'Model configuration is invalid.' } });
+      sendJson(response, Number(error?.statusCode) || 400, { ok: false, error: { code: 'CONFIG_INVALID', message: error instanceof Error ? error.message : 'Model configuration is invalid.' } });
     }
     return;
   }

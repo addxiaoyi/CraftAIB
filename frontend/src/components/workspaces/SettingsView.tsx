@@ -30,7 +30,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [latency, setLatency] = useState<number | null>(null);
   const [cacheSize, setCacheSize] = useState<string>('1.4 MB');
   const [clearedToast, setClearedToast] = useState<boolean>(false);
-  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', timeoutMs: 30000, retries: 1 });
+  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', adminToken: '', timeoutMs: 30000, retries: 1 });
   const [configMessage, setConfigMessage] = useState<string | null>(null);
 
   const base = {
@@ -117,7 +117,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const saveConfig = async () => {
     setConfigMessage(null);
     try {
-      const response = await fetch('/api/ai/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey } }) });
+      const headers: HeadersInit = { 'content-type': 'application/json' };
+      if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
+      const response = await fetch('/api/ai/config', { method: 'POST', headers, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey } }) });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error?.message || 'Configuration could not be saved.');
       setConfigMessage(lang === 'zh' ? '模型配置已保存，密钥不会显示。' : 'Model configuration saved. Keys are never displayed.');
@@ -237,6 +239,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="bg-[#0e1118] border border-white/[0.07] rounded-lg p-5 space-y-4">
         <h3 className="text-xs font-semibold text-white">{lang === 'zh' ? '大模型配置' : 'Model Configuration'}</h3>
         <p className="text-[11px] text-zinc-500">{lang === 'zh' ? '配置保存在本机服务端 .env，浏览器不会保存或回显密钥。' : 'Configuration is stored in the local server .env. Keys are never saved in the browser or displayed.'}</p>
+        <input aria-label="Administrator token" type="password" placeholder={lang === 'zh' ? '管理员令牌（公开部署需要）' : 'Administrator token (required for public deployment)'} value={config.adminToken} onChange={(e) => setConfig((current) => ({ ...current, adminToken: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(['text', 'vision'] as const).map((kind) => <div key={kind} className="space-y-2">
             <div className="text-xs text-zinc-300">{kind === 'text' ? (lang === 'zh' ? '建筑生成模型（统一）' : 'Building generation model (shared)') : (lang === 'zh' ? '视觉模型覆盖（可选）' : 'Vision override (optional)')}</div>
