@@ -54,8 +54,8 @@ try {
   assert.equal(upstreamAuth, 'Bearer smoke-secret');
   assert.equal(JSON.stringify(output).includes('smoke-secret'), false, 'model credentials must not be included in planner output');
   const unauthorized = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generation: {} }) });
-  assert.equal(unauthorized.status, 401);
-  assert.equal((await unauthorized.json()).error.code, 'AUTH_REQUIRED');
+  assert.equal(unauthorized.status, 403);
+  assert.equal((await unauthorized.json()).error.code, 'FORBIDDEN');
   const saved = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000, retries: 2 }, vision: { endpoint: '', model: '', apiKey: '', timeoutMs: 5000, retries: 0 } }) });
   assert.equal(saved.status, 200);
   assert.equal(JSON.stringify(await saved.json()).includes('new-secret'), false, 'config response must not expose API credentials');

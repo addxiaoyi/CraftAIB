@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { createPublicKey, createVerify, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
@@ -58,12 +58,52 @@ function allowPlanRequest(request, response) {
   return true;
 }
 
-function configAdminAuthorized(request) {
+function readBearer(request) {
+  const header = request.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function decodeJwtPart(value) {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+}
+
+async function oidcAdminAuthorized(request) {
+  const issuer = process.env.CRAFTAIB_OIDC_ISSUER?.trim();
+  if (!issuer) return null;
+  const token = readBearer(request);
+  if (!token) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const header = decodeJwtPart(parts[0]);
+    const payload = decodeJwtPart(parts[1]);
+    if (payload.iss !== issuer || (payload.exp && payload.exp <= Math.floor(Date.now() / 1000))) return false;
+    const audience = process.env.CRAFTAIB_OIDC_AUDIENCE?.trim();
+    const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (audience && !audiences.includes(audience)) return false;
+    const jwksUrl = process.env.CRAFTAIB_OIDC_JWKS_URL?.trim();
+    if (!jwksUrl || !header.kid || header.alg !== 'RS256') return false;
+    const jwksResponse = await fetch(jwksUrl, { signal: AbortSignal.timeout(5000) });
+    if (!jwksResponse.ok) return false;
+    const jwks = await jwksResponse.json();
+    const jwk = jwks.keys?.find((key) => key.kid === header.kid && key.kty === 'RSA');
+    if (!jwk) return false;
+    const verifier = createVerify('RSA-SHA256');
+    verifier.update(`${parts[0]}.${parts[1]}`);
+    verifier.end();
+    if (!verifier.verify(createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(parts[2], 'base64url'))) return false;
+    const roleClaim = process.env.CRAFTAIB_OIDC_ADMIN_ROLE_CLAIM?.trim() || 'roles';
+    const roles = Array.isArray(payload[roleClaim]) ? payload[roleClaim] : [payload[roleClaim]];
+    return roles.includes(process.env.CRAFTAIB_OIDC_ADMIN_ROLE?.trim() || 'admin');
+  } catch { return false; }
+}
+
+async function configAdminAuthorized(request) {
+  const oidcResult = await oidcAdminAuthorized(request);
+  if (oidcResult !== null) return oidcResult;
   const required = process.env.CRAFTAIB_ADMIN_TOKEN?.trim();
   if (!required) return true;
-  const supplied = (request.headers.authorization || '').startsWith('Bearer ')
-    ? request.headers.authorization.slice(7).trim()
-    : '';
+  const supplied = readBearer(request);
   const expected = Buffer.from(required);
   const actual = Buffer.from(supplied);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
@@ -135,7 +175,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {
-    if (!configAdminAuthorized(request)) return sendJson(response, 401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Administrator authorization is required.' } });
+    if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
     try {
       await saveModelConfig(await readJson(request));
       const text = serviceConfig(false);
