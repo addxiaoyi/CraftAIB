@@ -18,7 +18,7 @@ await assert.rejects(
     retryDelayMs: 0,
     fetcher: async () => { throw new Error('upstream timeout'); },
   }),
-  /upstream timeout/i,
+  (error) => error?.code === 'MODEL_REQUEST_FAILED' && /could not connect/i.test(error.message),
 );
 await assert.rejects(
   planBuildingWithModel({ prompt: 'tower' }, {

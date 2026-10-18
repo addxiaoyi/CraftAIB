@@ -300,7 +300,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       setMobileTab('viewport');
     } catch (error) {
       const cancelled = error instanceof DOMException && error.name === 'AbortError';
-      setErrorMessage(cancelled ? 'Generation cancelled. Your inputs are preserved.' : error instanceof Error ? error.message : 'Structure generation failed.');
+      const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
+      const message = error instanceof Error ? error.message : 'Structure generation failed.';
+      const friendly = code === 'MODEL_TIMEOUT' || /timed?\s*out|aborted due to timeout/i.test(message)
+        ? (lang === 'zh' ? '模型响应超时。当前请求已停止；请检查模型服务连通性，或在 Settings 增加超时时间后重试。' : 'The model request timed out and was stopped. Check model-service connectivity or increase the Settings timeout, then retry.')
+        : code === 'RATE_LIMITED'
+          ? (lang === 'zh' ? '模型服务请求过于频繁，请稍后重试。' : 'The model is rate limiting requests. Please retry shortly.')
+          : message;
+      setErrorMessage(cancelled ? (lang === 'zh' ? '已取消生成，输入内容已保留。' : 'Generation cancelled. Your inputs are preserved.') : friendly);
       setAllowLocalPreview(!forceLocal && !cancelled);
     } finally {
       if (abortController.current === controller) abortController.current = null;
@@ -716,13 +723,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               )}
 
               {allowLocalPreview && !isLoading && (
-                <button onClick={() => void handleGenerate(true)} className="w-full py-2 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10">
+                <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full py-2 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10">
                   {generationCopy.local}
                 </button>
               )}
 
               {errorMessage && (
-                <div className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
+                <div data-ai-error="true" role="alert" className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
                   {errorMessage}
                 </div>
               )}

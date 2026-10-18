@@ -64,7 +64,7 @@ export function runEngineTask<T>(
         return;
       }
       if (data.type === 'error') {
-        fail(new Error(data.message || `Worker task failed: ${data.code}`));
+        fail(Object.assign(new Error(data.message || `Worker task failed: ${data.code}`), { code: data.code }));
         return;
       }
       finish();

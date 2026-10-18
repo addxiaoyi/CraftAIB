@@ -13,7 +13,8 @@ export function createTaskRegistry(post: (event: EngineEvent) => void, runner: T
         const output = await runner(task, post, controller.signal);
         post(controller.signal.aborted ? { type: 'cancelled', taskId: task.id } : { type: 'result', taskId: task.id, output });
       } catch (error) {
-        post(controller.signal.aborted ? { type: 'cancelled', taskId: task.id } : { type: 'error', taskId: task.id, code: 'TASK_FAILED', message: error instanceof Error ? error.message : 'Engine task failed.' });
+        const failure = error as Error & { code?: string };
+        post(controller.signal.aborted ? { type: 'cancelled', taskId: task.id } : { type: 'error', taskId: task.id, code: failure.code ?? 'TASK_FAILED', message: failure.message || 'Engine task failed.' });
       } finally { controllers.delete(task.id); }
     },
     cancel(taskId) { const controller = controllers.get(taskId); if (!controller) return false; controller.abort(); return true; },

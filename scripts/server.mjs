@@ -199,6 +199,10 @@ const server = createServer(async (request, response) => {
     if (!allowPlanRequest(request, response)) return;
     if (planningInFlight >= maxPlanningConcurrency) return sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'The planning service is busy. Retry shortly.' } });
     planningInFlight += 1;
+    const clientAbortController = new AbortController();
+    const abortOnClientClose = () => { if (!response.writableEnded) clientAbortController.abort(); };
+    request.once('aborted', abortOnClientClose);
+    response.once('close', abortOnClientClose);
     try {
       const input = await readJson(request);
       const prompt = typeof input?.prompt === 'string' ? input.prompt.trim() : '';
@@ -217,16 +221,19 @@ const server = createServer(async (request, response) => {
       const width = Number.isInteger(constraints.width) ? Math.max(8, Math.min(128, constraints.width)) : null;
       const length = Number.isInteger(constraints.length) ? Math.max(8, Math.min(128, constraints.length)) : null;
       const constraintText = [style, type, floors && `${floors} floors`, width && length && `${width} x ${length} blocks`].filter(Boolean).join(', ');
-      const fetcher = (endpoint, init) => fetch(endpoint, { ...init, signal: AbortSignal.timeout(45_000) });
-      const plan = await planBuildingWithModel({ prompt: [constraintText, prompt].filter(Boolean).join('. '), seed: Number.isInteger(input.seed) ? input.seed : 42, referenceImage: hasImage ? { dataUrl: image.dataUrl } : undefined }, { ...config, fetcher, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs });
-      validateStructurePlan(plan);
+      const plan = await planBuildingWithModel({ prompt: [constraintText, prompt].filter(Boolean).join('. '), seed: Number.isInteger(input.seed) ? input.seed : 42, referenceImage: hasImage ? { dataUrl: image.dataUrl } : undefined }, { ...config, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs, signal: clientAbortController.signal });
+      try { validateStructurePlan(plan); }
+      catch { throw Object.assign(new Error('The model returned a structure plan that failed validation.'), { statusCode: 422, code: 'INVALID_STRUCTURE_PLAN' }); }
       return sendJson(response, 200, { ok: true, plan });
     } catch (error) {
+      if (clientAbortController.signal.aborted || response.destroyed) return;
       const status = Number(error?.statusCode) || 502;
       const code = error?.code || (status === 422 ? 'INVALID_STRUCTURE_PLAN' : status === 502 ? 'MODEL_REQUEST_FAILED' : 'INVALID_REQUEST');
       const message = error?.message || 'The AI service could not produce a valid building plan.';
       return sendJson(response, status, { ok: false, error: { code, message } });
     } finally {
+      request.off('aborted', abortOnClientClose);
+      response.off('close', abortOnClientClose);
       planningInFlight -= 1;
     }
   }

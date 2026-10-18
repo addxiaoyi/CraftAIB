@@ -10,6 +10,7 @@ export type VisionPlannerOptions = {
   maxRepairAttempts?: number;
   strictSchema?: boolean;
   requestTimeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 const DEFAULT_RETRIES = 2;
@@ -99,26 +100,33 @@ async function requestWithRetry(endpoint: string, headers: Record<string, string
   const timeoutMs = Math.max(1000, Math.min(120000, Math.floor(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)));
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    if (options.signal?.aborted) throw Object.assign(new Error('Model request was cancelled by the client.'), { statusCode: 499, code: 'CLIENT_DISCONNECTED' });
+    const timeoutController = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; timeoutController.abort(); }, timeoutMs);
+    const signal = options.signal ? AbortSignal.any([timeoutController.signal, options.signal]) : timeoutController.signal;
+    let response: Response;
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      let response: Response;
-      try {
-        response = await fetcher(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (response.ok || !isRetryableStatus(response.status) || attempt === maxRetries) {
-        if (!response.ok) throw Object.assign(new Error(`Vision planner request failed (${response.status}).`), { statusCode: response.status, code: response.status === 429 ? 'RATE_LIMITED' : 'MODEL_REQUEST_FAILED' });
-        return response;
-      }
-      lastError = new Error(`Vision planner request failed (${response.status}).`);
-    } catch (error) {
-      lastError = error instanceof DOMException && error.name === 'AbortError'
-      ? Object.assign(new Error(`Vision planner request timed out after ${timeoutMs}ms.`), { statusCode: 504, code: 'MODEL_TIMEOUT' })
-        : error;
-      if (attempt === maxRetries) throw lastError;
+      response = await fetcher(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    } catch {
+      clearTimeout(timeout);
+      if (options.signal?.aborted) throw Object.assign(new Error('Model request was cancelled by the client.'), { statusCode: 499, code: 'CLIENT_DISCONNECTED' });
+      lastError = timedOut
+        ? Object.assign(new Error(`Model request timed out after ${timeoutMs}ms. Check the model service and retry.`), { statusCode: 504, code: 'MODEL_TIMEOUT' })
+        : Object.assign(new Error('Could not connect to the model service. Check endpoint connectivity and retry.'), { statusCode: 502, code: 'MODEL_REQUEST_FAILED' });
+      if (attempt >= maxRetries) throw lastError;
+      await delay(baseDelay * 2 ** attempt);
+      continue;
     }
+    clearTimeout(timeout);
+    if (response.ok) return response;
+    const statusCode = response.status === 429 ? 429 : response.status === 408 ? 504 : 502;
+    const code = response.status === 429 ? 'RATE_LIMITED' : response.status === 408 ? 'MODEL_TIMEOUT' : 'MODEL_REQUEST_FAILED';
+    lastError = Object.assign(
+      new Error(response.status === 429 ? 'The model service is rate limiting requests. Retry shortly.' : response.status === 408 ? 'The model service timed out. Retry shortly.' : `The model service returned HTTP ${response.status}. Check its endpoint and model configuration.`),
+      { statusCode, code },
+    );
+    if (!isRetryableStatus(response.status) || attempt >= maxRetries) throw lastError;
     await delay(baseDelay * 2 ** attempt);
   }
   throw lastError instanceof Error ? lastError : new Error('Vision planner request failed.');

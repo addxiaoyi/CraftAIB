@@ -1,20 +1,36 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { unlink } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { planBuilding } from '../packages/ai-planner/dist/index.js';
 
 let upstreamAuth = null;
+let upstreamMode = 'success';
+let upstreamCalls = 0;
 const plan = planBuilding({ prompt: 'small stone house', seed: 17 });
 const upstream = createServer((request, response) => {
   upstreamAuth = request.headers.authorization;
+  upstreamCalls += 1;
+  if (upstreamMode === 'rate') {
+    response.writeHead(429, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'busy' } }));
+    return;
+  }
+  if (upstreamMode === 'slow') {
+    setTimeout(() => { if (!response.destroyed) { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(plan) } }] })); } }, 1800);
+    return;
+  }
   response.writeHead(200, { 'content-type': 'application/json' });
   response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(plan) } }] }));
 });
 await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
 const upstreamPort = upstream.address().port;
-const child = spawn(process.execPath, ['scripts/server.mjs'], {
-  env: { ...process.env, PORT: '0', CRAFTAIB_ADMIN_TOKEN: 'admin-secret', CRAFTAIB_TEXT_API_URL: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, CRAFTAIB_TEXT_API_KEY: 'smoke-secret', CRAFTAIB_TEXT_MODEL: 'mock-text', CRAFTAIB_VISION_API_URL: '', CRAFTAIB_VISION_API_KEY: '', CRAFTAIB_VISION_MODEL: '' },
+const testCwd = await mkdtemp(join(tmpdir(), 'craftaib-server-smoke-'));
+const child = spawn(process.execPath, [resolve('scripts/server.mjs')], {
+  cwd: testCwd,
+  env: { ...process.env, PORT: '0', CRAFTAIB_PUBLIC_DIR: resolve('dist'), CRAFTAIB_ADMIN_TOKEN: 'admin-secret', CRAFTAIB_MODEL_API_URL: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, CRAFTAIB_MODEL_API_KEY: 'smoke-secret', CRAFTAIB_MODEL: 'mock-text', CRAFTAIB_MODEL_TIMEOUT_MS: '5000', CRAFTAIB_MODEL_MAX_RETRIES: '1', CRAFTAIB_TEXT_API_URL: '', CRAFTAIB_TEXT_API_KEY: '', CRAFTAIB_TEXT_MODEL: '', CRAFTAIB_VISION_API_URL: '', CRAFTAIB_VISION_API_KEY: '', CRAFTAIB_VISION_MODEL: '' },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 const base = await new Promise((resolve, reject) => {
@@ -59,10 +75,24 @@ try {
   const saved = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000, retries: 2 }, vision: { endpoint: '', model: '', apiKey: '', timeoutMs: 5000, retries: 0 } }) });
   assert.equal(saved.status, 200);
   assert.equal(JSON.stringify(await saved.json()).includes('new-secret'), false, 'config response must not expose API credentials');
+
+  upstreamMode = 'rate';
+  upstreamCalls = 0;
+  const limited = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small tower' }) });
+  assert.equal(limited.status, 429);
+  assert.equal((await limited.json()).error.code, 'RATE_LIMITED');
+  assert.equal(upstreamCalls, 3, 'configured retries should be applied to 429 responses');
+
+  const reconfigured = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 1000, retries: 0 } }) });
+  assert.equal(reconfigured.status, 200);
+  upstreamMode = 'slow';
+  const timedOut = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small tower' }) });
+  assert.equal(timedOut.status, 504);
+  assert.equal((await timedOut.json()).error.code, 'MODEL_TIMEOUT');
   console.log('server smoke passed');
 } finally {
   child.kill();
   await new Promise((resolve) => child.once('exit', resolve));
   await new Promise((resolve) => upstream.close(resolve));
-  await unlink('.env').catch(() => {});
+  await rm(testCwd, { recursive: true, force: true });
 }
