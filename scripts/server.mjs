@@ -61,9 +61,8 @@ if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY
   setGlobalProxyFromEnv();
 }
 
-function serviceConfig(withImage) {
-  // Reference images and text share one multimodal model. Legacy TEXT_* values
-  // remain a compatibility fallback, but VISION_* must not silently switch models.
+function serviceConfig() {
+  // Text and reference images always use the same configured building model.
   const configuredEndpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env.CRAFTAIB_TEXT_API_URL)?.trim();
   const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env.CRAFTAIB_TEXT_API_KEY)?.trim();
   const model = (process.env.CRAFTAIB_MODEL || process.env.CRAFTAIB_TEXT_MODEL)?.trim();
@@ -227,8 +226,8 @@ async function serveStatic(pathname, response) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', 'http://localhost');
   if (request.method === 'GET' && url.pathname === '/api/ai/status') {
-    const text = serviceConfig(false);
-    const vision = serviceConfig(true);
+    const text = serviceConfig();
+    const vision = serviceConfig();
     sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), generationModel: text?.model ?? null, textModel: text?.model ?? null, visionModel: vision?.model ?? null, textTimeoutMs: text?.timeoutMs ?? null, visionTimeoutMs: vision?.timeoutMs ?? null, textRetries: text?.retries ?? null, visionRetries: vision?.retries ?? null });
     return;
   }
@@ -237,8 +236,8 @@ const server = createServer(async (request, response) => {
     if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
     try {
       await saveModelConfig(await readJson(request));
-      const text = serviceConfig(false);
-      const vision = serviceConfig(true);
+      const text = serviceConfig();
+      const vision = serviceConfig();
       sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textModel: text?.model ?? null, visionModel: vision?.model ?? null });
     } catch (error) {
       sendJson(response, Number(error?.statusCode) || 400, { ok: false, error: { code: 'CONFIG_INVALID', message: error instanceof Error ? error.message : 'Model configuration is invalid.' } });
@@ -257,7 +256,7 @@ const server = createServer(async (request, response) => {
         model: String(draft.model ?? '').trim(),
         timeoutMs: Math.max(1000, Math.min(120000, Number(draft.timeoutMs) || 30000)),
         retries: 0,
-      } : serviceConfig(input?.capability === 'vision');
+      } : serviceConfig();
       if (!config?.endpoint || !config.model) return sendJson(response, 503, { ok: false, error: { code: 'MODEL_NOT_CONFIGURED', message: 'Enter an endpoint and model name before testing the connection.' } });
       const headers = { 'content-type': 'application/json' };
       if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
@@ -304,8 +303,8 @@ const server = createServer(async (request, response) => {
       if (image && !hasImage) return sendJson(response, 400, { ok: false, error: { code: 'INVALID_IMAGE', message: 'Use a PNG, JPEG, WebP, or GIF reference image.' } });
       if ((!prompt && !hasImage) || prompt.length > 6000) return sendJson(response, 400, { ok: false, error: { code: 'INVALID_INPUT', message: 'Add a building description or a supported reference image. Descriptions must be 6,000 characters or less.' } });
       if (hasImage && image.dataUrl.length > 7_000_000) return sendJson(response, 413, { ok: false, error: { code: 'IMAGE_TOO_LARGE', message: 'Reference image is too large. Use an image smaller than 5 MB.' } });
-      const config = serviceConfig(hasImage);
-      if (!config) return sendJson(response, 503, { ok: false, error: { code: 'MODEL_NOT_CONFIGURED', message: hasImage ? 'Vision model service is not configured.' : 'Text model service is not configured.' } });
+      const config = serviceConfig();
+      if (!config) return sendJson(response, 503, { ok: false, error: { code: 'MODEL_NOT_CONFIGURED', message: 'The unified building model for text and reference images is not configured.' } });
       const constraints = input.constraints && typeof input.constraints === 'object' ? input.constraints : {};
       const type = typeof constraints.type === 'string' ? constraints.type.slice(0, 40) : '';
       const style = typeof constraints.style === 'string' ? constraints.style.slice(0, 40) : '';
@@ -321,20 +320,30 @@ const server = createServer(async (request, response) => {
           ? 'Create a complete, walkable and furnished interior while preserving the requested exterior. Return connected named rooms on occupied floors, corridors, partitions, floors and ceilings, stairs, door/window openings, lighting, beds, tables, chairs, storage, kitchen, bath and service rooms. Tag room, partition, circulation, furniture and lighting geometry parts. For enclosed buildings include at least two rooms and three separate furniture parts. Do not return an empty shell.'
           : 'Include a walkable room layout with connecting stairs, doors, windows and essential furnishings.';
       const blockBudget = Math.max(10000, Math.min(12000000, Number(process.env.CRAFTAIB_MAX_GENERATED_BLOCKS || 12000000)));
-      const constraintText = [style, type, floors && `${floors} floors`, width && height && length && `${width} x ${height} x ${length} blocks (hard dimensions; fill the requested footprint, do not leave a compact centered build)`, detailLevel && `detail level ${detailLevel} of 5`, interiorSpec, `Keep geometry.parts to at most 1024 parts and estimated solid block count under ${blockBudget} blocks.`].filter(Boolean).join(", ");
+      const referencePriority = hasImage
+        ? 'The uploaded reference image is authoritative for building type, silhouette, proportions, visible parts, roof, openings and materials. The text description is secondary and may only add compatible details.'
+        : '';
+      const requestedSize = width && height && length
+        ? hasImage
+          ? `${width} x ${height} x ${length} blocks. Preserve the image proportions and fit geometry to this target without stretching any axis independently.`
+          : `${width} x ${height} x ${length} blocks (hard dimensions; fill the requested footprint, do not leave a compact centered build)`
+        : '';
+      const constraintText = [referencePriority, style, type, floors && `${floors} floors`, requestedSize, detailLevel && `detail level ${detailLevel} of 5`, interiorSpec, `Keep geometry.parts to at most 1024 parts and estimated solid block count under ${blockBudget} blocks.`].filter(Boolean).join(", ");
       const rawPlan = await planBuildingWithModel({
         prompt: [constraintText, prompt].filter(Boolean).join('. '),
         seed: Number.isInteger(input.seed) ? input.seed : 42,
         constraints: { type, style, floors, width, height, length, detailLevel, includeInterior },
         referenceImage: hasImage ? { dataUrl: image.dataUrl, referenceFeatures: image.referenceFeatures } : undefined,
       }, { ...config, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs, signal: clientAbortController.signal });
-      const plan = width && height && length ? fitStructurePlanToEnvelope(rawPlan, { width, height, length }) : rawPlan;
+      const plan = !hasImage && width && height && length ? fitStructurePlanToEnvelope(rawPlan, { width, height, length }) : rawPlan;
       try {
         validateStructurePlan(plan);
         const dimensionsMismatch = (width && plan.dimensions.width !== width)
           || (height && plan.dimensions.height !== height)
           || (length && plan.dimensions.length !== length);
-        if (dimensionsMismatch) throw new Error('The model plan dimensions do not match the requested block dimensions.');
+        if (dimensionsMismatch) throw new Error(hasImage
+          ? 'The visual plan dimensions do not match the requested size. Retry with a size that preserves the reference proportions, or let the image determine dimensions.'
+          : 'The model plan dimensions do not match the requested block dimensions.');
         let generatedBlockCount;
         try {
           // Geometry parts overlap heavily for shells, roofs, rooms, and facade details.

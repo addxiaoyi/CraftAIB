@@ -153,10 +153,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [dimX, setDimX] = useState<number>(16);
   const [dimY, setDimY] = useState<number>(24);
   const [dimZ, setDimZ] = useState<number>(16);
+  const [hasCustomDimensions, setHasCustomDimensions] = useState<boolean>(false);
   const [style, setStyle] = useState<string>('AI_AUTO');
   const [paletteTheme, setPaletteTheme] = useState<string>('AI_AUTO');
   const [complexity, setComplexity] = useState<string>('Detailed');
   const [detailLevel, setDetailLevel] = useState<number>(4);
+  const [hasCustomDetail, setHasCustomDetail] = useState<boolean>(false);
   const [includeInterior, setIncludeInterior] = useState<boolean>(true);
 
   const [minY, setMinY] = useState<number>(0);
@@ -289,21 +291,22 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     setLoadingStep(forceLocal ? 'Creating a local preview…' : 'Checking model service…');
 
     try {
+      const referenceOwnsEnvelope = Boolean(referenceImage) && !hasCustomDimensions;
       const styleId = style === 'AI_AUTO' ? '' : style.toLowerCase().includes('gothic') ? 'gothic'
         : style.toLowerCase().includes('medieval') ? 'medieval'
         : style.toLowerCase().includes('modern') || style.toLowerCase().includes('brutalist') ? 'modern'
         : style.toLowerCase().includes('oriental') ? 'colonial'
         : style.toLowerCase().includes('nether') ? 'underwater' : 'fantasy';
       const result = await generateBuilding({
-        prompt: [prompt, styleId ? `Architectural style: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Palette: ' + paletteTheme, 'Complexity: ' + complexity, 'Detail level: ' + detailLevel + '/5', includeInterior ? 'Include a complete walkable furnished interior while preserving the requested exterior' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
+        prompt: [prompt, styleId ? `Secondary style preference: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme, hasCustomDetail || !referenceImage ? 'Detail level: ' + detailLevel + '/5' : '', includeInterior ? 'Add a walkable furnished interior behind the visible exterior without changing the reference silhouette' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: Math.max(1, Math.min(64, Math.round(dimY / 6))),
-        width: dimX,
-        height: dimY,
-        length: dimZ,
-        detailLevel,
+        floors: referenceOwnsEnvelope ? undefined : Math.max(1, Math.min(64, Math.round(dimY / 6))),
+        width: referenceOwnsEnvelope ? undefined : dimX,
+        height: referenceOwnsEnvelope ? undefined : dimY,
+        length: referenceOwnsEnvelope ? undefined : dimZ,
+        detailLevel: referenceImage && !hasCustomDetail ? undefined : detailLevel,
         includeInterior,
         seed: 42,
       }, controller.signal, (value, stage) => setLoadingStep(Math.round(value * 100) + '% · ' + stage), forceLocal);
@@ -330,7 +333,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       const message = error instanceof Error ? error.message : 'Structure generation failed.';
       const friendly = code === 'MODEL_TIMEOUT' || /timed?\s*out|aborted due to timeout/i.test(message)
         ? (referenceImage
-          ? (lang === 'zh' ? '视觉模型未在限定时间内返回完整建筑计划。可降低复杂度或尺寸重试，也可以改用本地预览。' : 'The vision model did not return a complete building plan in time. Retry with lower detail or smaller dimensions, or use local preview.')
+          ? (lang === 'zh' ? '统一建筑模型未在限定时间内完成参考图建模。原图和描述已保留，可稍后重试或主动选择本地预览。' : 'The unified building model did not finish the reference-based plan in time. Your image and description are preserved; retry later or explicitly create a local preview.')
           : (lang === 'zh' ? '模型响应超时。当前请求已停止；请检查模型服务连通性，或在 Settings 增加超时时间后重试。' : 'The model request timed out and was stopped. Check model-service connectivity or increase the Settings timeout, then retry.'))
         : code === 'MODEL_AUTH_FAILED' || /no valid credentials|api key|authentication failed/i.test(message)
           ? (lang === 'zh' ? '模型服务拒绝了当前 API 密钥或账户权限。请在 Settings 更新密钥后重试。' : 'The model provider rejected the configured API key or account permissions. Update the key in Settings and retry.')
@@ -461,7 +464,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         {lang === 'zh' ? '设计参考图已绑定' : 'Reference Image Loaded'}
                       </div>
                       <div className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                        {lang === 'zh' ? '体素解算将提取形态与配色' : 'Voxel lattice extracts visual cues'}
+                        {lang === 'zh' ? '原图直接交给统一建筑模型；参考图决定类型、比例、轮廓与外观' : 'The unified building model receives the original image; it governs type, proportions, silhouette and appearance.'}
                       </div>
                     </div>
                   </div>
@@ -573,6 +576,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                           <button
                             key={preset.label}
                             onClick={() => {
+                              setHasCustomDimensions(true);
                               setDimX(preset.x);
                               setDimY(preset.y);
                               setDimZ(preset.z);
@@ -596,48 +600,55 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.width}</span>
-                        <input type="number" min={8} max={512} value={dimX} onChange={(e) => setDimX(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
+                        <input type="number" min={8} max={512} value={dimX} onChange={(e) => { setHasCustomDimensions(true); setDimX(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
                         value={dimX}
-                        onChange={(e) => setDimX(Number(e.target.value))}
+                        onChange={(e) => { setHasCustomDimensions(true); setDimX(Number(e.target.value)); }}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.height}</span>
-                        <input type="number" min={8} max={512} value={dimY} onChange={(e) => setDimY(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
+                        <input type="number" min={8} max={512} value={dimY} onChange={(e) => { setHasCustomDimensions(true); setDimY(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
                         value={dimY}
-                        onChange={(e) => setDimY(Number(e.target.value))}
+                        onChange={(e) => { setHasCustomDimensions(true); setDimY(Number(e.target.value)); }}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.depth}</span>
-                        <input type="number" min={8} max={512} value={dimZ} onChange={(e) => setDimZ(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
+                        <input type="number" min={8} max={512} value={dimZ} onChange={(e) => { setHasCustomDimensions(true); setDimZ(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
                         value={dimZ}
-                        onChange={(e) => setDimZ(Number(e.target.value))}
+                        onChange={(e) => { setHasCustomDimensions(true); setDimZ(Number(e.target.value)); }}
                         className="w-full"
                       />
                     </div>
                   </div>
 
                   <p className="text-[10px] text-zinc-500">{lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。高复杂度会要求完整室内。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks. High detail requires a complete interior.`}</p>
+                  {referenceImage && (
+                    <p data-reference-mode="primary" role="status" className="text-[10px] text-emerald-300">
+                      {hasCustomDimensions
+                        ? (lang === 'zh' ? '参考图优先；已选尺寸作为目标范围，生成时保留图片比例。' : 'Reference image is primary; the selected size is a target and image proportions are preserved.')
+                        : (lang === 'zh' ? '参考图优先；尺寸和比例由图片推断。选择尺寸预设或编辑尺寸后才会锁定目标尺寸。' : 'Reference image is primary; dimensions and proportions come from the image until you choose a target size.')}
+                    </p>
+                  )}
                   {/* Architectural Style Archetypes */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-mono text-zinc-400 block">{t.styleLabel}</label>
@@ -716,6 +727,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       value={detailLevel}
                       onChange={(e) => {
                         const level = Number(e.target.value);
+                        setHasCustomDetail(true);
                         setDetailLevel(level);
                         setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
                       }}
@@ -727,6 +739,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         <button
                           key={level}
                           onClick={() => {
+                            setHasCustomDetail(true);
                             setDetailLevel(level);
                             setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
                           }}

@@ -21,6 +21,7 @@ type WorkerEvent =
 
 export type TaskProgress = (value: number, stage: string) => void;
 const ENGINE_TASK_TIMEOUT_MS = 120000;
+const MODEL_BUILD_TASK_TIMEOUT_MS = 960000;
 
 export function runEngineTask<T>(
   type: string,
@@ -35,7 +36,8 @@ export function runEngineTask<T>(
     const worker = new Worker('/engine-worker.js', { type: 'module' });
     const id = `ui-${type.replaceAll('.', '-')}-${crypto.randomUUID()}`;
     let settled = false;
-    const timeout = window.setTimeout(() => fail(new Error(`Engine task timed out: ${type}`)), ENGINE_TASK_TIMEOUT_MS);
+    const taskTimeoutMs = type === 'ai.structure-plan' ? MODEL_BUILD_TASK_TIMEOUT_MS : ENGINE_TASK_TIMEOUT_MS;
+    const timeout = window.setTimeout(() => fail(new Error(`Engine task timed out: ${type}`)), taskTimeoutMs);
 
     const finish = () => {
       settled = true;

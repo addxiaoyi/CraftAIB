@@ -306,7 +306,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
             <span className="text-zinc-400">{t.geminiStatus}</span>
             <span className="font-mono text-zinc-300">
-              {[healthStatus?.text && `text: ${healthStatus.textModel}`, healthStatus?.vision && `vision: ${healthStatus.visionModel}`].filter(Boolean).join(' / ') || 'Not configured'}
+              {healthStatus?.generationModel
+                ? `${healthStatus.generationModel} (text + reference images)`
+                : healthStatus?.textModel
+                  ? `${healthStatus.textModel} (text + reference images)`
+                  : 'Not configured'}
             </span>
           </div>
 

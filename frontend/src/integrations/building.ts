@@ -60,12 +60,12 @@ export async function generateBuilding(
   const referenceImage = options.referenceImage ? await imagePayload(options.referenceImage) : undefined;
   const constraints = { type: options.type, style: options.style, floors: options.floors || undefined, width: options.width || undefined, height: options.height || undefined, length: options.length || undefined, detailLevel: options.detailLevel || undefined, includeInterior: options.includeInterior !== false };
   const status = forceLocal ? null : await modelStatus(signal);
-  const useVision = Boolean(referenceImage);
-  const useModel = Boolean(useVision ? status?.vision : status?.text);
+  const hasReferenceImage = Boolean(referenceImage);
+  const useModel = Boolean(status?.text);
   const input = { prompt, seed: options.seed, constraints, referenceImage };
 
-  if (useVision && !useModel && !forceLocal) {
-    throw new Error('A vision model is required for strict reference-image generation. Choose local preview to use heuristic analysis.');
+  if (hasReferenceImage && !useModel && !forceLocal) {
+    throw new Error('The unified building model is not configured. Configure it in Settings, or explicitly choose local preview.');
   }
 
   if (!useModel) {
@@ -96,24 +96,10 @@ async function imagePayload(dataUrl: string) {
   const image = new Image();
   image.src = dataUrl;
   await image.decode();
-  const maxSide = 1536;
-  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-  const width = Math.max(1, Math.round(image.naturalWidth * scale));
-  const height = Math.max(1, Math.round(image.naturalHeight * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Unable to prepare the reference image for the vision model.');
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-  let compressed = canvas.toDataURL('image/jpeg', 0.82);
-  if (compressed.length > 1_800_000) compressed = canvas.toDataURL('image/jpeg', 0.65);
   return {
     width: image.naturalWidth,
     height: image.naturalHeight,
-    dataUrl: compressed,
-    sourceName: 'reference.jpg',
+    dataUrl,
+    sourceName: 'reference-image',
   };
 }

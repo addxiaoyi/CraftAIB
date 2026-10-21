@@ -1,4 +1,4 @@
-import { attachReferenceFeatures, createLitematicaPlannerInstruction, validateStructurePlan, type BuildingPrompt, type GeometryPart, type RoomPlan, type StructurePlan, type StructureRegionPlan } from './index.js';
+import { attachReferenceFeatures, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type RoomPlan, type StructurePlan, type StructureRegionPlan } from './index.js';
 
 export type VisionPlannerOptions = {
   endpoint: string;
@@ -14,9 +14,30 @@ export type VisionPlannerOptions = {
 };
 
 const DEFAULT_RETRIES = 2;
-const DEFAULT_REPAIR_ATTEMPTS = 1;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const MAX_BUILD_TOOL_TURNS = 6;
+export const ARCHITECTURAL_AESTHETIC_SKILL = `
+ARCHITECTURAL AESTHETIC SKILL
+Goal: make a deliberate, beautiful Minecraft structure that reads clearly from far away and rewards close inspection.
+
+1. Read the reference before designing. Identify the primary silhouette, visual center, dominant axis, scale, negative space, major masses, roof or cap, repeated motifs, material families, color hierarchy and distinctive landmarks. Preserve those visible facts.
+2. Establish hierarchy. Use one main mass, one focal feature and a small number of supporting accents. Do not give every part equal visual weight. Keep a readable silhouette at thumbnail scale.
+3. Control proportion. Use a coherent base, body, transition and crown. Align windows, beams, columns, stairs and trim to a shared module. Avoid accidental tiering, random setbacks, thin floating plates and noisy over-segmentation.
+4. Build depth. Use foundation, wall plane, frame, recess, projection, eave and ornament layers. Openings must be real voids or transparent blocks with lintels, sills and structural edges.
+5. Use materials intentionally. Select a dominant material, a secondary material, a restrained accent and a light source. Keep palette contrast clear; reserve rare colors for focal details. Match the reference color relationships, not just individual color names.
+6. Add detail with rhythm and variation. Repeat motifs with consistent spacing, then vary corners, entrances, roof edges and focal areas. Detail should explain structure, use real Minecraft blocks and never obscure the main form.
+7. Complete unseen geometry by inference. Continue visible symmetry, module spacing, roof drainage, beams, supports, material transitions and ornament around hidden faces. Close back, opposite side, top, underside and roof interiors. For buildings, infer coherent reachable rooms, circulation, storage, lighting and service spaces. For objects, infer a complete solid assembly without inventing unrelated rooms or floors.
+8. Check construction quality. No unsupported floating masses, disconnected stairs, impossible overhangs, paper-thin shells, exposed hollow cavities, abrupt material changes or empty placeholder boxes. Prefer a simpler coherent form over detail that breaks structure.
+9. Before finishing, inspect front, side and top projections, block counts, region bounds and material counts. Revise any mismatch with the reference or the aesthetic rules. A valid JSON plan is not finished until its executed voxel result is visually coherent.
+`.trim();
+const BUILDING_BLOCK_CATALOG = {
+  masonry: ['minecraft:stone_bricks', 'minecraft:cracked_stone_bricks', 'minecraft:mossy_stone_bricks', 'minecraft:bricks', 'minecraft:quartz_bricks', 'minecraft:polished_tuff', 'minecraft:tuff_bricks', 'minecraft:chiseled_stone_bricks', 'minecraft:deepslate_bricks', 'minecraft:polished_blackstone_bricks'],
+  wood: ['minecraft:oak_planks', 'minecraft:spruce_planks', 'minecraft:dark_oak_planks', 'minecraft:mangrove_planks', 'minecraft:cherry_planks', 'minecraft:bamboo_planks', 'minecraft:oak_log', 'minecraft:stripped_spruce_log'],
+  roofs: ['minecraft:deepslate_tiles', 'minecraft:dark_prismarine', 'minecraft:oxidized_cut_copper', 'minecraft:cut_copper', 'minecraft:dark_oak_stairs', 'minecraft:stone_brick_stairs', 'minecraft:deepslate_tile_stairs', 'minecraft:brick_stairs'],
+  openings: ['minecraft:glass_pane', 'minecraft:white_stained_glass_pane', 'minecraft:iron_bars', 'minecraft:oak_door', 'minecraft:spruce_door', 'minecraft:dark_oak_trapdoor', 'minecraft:iron_trapdoor'],
+  detail: ['minecraft:lantern', 'minecraft:soul_lantern', 'minecraft:chain', 'minecraft:lightning_rod', 'minecraft:chiseled_bookshelf', 'minecraft:flower_pot', 'minecraft:sea_lantern'],
+} as const;
 
 export function structurePlanJsonSchema() {
   return {
@@ -117,27 +138,307 @@ export async function planBuildingWithModel(input: BuildingPrompt, options: Visi
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
   const request = buildRequest(input, imageUrl, options.model, options.strictSchema !== false);
-  const response = await requestWithRetry(normalizeChatEndpoint(options.endpoint), headers, request, fetcher, options);
-  const initial = parseVisionResponse(await response.text());
-
+  const requestTimeoutMs = Math.max(1000, Math.floor(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS));
+  const retries = Math.max(0, Math.min(5, Math.floor(options.maxRetries ?? DEFAULT_RETRIES)));
+  const totalBudgetMs = Math.min(900_000, requestTimeoutMs * (retries + 1) * MAX_BUILD_TOOL_TURNS);
+  const deadline = new AbortController();
+  let deadlineReached = false;
+  const deadlineTimer = setTimeout(() => { deadlineReached = true; deadline.abort(); }, totalBudgetMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
   try {
-    const constrained = input.constraints ? applyHardConstraints(initial, input.constraints) : initial;
-    validateStructurePlan(constrained);
-    return { ...attachReferenceFeatures(constrained, input.referenceImage?.referenceFeatures), notes: [...constrained.notes, 'Generated by a configured vision planner endpoint.'] };
+    return await runBuildToolLoop(input, imageUrl, options, fetcher, headers, request, signal);
   } catch (error) {
-    const repaired = repairStructurePlan(initial, input.constraints);
+    if (deadlineReached && !options.signal?.aborted) {
+      throw Object.assign(new Error(`The building agent exceeded its ${Math.ceil(totalBudgetMs / 60000)} minute time budget. Retry with a smaller structure or fewer details.`), { statusCode: 504, code: 'MODEL_TIMEOUT' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
+}
+
+async function runBuildToolLoop(
+  input: BuildingPrompt,
+  imageUrl: string | undefined,
+  options: VisionPlannerOptions,
+  fetcher: typeof fetch,
+  headers: Record<string, string>,
+  request: ReturnType<typeof buildRequest>,
+  signal: AbortSignal,
+): Promise<StructurePlan> {
+  const messages: any[] = [...request.messages];
+  const builds = new Map<string, { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid> }>();
+  const inspectedBuilds = new Set<string>();
+  let catalogProvided = false;
+  let latestBuildId = '';
+
+  for (let turn = 1; turn <= MAX_BUILD_TOOL_TURNS; turn += 1) {
+    const catalogSeenByModel = catalogProvided;
+    const inspectionsSeenByModel = new Set(inspectedBuilds);
+    const response = await requestWithRetry(
+      normalizeChatEndpoint(options.endpoint),
+      headers,
+      { ...request, messages },
+      fetcher,
+      { ...options, signal },
+    );
+    const rawResponse = await response.text();
+    let assistantMessage: any;
     try {
-      validateStructurePlan(repaired);
-      return { ...attachReferenceFeatures(repaired, input.referenceImage?.referenceFeatures), notes: [...repaired.notes, `Auto-repaired vision response: ${error instanceof Error ? error.message : 'schema mismatch'}`] };
-    } catch {
-      if ((options.maxRepairAttempts ?? DEFAULT_REPAIR_ATTEMPTS) < 1) throw error;
-      const repairRequest = buildRepairRequest(initial, error, options.model, options.strictSchema !== false);
-      const repairedResponse = await requestWithRetry(normalizeChatEndpoint(options.endpoint), headers, repairRequest, fetcher, options);
-      const repairedPlan = applyHardConstraints(parseVisionResponse(await repairedResponse.text()), input.constraints);
-      validateStructurePlan(repairedPlan);
-      return { ...attachReferenceFeatures(repairedPlan, input.referenceImage?.referenceFeatures), notes: [...repairedPlan.notes, 'Repaired by the configured vision planner endpoint.'] };
+      assistantMessage = parseToolResponse(rawResponse);
+    } catch (error) {
+      if (!/no construction-tool calls|tool calling/i.test(error instanceof Error ? error.message : '')) throw error;
+      const fallbackResponse = await requestWithRetry(
+        normalizeChatEndpoint(options.endpoint),
+        headers,
+        {
+          model: options.model ?? 'gpt-4o-mini',
+          temperature: 0,
+          response_format: { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: structurePlanJsonSchema() } },
+          messages: request.messages,
+        },
+        fetcher,
+        { ...options, signal },
+      );
+      const fallbackPlan = prepareModelPlan(parseVisionResponse(await fallbackResponse.text()), imageUrl, input.constraints);
+      return {
+        ...attachReferenceFeatures(fallbackPlan, input.referenceImage?.referenceFeatures),
+        notes: [...fallbackPlan.notes, 'The configured endpoint did not support tool calls; used validated single-pass compatibility mode.'],
+      };
+    }
+    const calls = Array.isArray(assistantMessage.tool_calls) ? assistantMessage.tool_calls : [];
+    if (!calls.length) throw new Error('The building model returned no construction-tool call.');
+    messages.push(assistantMessage);
+
+    for (const call of calls) {
+      const toolCallId = String(call.id ?? `tool-${turn}-${messages.length}`);
+      const toolName = call.function?.name;
+      let args: any;
+      try {
+        args = JSON.parse(call.function?.arguments ?? '{}');
+      } catch {
+        messages.push(toolResult(toolCallId, { ok: false, error: 'Tool arguments must be valid JSON.' }));
+        continue;
+      }
+
+      if (toolName === 'build_voxel_structure') {
+        if (!catalogSeenByModel) {
+          messages.push(toolResult(toolCallId, { ok: false, error: 'Call get_minecraft_blocks first and use the returned vanilla block IDs when selecting materials.' }));
+          continue;
+        }
+        try {
+          const candidate = prepareModelPlan(args.plan, imageUrl, input.constraints);
+          const grid = structurePlanToGrid(candidate);
+          latestBuildId = `build-${turn}-${builds.size + 1}`;
+          builds.set(latestBuildId, { plan: candidate, grid });
+          messages.push(toolResult(toolCallId, {
+            ok: true,
+            buildId: latestBuildId,
+            dimensions: { width: grid.width, height: grid.height, length: grid.length },
+            blocks: grid.cells.length,
+            regions: candidate.regions.map(({ name, role, x, y, z, width, height, length }) => ({ name, role, x, y, z, width, height, length })),
+            materials: summarizeGridMaterials(grid.cells),
+            aesthetic: summarizeAestheticChecks(grid.cells, grid.width, grid.height, grid.length),
+            projections: {
+              front: summarizeProjection(grid.cells, grid.width, grid.height, 'front'),
+              side: summarizeProjection(grid.cells, grid.length, grid.height, 'side'),
+              top: summarizeProjection(grid.cells, grid.width, grid.length, 'top'),
+            },
+            feedback: 'This is the executed voxel result, not a preview estimate. Projection rows use # for occupied cells and . for empty cells. Compare the visible reference side with the projections, then complete the unseen sides using the same symmetry, rhythm, structural logic, palette and ornament rules. The back, opposite side, top, underside and interior must be closed and coherent even when absent from the image. Call inspect_voxel_structure on this build; if a mismatch remains, revise and build again. Finish only after inspection confirms the latest build.',
+          }));
+        } catch (error) {
+          messages.push(toolResult(toolCallId, {
+            ok: false,
+            error: error instanceof Error ? error.message : 'The proposed structure could not be built.',
+            feedback: 'Correct the plan using the error. Keep the reference image as the source of truth and try build_voxel_structure again.',
+          }));
+        }
+        continue;
+      }
+
+      if (toolName === 'get_minecraft_blocks') {
+        catalogProvided = true;
+        const category = String(args.category ?? 'all');
+        const catalog = category === 'all'
+          ? BUILDING_BLOCK_CATALOG
+          : Object.fromEntries(Object.entries(BUILDING_BLOCK_CATALOG).filter(([name]) => name === category));
+        messages.push(toolResult(toolCallId, { namespace: 'minecraft', category, blocks: catalog }));
+        continue;
+      }
+
+      if (toolName === 'inspect_voxel_structure') {
+        const buildId = String(args.buildId ?? '');
+        const build = builds.get(buildId);
+        if (!build || buildId !== latestBuildId) {
+          messages.push(toolResult(toolCallId, { ok: false, error: 'Inspect the most recent successful buildId.' }));
+          continue;
+        }
+        inspectedBuilds.add(buildId);
+        messages.push(toolResult(toolCallId, {
+          ok: true,
+          buildId,
+          dimensions: build.plan.dimensions,
+          blocks: build.grid.cells.length,
+          regionCount: build.plan.regions.length,
+          materials: summarizeGridMaterials(build.grid.cells),
+          aesthetic: summarizeAestheticChecks(build.grid.cells, build.grid.width, build.grid.height, build.grid.length),
+          projections: {
+            front: summarizeProjection(build.grid.cells, build.grid.width, build.grid.height, 'front'),
+            side: summarizeProjection(build.grid.cells, build.grid.length, build.grid.height, 'side'),
+            top: summarizeProjection(build.grid.cells, build.grid.width, build.grid.length, 'top'),
+          },
+          feedback: 'Inspection complete. Use the aesthetic report as a gate. If focalCentrality is low, strengthen one central focal feature; if negativeSpaceRatio is near zero, remove clutter and preserve readable gaps; if rhythmScore is low, align repeated windows, beams and ornaments to a module; if detailNoiseRatio or unsupportedRisk is high, simplify isolated blocks and add supports. Complete unseen faces by inference: mirror repeated facade elements where appropriate, continue roof/eave/wall materials around corners, close the underside, add structurally supported hidden framing, and furnish hidden interior space consistently. Do not invent a new style on unseen faces. If satisfactory, call finish_structure in a later model turn with this buildId.',
+        }));
+        continue;
+      }
+
+      if (toolName === 'finish_structure') {
+        const buildId = String(args.buildId ?? '');
+        const completed = builds.get(buildId);
+        if (!completed || buildId !== latestBuildId || !inspectionsSeenByModel.has(buildId)) {
+          messages.push(toolResult(toolCallId, { ok: false, error: 'buildId must identify the latest successful build and its inspection report must have been returned in a previous turn.' }));
+          continue;
+        }
+        return {
+          ...attachReferenceFeatures(completed.plan, input.referenceImage?.referenceFeatures),
+          notes: [...completed.plan.notes, imageUrl
+            ? `Built and checked by the unified model using the original reference image in ${turn} tool turns.`
+            : `Built and checked by the configured building model in ${turn} tool turns.`],
+        };
+      }
+
+      messages.push(toolResult(toolCallId, { ok: false, error: `Unknown construction tool: ${String(toolName)}` }));
     }
   }
+
+  throw new Error(`The building model did not finish a validated voxel structure within ${MAX_BUILD_TOOL_TURNS} tool turns. Reduce scope or retry.`);
+}
+
+function prepareModelPlan(value: unknown, imageUrl: string | undefined, constraints?: BuildingPrompt['constraints']): StructurePlan {
+  const parsed = value && typeof value === 'object' ? value as StructurePlan : parseVisionResponse(JSON.stringify(value));
+  const plan = imageUrl ? normalizeReferenceRegions(parsed) : applyHardConstraints(parsed, constraints);
+  if (imageUrl) assertRequestedDimensions(plan, constraints);
+  return validateStructurePlan(plan);
+}
+
+function summarizeGridMaterials(cells: Array<{ block: { id: string } }>): Array<{ block: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const cell of cells) counts.set(cell.block.id, (counts.get(cell.block.id) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 16)
+    .map(([block, count]) => ({ block, count }));
+}
+
+function summarizeAestheticChecks(cells: Array<{ x: number; y: number; z: number }>, width: number, height: number, length: number) {
+  if (!cells.length) return { focalCentrality: 0, negativeSpaceRatio: 1, rhythmScore: 0, detailNoiseRatio: 1, unsupportedRisk: 1 };
+  const occupied = new Set(cells.map((cell) => `${cell.x},${cell.y},${cell.z}`));
+  const centerX = (width - 1) / 2;
+  const centerZ = (length - 1) / 2;
+  const averageDistance = cells.reduce((sum, cell) => sum + Math.hypot(cell.x - centerX, cell.z - centerZ), 0) / cells.length;
+  const maximumDistance = Math.max(1, Math.hypot(centerX, centerZ));
+  const focalCentrality = clampScore(1 - averageDistance / maximumDistance);
+  const envelope = Math.max(1, width * height * length);
+  const negativeSpaceRatio = clampScore(1 - cells.length / envelope);
+  const rows = new Map<number, number>();
+  for (const cell of cells) rows.set(cell.y, (rows.get(cell.y) ?? 0) + 1);
+  const rowCounts = [...rows.values()];
+  const averageRow = rowCounts.reduce((sum, value) => sum + value, 0) / Math.max(1, rowCounts.length);
+  const variance = rowCounts.reduce((sum, value) => sum + Math.abs(value - averageRow), 0) / Math.max(1, rowCounts.length * averageRow);
+  const rhythmScore = clampScore(1 - variance);
+  let isolated = 0;
+  let unsupported = 0;
+  for (const cell of cells) {
+    const neighbors = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].filter(([dx, dy, dz]) => occupied.has(`${cell.x + dx},${cell.y + dy},${cell.z + dz}`)).length;
+    if (neighbors <= 1) isolated += 1;
+    if (cell.y > 0 && !occupied.has(`${cell.x},${cell.y - 1},${cell.z}`) && neighbors <= 2) unsupported += 1;
+  }
+  return {
+    focalCentrality: roundScore(focalCentrality),
+    negativeSpaceRatio: roundScore(negativeSpaceRatio),
+    rhythmScore: roundScore(rhythmScore),
+    detailNoiseRatio: roundScore(isolated / cells.length),
+    unsupportedRisk: roundScore(unsupported / cells.length),
+  };
+}
+
+function clampScore(value: number): number { return Math.max(0, Math.min(1, value)); }
+function roundScore(value: number): number { return Math.round(clampScore(value) * 100) / 100; }
+
+function summarizeProjection(
+  cells: Array<{ x: number; y: number; z: number }>,
+  width: number,
+  height: number,
+  view: 'front' | 'side' | 'top',
+): string[] {
+  const horizontalSize = Math.min(48, width);
+  const verticalSize = Math.min(48, height);
+  const columns = horizontalSize;
+  const rows = verticalSize;
+  const occupied = new Uint8Array(columns * rows);
+  for (const cell of cells) {
+    const horizontal = view === 'side' ? cell.z : cell.x;
+    const vertical = view === 'top' ? cell.z : cell.y;
+    const x = Math.min(columns - 1, Math.floor(horizontal * columns / width));
+    const y = rows - 1 - Math.min(rows - 1, Math.floor(vertical * rows / height));
+    occupied[y * columns + x] = 1;
+  }
+  return Array.from({ length: rows }, (_, y) => {
+    let row = '';
+    for (let x = 0; x < columns; x += 1) row += occupied[y * columns + x] ? '#' : '.';
+    return row;
+  });
+}
+
+function toolResult(toolCallId: string, value: unknown) {
+  return { role: 'tool', tool_call_id: toolCallId, content: JSON.stringify(value) };
+}
+
+function assertRequestedDimensions(plan: StructurePlan, constraints?: BuildingPrompt['constraints']): void {
+  const mismatched = (['width', 'height', 'length'] as const).some((axis) => {
+    const requested = constraints?.[axis];
+    if (!requested) return false;
+    const planned = axis === 'width' ? plan.dimensions.width : axis === 'height' ? plan.dimensions.height : plan.dimensions.length;
+    return planned !== requested;
+  });
+  if (mismatched) throw new Error('The visual plan does not match the requested target size. Retry without a target size or choose dimensions matching the reference proportions.');
+}
+
+function normalizeReferenceRegions(plan: StructurePlan): StructurePlan {
+  const { width, height, length } = plan.dimensions;
+  if (![width, height, length].every((value) => Number.isInteger(value) && value > 0)) return plan;
+
+  const usedNames = new Set<string>();
+  const regions = (Array.isArray(plan.regions) ? plan.regions : []).flatMap((region, index) => {
+    const raw = [region?.x, region?.y, region?.z, region?.width, region?.height, region?.length].map(Number);
+    if (!raw.every(Number.isFinite) || raw[3] <= 0 || raw[4] <= 0 || raw[5] <= 0) return [];
+    const x = Math.max(0, Math.floor(raw[0]));
+    const y = Math.max(0, Math.floor(raw[1]));
+    const z = Math.max(0, Math.floor(raw[2]));
+    const endX = Math.min(width, Math.ceil(raw[0] + raw[3]));
+    const endY = Math.min(height, Math.ceil(raw[1] + raw[4]));
+    const endZ = Math.min(length, Math.ceil(raw[2] + raw[5]));
+    if (x >= endX || y >= endY || z >= endZ) return [];
+
+    const baseName = String(region.name || `Reference region ${index + 1}`).trim();
+    let name = baseName;
+    for (let suffix = 2; usedNames.has(name); suffix += 1) name = `${baseName} ${suffix}`;
+    usedNames.add(name);
+    return [{ ...region, name, x, y, z, width: endX - x, height: endY - y, length: endZ - z }];
+  });
+  if (regions.length) return { ...plan, regions };
+
+  const parts = plan.geometry?.parts ?? [];
+  if (!parts.length) return { ...plan, regions: [{ name: 'Reference structure', role: 'reference geometry', x: 0, y: 0, z: 0, width, height, length }] };
+  const bounds = parts.reduce((box, part) => ({
+    minX: Math.min(box.minX, part.x), minY: Math.min(box.minY, part.y), minZ: Math.min(box.minZ, part.z),
+    maxX: Math.max(box.maxX, part.x + part.width), maxY: Math.max(box.maxY, part.y + part.height), maxZ: Math.max(box.maxZ, part.z + part.length),
+  }), { minX: width, minY: height, minZ: length, maxX: 0, maxY: 0, maxZ: 0 });
+  const x = Math.max(0, bounds.minX); const y = Math.max(0, bounds.minY); const z = Math.max(0, bounds.minZ);
+  const endX = Math.min(width, bounds.maxX); const endY = Math.min(height, bounds.maxY); const endZ = Math.min(length, bounds.maxZ);
+  if (x >= endX || y >= endY || z >= endZ) return { ...plan, regions: [{ name: 'Reference structure', role: 'reference geometry', x: 0, y: 0, z: 0, width, height, length }] };
+  const region: StructureRegionPlan = { name: 'Reference structure', role: 'reference geometry', x, y, z, width: endX - x, height: endY - y, length: endZ - z };
+  return { ...plan, regions: [region] };
 }
 
 function normalizeChatEndpoint(endpoint: string): string {
@@ -150,32 +451,62 @@ function normalizeChatEndpoint(endpoint: string): string {
 function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, strictSchema = true) {
   const text = input.prompt?.trim() || 'Analyze this reference image and produce a buildable Minecraft structure plan.';
   const imageInstruction = imageUrl
-    ? 'REFERENCE IMAGE MODE IS AUTHORITATIVE. Build the StructurePlan directly from the supplied image pixels. Preserve the visible silhouette, relative proportions, occlusions, connected parts, roof or head shape, openings, facade rhythm, material colors, and distinctive landmarks. Do not first summarize the image into a generic building type. Do not replace visible geometry with a preset, stacked floors, or a rectangular shell. Every named Region must correspond to a visible connected part.'
+    ? 'REFERENCE IMAGE MODE IS AUTHORITATIVE. The original image is the source of truth for building type, silhouette, proportions, connected parts, roof shape, openings, facade rhythm, color blocks and landmarks. Text, style, palette, room and detail settings are secondary constraints. Never replace a distinctive image with a preset, generic tower or rectangular shell. Preserve the same visible exterior between tool iterations. For every face the image cannot show, infer a complete continuation from visible symmetry, repeated motifs, structural support, gravity, material transitions and architectural style: finish the back, opposite side, top, underside, roof interior and hidden rooms. Invisible geometry must be consistent with the visible geometry and must never be left as a hollow cutaway, floating facade or arbitrary blank wall.'
     : '';
+  const planSchema = structurePlanJsonSchema();
   return {
     model: model ?? 'gpt-4o-mini',
     temperature: 0,
-    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: structurePlanJsonSchema() } } : { type: 'json_object' },
-    tools: [{ type: 'function', function: { name: 'generate_structure_plan', description: 'Generate the complete Minecraft StructurePlan from the original reference image and prompt. Use the image as the source of truth.', parameters: structurePlanJsonSchema() } }],
-    tool_choice: { type: 'function', function: { name: 'generate_structure_plan' } },
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'get_minecraft_blocks',
+          description: 'Read the available vanilla Minecraft building blocks and use these exact namespaced IDs in the construction plan.',
+          parameters: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['category'],
+            properties: { category: { type: 'string', enum: ['all', 'masonry', 'wood', 'roofs', 'openings', 'detail'] } },
+          },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'build_voxel_structure',
+          description: 'Execute this StructurePlan in the Minecraft voxel builder. Apply the Architectural Aesthetic Skill: preserve the visible reference, establish hierarchy, control proportion, add layered depth, use real materials and complete unseen geometry coherently. The tool returns actual block count, materials, region bounds, and validation errors.',
+          parameters: { type: 'object', additionalProperties: false, required: ['plan'], properties: { plan: planSchema } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'inspect_voxel_structure',
+          description: 'Inspect the latest executed voxel build from front, side and top projections, dimensions, regions, block count, material counts and quantitative aesthetic checks for focal point, negative space, rhythm, detail noise and support risk. Judge it against the Architectural Aesthetic Skill before deciding whether to revise it.',
+          parameters: { type: 'object', additionalProperties: false, required: ['buildId'], properties: { buildId: { type: 'string' } } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'finish_structure',
+          description: 'Return the latest successfully built StructurePlan as the final result. Call only after build_voxel_structure succeeds and its report is satisfactory.',
+          parameters: { type: 'object', additionalProperties: false, required: ['buildId'], properties: { buildId: { type: 'string' } } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+    ],
+    tool_choice: 'auto',
     messages: [
-      { role: 'system', content: `${createLitematicaPlannerInstruction()} ${imageInstruction} Return a geometry.parts list for every visible architectural part and every requested interior part. At high detail, include geometry.parts with purpose room/partition/circulation and at least three separately positioned furniture parts for enclosed buildings. Preserve room connectivity and stairs between all occupied floors. Keep exterior geometry faithful to the reference; add interior geometry behind it without changing its silhouette. At detail levels 4-5, the requested structure MUST be functionally complete inside, not an empty shell: model room floor and ceiling surfaces, partitions, corridors, connecting stairs, doors, windows, kitchen/bath/service rooms, storage, furniture, beds, tables, chairs, counters, lamps and decorative trim as separate positioned parts. For multi-story buildings provide room clusters on every occupied floor and stair connections. Keep the room plan coherent and reachable. Prefer many precise parts over a few large boxes: shells, roof planes, eaves, arches, columns, beams, stairs, furniture and facade surfaces. Parts must be positioned in xyz and use real Minecraft block IDs in material. The renderer will execute these parts directly.`.trim() },
+      { role: 'system', content: `${ARCHITECTURAL_AESTHETIC_SKILL} ${createLitematicaPlannerInstruction()} ${imageInstruction} You are an interactive Minecraft construction agent. First call get_minecraft_blocks. Then call build_voxel_structure to create an actual voxel grid. Call inspect_voxel_structure on the newest successful build and compare front, side and top projections with the original image. Treat focalCentrality, negativeSpaceRatio, rhythmScore, detailNoiseRatio and unsupportedRisk as aesthetic gates: repair the plan when the focal point is weak, the silhouette is cluttered, repeated details lose alignment, isolated blocks create noise, or hidden geometry lacks support. If the silhouette, placement, openings, roof, hidden-side completion, palette, hierarchy or material rhythm are wrong or missing, revise the plan and build again, then inspect again. You must receive the inspection result in a later turn before calling finish_structure. Never claim details exist unless the voxel builder reports them. Use real Minecraft block IDs from the catalog. Preserve the visible reference exactly; complete all unseen faces, roof planes, supports and interior rooms by consistent architectural inference. For buildings, hidden interiors must be reachable and structurally supported. For objects, hidden faces must continue the visible form and decoration without inventing floors or unrelated rooms.`.trim() },
       { role: 'user', content: imageUrl ? [
-        { type: 'text', text: `${text}\nReturn geometry, not a verbal description. The image is the primary source of truth.` },
+        { type: 'text', text: `${text}\nUse the original image as the primary source. Build the visible structure, then inspect the voxel-builder report and correct mismatches before finishing.` },
         { type: 'image_url', image_url: { url: imageUrl } },
       ] : text },
-    ],
-  };
-}
-
-function buildRepairRequest(plan: unknown, error: unknown, model?: string, strictSchema = true) {
-  return {
-    model: model ?? 'gpt-4o-mini',
-    temperature: 0,
-    response_format: strictSchema ? { type: 'json_schema', json_schema: { name: 'structure_plan', strict: true, schema: structurePlanJsonSchema() } } : { type: 'json_object' },
-    messages: [
-      { role: 'system', content: `${createLitematicaPlannerInstruction()} Repair the supplied JSON only. Return a complete valid StructurePlan JSON object. Do not add markdown.` },
-      { role: 'user', content: `Invalid StructurePlan: ${JSON.stringify(plan)}\nValidation error: ${error instanceof Error ? error.message : 'schema mismatch'}` },
     ],
   };
 }
@@ -337,6 +668,42 @@ function synthesizeInteriorGeometry(existing: GeometryPart[], regions: Structure
 function normalizePaletteBlock(value: unknown, fallback: string): string {
   const candidate = typeof value === 'string' ? value.trim().split('[', 1)[0] : '';
   return /^([a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(candidate) ? candidate : fallback;
+}
+
+function parseToolResponse(raw: string): any {
+  let envelope: any;
+  try { envelope = JSON.parse(raw); } catch { throw new Error('The building model returned invalid tool-call JSON.'); }
+  const message = envelope?.choices?.[0]?.message;
+  if (!message) throw new Error('The building model returned no construction-tool calls.');
+  if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
+    const content = Array.isArray(message.content)
+      ? message.content.map((part: any) => typeof part === 'string' ? part : part?.text ?? '').join('')
+      : message.content;
+    const candidate = parsePlanContent(content);
+    if (candidate) {
+      return {
+        ...message,
+        tool_calls: [{
+          id: `compat-build-${Date.now()}`,
+          type: 'function',
+          function: { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: candidate }) },
+        }],
+      };
+    }
+    throw new Error('The building model returned no construction-tool calls. The configured endpoint may not support tool calling.');
+  }
+  return message;
+}
+
+function parsePlanContent(content: unknown): StructurePlan | null {
+  if (typeof content !== 'string') return content && typeof content === 'object' ? content as StructurePlan : null;
+  const normalized = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  try {
+    const value = JSON.parse(normalized);
+    return value?.plan && typeof value.plan === 'object' ? value.plan as StructurePlan : value?.dimensions && value?.regions ? value as StructurePlan : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseVisionResponse(raw: string): StructurePlan {
