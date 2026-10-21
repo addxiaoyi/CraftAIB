@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CraftAibProject, LitematicaPlacementState, StructureData } from '../../types/minecraft';
+import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
 import { ThreeViewport } from '../ThreeViewport';
 import { exportLitematic, exportSchematic, exportBlockGridJson } from '../../utils/exporters';
-import { generateBuilding } from '../../integrations/building';
+import { compareReferenceProfiles, compareReferenceSilhouette, generateBuilding } from '../../integrations/building';
 import {
   Sparkles,
   ChevronDown,
@@ -20,6 +20,10 @@ import {
   Box,
   Compass,
 } from 'lucide-react';
+
+function formatScore(value?: number): string {
+  return value == null ? '-' : `${Math.round(value * 100)}%`;
+}
 
 interface AiBuilderViewProps {
   structure: StructureData;
@@ -137,7 +141,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [generationSource, setGenerationSource] = useState<'ai' | 'local' | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [generationSource, setGenerationSource] = useState<'ai' | 'local' | null>(initialAiMeta?.source ?? null);
+  const [referenceReport, setReferenceReport] = useState<ReferenceReport | undefined>(initialAiMeta?.referenceReport);
   const [allowLocalPreview, setAllowLocalPreview] = useState<boolean>(false);
   const abortController = useRef<AbortController | null>(null);
 
@@ -150,6 +156,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [style, setStyle] = useState<string>('AI_AUTO');
   const [paletteTheme, setPaletteTheme] = useState<string>('AI_AUTO');
   const [complexity, setComplexity] = useState<string>('Detailed');
+  const [detailLevel, setDetailLevel] = useState<number>(4);
+  const [includeInterior, setIncludeInterior] = useState<boolean>(true);
 
   const [minY, setMinY] = useState<number>(0);
   const [maxY, setMaxY] = useState<number>(structure.size.y);
@@ -158,11 +166,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   useEffect(() => {
     setPrompt(initialAiMeta?.prompt ?? '');
     setReferenceImage(initialAiMeta?.referenceImage ?? null);
+    setGenerationSource(initialAiMeta?.source ?? null);
+    setReferenceReport(initialAiMeta?.referenceReport);
   }, [initialAiMeta]);
 
   useEffect(() => {
-    onAiMetaChange?.({ prompt, referenceImage: referenceImage ?? undefined, source: generationSource ?? undefined });
-  }, [prompt, referenceImage, generationSource, onAiMetaChange]);
+    onAiMetaChange?.({ prompt, referenceImage: referenceImage ?? undefined, source: generationSource ?? undefined, referenceReport });
+  }, [prompt, referenceImage, generationSource, referenceReport, onAiMetaChange]);
 
   const base = {
     en: {
@@ -273,6 +283,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     abortController.current = controller;
     setIsLoading(true);
     setErrorMessage(null);
+    setErrorCode(null);
     setAllowLocalPreview(false);
     setGenerationSource(null);
     setLoadingStep(forceLocal ? 'Creating a local preview…' : 'Checking model service…');
@@ -284,16 +295,31 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         : style.toLowerCase().includes('oriental') ? 'colonial'
         : style.toLowerCase().includes('nether') ? 'underwater' : 'fantasy';
       const result = await generateBuilding({
-        prompt: [prompt, styleId ? `Architectural style: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Palette: ' + paletteTheme, 'Complexity: ' + complexity].filter(Boolean).join('. '),
+        prompt: [prompt, styleId ? `Architectural style: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Palette: ' + paletteTheme, 'Complexity: ' + complexity, 'Detail level: ' + detailLevel + '/5', includeInterior ? 'Include a complete walkable furnished interior while preserving the requested exterior' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: style === 'AI_AUTO' ? undefined : Math.max(1, Math.min(12, Math.round(dimY / 6))),
-        width: style === 'AI_AUTO' ? undefined : dimX,
-        length: style === 'AI_AUTO' ? undefined : dimZ,
+        floors: Math.max(1, Math.min(64, Math.round(dimY / 6))),
+        width: dimX,
+        height: dimY,
+        length: dimZ,
+        detailLevel,
+        includeInterior,
         seed: 42,
       }, controller.signal, (value, stage) => setLoadingStep(Math.round(value * 100) + '% · ' + stage), forceLocal);
       onStructureChange(result.structure);
+      const features = (result.structure.plan as any)?.referenceFeatures;
+      if (features) setReferenceReport({
+        sourceWidth: features.sourceWidth,
+        sourceHeight: features.sourceHeight,
+        subjectBounds: features.subjectBounds,
+        floors: features.floorBands?.length,
+        windowColumns: features.windowColumns?.length,
+        towerColumns: features.towerColumns?.length,
+        symmetry: features.symmetry,
+        silhouetteScore: compareReferenceSilhouette(result.structure),
+        ...compareReferenceProfiles(result.structure),
+      });
       setMaxY(result.structure.size.y);
       setMinY(0);
       setGenerationSource(result.source);
@@ -303,12 +329,17 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
       const message = error instanceof Error ? error.message : 'Structure generation failed.';
       const friendly = code === 'MODEL_TIMEOUT' || /timed?\s*out|aborted due to timeout/i.test(message)
-        ? (lang === 'zh' ? '模型响应超时。当前请求已停止；请检查模型服务连通性，或在 Settings 增加超时时间后重试。' : 'The model request timed out and was stopped. Check model-service connectivity or increase the Settings timeout, then retry.')
+        ? (referenceImage
+          ? (lang === 'zh' ? '视觉模型未在限定时间内返回完整建筑计划。可降低复杂度或尺寸重试，也可以改用本地预览。' : 'The vision model did not return a complete building plan in time. Retry with lower detail or smaller dimensions, or use local preview.')
+          : (lang === 'zh' ? '模型响应超时。当前请求已停止；请检查模型服务连通性，或在 Settings 增加超时时间后重试。' : 'The model request timed out and was stopped. Check model-service connectivity or increase the Settings timeout, then retry.'))
+        : code === 'MODEL_AUTH_FAILED' || /no valid credentials|api key|authentication failed/i.test(message)
+          ? (lang === 'zh' ? '模型服务拒绝了当前 API 密钥或账户权限。请在 Settings 更新密钥后重试。' : 'The model provider rejected the configured API key or account permissions. Update the key in Settings and retry.')
         : code === 'RATE_LIMITED'
           ? (lang === 'zh' ? '模型服务请求过于频繁，请稍后重试。' : 'The model is rate limiting requests. Please retry shortly.')
           : message;
       setErrorMessage(cancelled ? (lang === 'zh' ? '已取消生成，输入内容已保留。' : 'Generation cancelled. Your inputs are preserved.') : friendly);
-      setAllowLocalPreview(!forceLocal && !cancelled);
+      setErrorCode(cancelled ? 'CANCELLED' : code || 'GENERATION_FAILED');
+      setAllowLocalPreview(!forceLocal);
     } finally {
       if (abortController.current === controller) abortController.current = null;
       setIsLoading(false);
@@ -525,7 +556,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   {/* Rapid Aspect Envelope Presets */}
                   <div className="space-y-1.5 pt-2">
                     <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                      <span>{lang === 'zh' ? '包络预设尺寸' : 'Envelope Size Presets'}</span>
+                      <span>{lang === 'zh' ? '建筑尺寸预设' : 'Envelope Size Presets'}</span>
                       <span className="text-zinc-500">X × Y × Z</span>
                     </div>
                     <div className="grid grid-cols-3 gap-1.5">
@@ -533,6 +564,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         { label: '16×24×16', x: 16, y: 24, z: 16, sub: lang === 'zh' ? '紧凑型' : 'Compact' },
                         { label: '24×32×24', x: 24, y: 32, z: 24, sub: lang === 'zh' ? '标准级' : 'Standard' },
                         { label: '32×48×32', x: 32, y: 48, z: 32, sub: lang === 'zh' ? '宏伟级' : 'Monument' },
+                        { label: '128×256×128', x: 128, y: 256, z: 128, sub: lang === 'zh' ? '超大型' : 'Megastructure' },
+                        { label: '256×256×256', x: 256, y: 256, z: 256, sub: lang === 'zh' ? '巨型' : 'Colossal' },
+                        { label: '512×512×512', x: 512, y: 512, z: 512, sub: lang === 'zh' ? '超大型' : 'Super-scale' },
                       ].map((preset) => {
                         const isCurrent = dimX === preset.x && dimY === preset.y && dimZ === preset.z;
                         return (
@@ -562,12 +596,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.width}</span>
-                        <span className="text-white tabular-nums">{dimX}</span>
+                        <input type="number" min={8} max={512} value={dimX} onChange={(e) => setDimX(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
-                        max={36}
+                        max={512}
                         value={dimX}
                         onChange={(e) => setDimX(Number(e.target.value))}
                         className="w-full"
@@ -576,12 +610,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.height}</span>
-                        <span className="text-white tabular-nums">{dimY}</span>
+                        <input type="number" min={8} max={512} value={dimY} onChange={(e) => setDimY(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
-                        max={64}
+                        max={512}
                         value={dimY}
                         onChange={(e) => setDimY(Number(e.target.value))}
                         className="w-full"
@@ -590,12 +624,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.depth}</span>
-                        <span className="text-white tabular-nums">{dimZ}</span>
+                        <input type="number" min={8} max={512} value={dimZ} onChange={(e) => setDimZ(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8))))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
-                        max={36}
+                        max={512}
                         value={dimZ}
                         onChange={(e) => setDimZ(Number(e.target.value))}
                         className="w-full"
@@ -603,6 +637,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     </div>
                   </div>
 
+                  <p className="text-[10px] text-zinc-500">{lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。高复杂度会要求完整室内。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks. High detail requires a complete interior.`}</p>
                   {/* Architectural Style Archetypes */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-mono text-zinc-400 block">{t.styleLabel}</label>
@@ -668,19 +703,41 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
                   {/* Complexity Density */}
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-mono text-zinc-400 block">{t.complexityLabel}</label>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {['Minimal', 'Standard', 'Detailed'].map((lvl) => (
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-mono text-zinc-400 block">{t.complexityLabel}</label>
+                      <span className="text-emerald-300 font-mono">{detailLevel}/5</span>
+                    </div>
+                    <label className="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" checked={includeInterior} onChange={(e) => setIncludeInterior(e.target.checked)} />{lang === 'zh' ? '生成完整室内（房间、楼梯、灯具、家具）' : 'Generate full interior (rooms, stairs, lighting, furniture)'}</label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={1}
+                      value={detailLevel}
+                      onChange={(e) => {
+                        const level = Number(e.target.value);
+                        setDetailLevel(level);
+                        setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
+                      }}
+                      className="w-full accent-emerald-400"
+                      aria-label={lang === 'zh' ? '精细复杂度 1 到 5' : 'Detail complexity from 1 to 5'}
+                    />
+                    <div className="grid grid-cols-5 gap-1">
+                      {[1, 2, 3, 4, 5].map((level) => (
                         <button
-                          key={lvl}
-                          onClick={() => setComplexity(lvl)}
-                          className={`py-1.5 rounded-md text-xs font-medium transition-all ${
-                            complexity === lvl
+                          key={level}
+                          onClick={() => {
+                            setDetailLevel(level);
+                            setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
+                          }}
+                          className={`py-1 rounded-md text-[11px] font-mono transition-all ${
+                            detailLevel === level
                               ? 'bg-white text-zinc-950 font-semibold shadow-sm'
                               : 'bg-white/[0.03] text-zinc-400 hover:text-white border border-white/[0.06]'
                           }`}
+                          aria-label={`${lang === 'zh' ? '复杂度' : 'Detail'} ${level}`}
                         >
-                          {lvl}
+                          {level}
                         </button>
                       ))}
                     </div>
@@ -729,7 +786,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               )}
 
               {errorMessage && (
-                <div data-ai-error="true" role="alert" className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
+                <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
                   {errorMessage}
                 </div>
               )}
@@ -748,6 +805,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </div>
 
               {structure.plan?.notes?.length ? <div className="rounded border border-white/[0.06] bg-white/[0.02] p-2 text-[10px] text-zinc-400">{structure.plan.notes.join(' ')}</div> : null}
+              {referenceReport ? <div className="rounded border border-cyan-400/20 bg-cyan-400/[0.04] p-2 text-[10px] text-cyan-100/80">
+                <div className="mb-1 font-semibold text-cyan-200">{lang === 'zh' ? '参考图特征报告' : 'Reference feature report'}</div>
+                <div>{lang === 'zh' ? '图像' : 'Image'} {referenceReport.sourceWidth}×{referenceReport.sourceHeight} · {lang === 'zh' ? '层级' : 'floors'} {referenceReport.floors ?? '-'} · {lang === 'zh' ? '窗列' : 'window columns'} {referenceReport.windowColumns ?? 0} · {lang === 'zh' ? '塔楼锚点' : 'tower anchors'} {referenceReport.towerColumns ?? 0}</div>
+                <div>{lang === 'zh' ? '主体占比' : 'subject bounds'} {referenceReport.subjectBounds ? `${Math.round((referenceReport.subjectBounds.right - referenceReport.subjectBounds.left) * 100)}% × ${Math.round((referenceReport.subjectBounds.bottom - referenceReport.subjectBounds.top) * 100)}%` : '-'} · {lang === 'zh' ? '对称度' : 'symmetry'} {referenceReport.symmetry == null ? '-' : `${Math.round(referenceReport.symmetry * 100)}%`} · {lang === 'zh' ? '轮廓匹配' : 'silhouette match'} {referenceReport.silhouetteScore == null ? '-' : `${Math.round(referenceReport.silhouetteScore * 100)}%`}</div>
+                <div>{lang === 'zh' ? '正面' : 'front'} {formatScore(referenceReport.frontScore)} · {lang === 'zh' ? '侧面' : 'side'} {formatScore(referenceReport.sideScore)} · {lang === 'zh' ? '屋顶' : 'roof'} {formatScore(referenceReport.roofScore)}</div>
+              </div> : null}
 
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                 {structure.regions?.map((reg) => (
@@ -815,7 +878,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               minY={minY}
               maxY={maxY}
               wireframe={wireframe}
-              showRegions={true}
+              showRegions={false}
               className="w-full h-full"
             />
 

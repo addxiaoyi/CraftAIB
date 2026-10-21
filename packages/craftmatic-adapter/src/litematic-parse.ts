@@ -234,6 +234,6 @@ function enclosingSize(regions: LitematicaRegion[]): LitematicaVec3 {
 
 function signedCoordinate(origin: number, size: number, local: number): number { return origin + (size < 0 ? size + 1 + local : local); }
 function requiredBitWidth(paletteSize: number): number { return Math.max(2, Math.ceil(Math.log2(Math.max(1, paletteSize)))); }
-function readPackedState(words: bigint[], index: number, bits: number): number { const offset = index * bits; const wordIndex = Math.floor(offset / 64); const bitOffset = offset % 64; const mask = (1n << BigInt(bits)) - 1n; let value = (words[wordIndex] ?? 0n) >> BigInt(bitOffset); if (bitOffset + bits > 64) value |= (words[wordIndex + 1] ?? 0n) << BigInt(64 - bitOffset); return Number(value & mask); }
+function readPackedState(words: bigint[], index: number, bits: number): number { const offset = index * bits; const wordIndex = Math.floor(offset / 64); const bitOffset = offset % 64; const mask = (1n << BigInt(bits)) - 1n; let value = BigInt.asUintN(64, words[wordIndex] ?? 0n) >> BigInt(bitOffset); if (bitOffset + bits > 64) value |= BigInt.asUintN(64, words[wordIndex + 1] ?? 0n) << BigInt(64 - bitOffset); return Number(value & mask); }
 function numberValue(tag: any, fallback: number): number { const value = tag?.value ?? tag; return typeof value === 'bigint' ? Number(value) : Number.isFinite(Number(value)) ? Number(value) : fallback; }
 function stringValue(tag: any, fallback: string): string { const value = tag?.value ?? tag; return typeof value === 'string' ? value : fallback; }

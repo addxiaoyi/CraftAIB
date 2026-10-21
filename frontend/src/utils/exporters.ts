@@ -116,8 +116,8 @@ export function exportLDraw(structure: StructureData): void {
 
 function sanitizeFileName(name: string): string {
   return (name || 'structure')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, '_')
     .replace(/_+/g, '_');
 }
 
@@ -129,5 +129,5 @@ function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

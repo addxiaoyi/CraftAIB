@@ -96,14 +96,18 @@ export function structureToGrid(structure: StructureData): BlockGrid {
 
 export function gridToStructure(
   grid: BlockGrid,
-  metadata: { name?: string; author?: string; description?: string; plan?: StructureData['plan']; regions?: Array<{ name: string; position?: { x: number; y: number; z: number }; size?: { x: number; y: number; z: number }; dimensions?: { x: number; y: number; z: number } }> } = {},
+  metadata: { name?: string; author?: string; description?: string; plan?: StructureData['plan']; regions?: Array<{ name: string; x?: number; y?: number; z?: number; width?: number; height?: number; length?: number; position?: { x: number; y: number; z: number }; size?: { x: number; y: number; z: number }; dimensions?: { x: number; y: number; z: number } }> } = {},
 ): StructureData {
   const colors = ['#22c55e', '#3b82f6', '#a855f7', '#f59e0b', '#06b6d4', '#ef4444'];
   const regions: VoxelRegion[] = (metadata.regions?.length ? metadata.regions : [{
     name: 'Main structure', position: { x: 0, y: 0, z: 0 }, size: { x: grid.width, y: grid.height, z: grid.length },
   }]).map((region, index) => {
-    const size = region.dimensions ?? region.size ?? { x: grid.width, y: grid.height, z: grid.length };
-    const pos = region.position ?? { x: 0, y: 0, z: 0 };
+    const size = region.dimensions ?? region.size ?? {
+      x: region.width ?? grid.width,
+      y: region.height ?? grid.height,
+      z: region.length ?? grid.length,
+    };
+    const pos = region.position ?? { x: region.x ?? 0, y: region.y ?? 0, z: region.z ?? 0 };
     const min = [clamp(pos.x, 0, grid.width - 1), clamp(pos.y, 0, grid.height - 1), clamp(pos.z, 0, grid.length - 1)] as [number, number, number];
     const max = [
       clamp(min[0] + Math.max(1, size.x), min[0] + 1, grid.width),

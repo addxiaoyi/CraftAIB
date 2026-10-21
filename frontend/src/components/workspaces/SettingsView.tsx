@@ -30,8 +30,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [latency, setLatency] = useState<number | null>(null);
   const [cacheSize, setCacheSize] = useState<string>('1.4 MB');
   const [clearedToast, setClearedToast] = useState<boolean>(false);
-  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', adminToken: '', timeoutMs: 30000, retries: 1 });
+  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', adminToken: '', timeoutMs: 120000, retries: 2 });
   const [configMessage, setConfigMessage] = useState<string | null>(null);
+  const [isTestingModel, setIsTestingModel] = useState(false);
 
   const base = {
     en: {
@@ -119,12 +120,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const headers: HeadersInit = { 'content-type': 'application/json' };
       if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
-      const response = await fetch('/api/ai/config', { method: 'POST', headers, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries }, vision: { endpoint: config.visionEndpoint, model: config.visionModel, apiKey: config.visionKey } }) });
+      const response = await fetch('/api/ai/config', { method: 'POST', headers, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries } }) });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error?.message || 'Configuration could not be saved.');
       setConfigMessage(lang === 'zh' ? '模型配置已保存，密钥不会显示。' : 'Model configuration saved. Keys are never displayed.');
       await checkHealth();
     } catch (error) { setConfigMessage(error instanceof Error ? error.message : 'Configuration could not be saved.'); }
+  };
+
+  const testModelConnection = async () => {
+    setConfigMessage(null);
+    setIsTestingModel(true);
+    try {
+      const headers: HeadersInit = { 'content-type': 'application/json' };
+      if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
+      const draftIsPresent = Boolean(config.textEndpoint.trim() || config.textModel.trim() || config.textKey.trim());
+      const body = draftIsPresent
+        ? { generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs } }
+        : { capability: 'text' };
+      const response = await fetch('/api/ai/test-connection', { method: 'POST', headers, body: JSON.stringify(body) });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error?.message || `Connection test failed (HTTP ${response.status}).`);
+      setConfigMessage(lang === 'zh' ? `连接成功：${result.model}` : `Connection successful: ${result.model}`);
+    } catch (error) {
+      setConfigMessage(error instanceof Error ? error.message : 'Model connection test failed.');
+    } finally { setIsTestingModel(false); }
   };
 
   return (
@@ -241,7 +261,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <p className="text-[11px] text-zinc-500">{lang === 'zh' ? '配置保存在本机服务端 .env，浏览器不会保存或回显密钥。' : 'Configuration is stored in the local server .env. Keys are never saved in the browser or displayed.'}</p>
         <input aria-label="Administrator token" type="password" placeholder={lang === 'zh' ? '管理员令牌（公开部署需要）' : 'Administrator token (required for public deployment)'} value={config.adminToken} onChange={(e) => setConfig((current) => ({ ...current, adminToken: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(['text', 'vision'] as const).map((kind) => <div key={kind} className="space-y-2">
+          {(['text'] as const).map((kind) => <div key={kind} className="space-y-2">
             <div className="text-xs text-zinc-300">{kind === 'text' ? (lang === 'zh' ? '建筑生成模型（统一）' : 'Building generation model (shared)') : (lang === 'zh' ? '视觉模型覆盖（可选）' : 'Vision override (optional)')}</div>
             <input aria-label={`${kind} endpoint`} placeholder="https://api.example.com/v1/chat/completions" value={kind === 'text' ? config.textEndpoint : config.visionEndpoint} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textEndpoint' : 'visionEndpoint']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
             <input aria-label={`${kind} model`} placeholder="model name" value={kind === 'text' ? config.textModel : config.visionModel} onChange={(e) => setConfig((current) => ({ ...current, [kind === 'text' ? 'textModel' : 'visionModel']: e.target.value }))} className="studio-input w-full rounded px-2 py-1.5 text-xs" />
@@ -251,7 +271,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="flex items-center gap-2">
           <label className="text-xs text-zinc-400">Timeout <input type="number" min="1000" max="120000" value={config.timeoutMs} onChange={(e) => setConfig((current) => ({ ...current, timeoutMs: Number(e.target.value) }))} className="studio-input ml-1 w-24 rounded px-2 py-1 text-xs" /></label>
           <label className="text-xs text-zinc-400">Retries <input type="number" min="0" max="5" value={config.retries} onChange={(e) => setConfig((current) => ({ ...current, retries: Number(e.target.value) }))} className="studio-input ml-1 w-16 rounded px-2 py-1 text-xs" /></label>
-          <button type="button" onClick={() => void saveConfig()} className="ml-auto px-3 py-1.5 btn-primary rounded text-xs">{lang === 'zh' ? '保存配置' : 'Save configuration'}</button>
+          <button type="button" onClick={() => void testModelConnection()} disabled={isTestingModel} className="ml-auto px-3 py-1.5 rounded border border-white/10 text-xs text-zinc-200 disabled:opacity-50">{isTestingModel ? (lang === 'zh' ? '测试中…' : 'Testing...') : (lang === 'zh' ? '测试已保存模型连接' : 'Test saved model connection')}</button>
+          <button type="button" onClick={() => void saveConfig()} className="px-3 py-1.5 btn-primary rounded text-xs">{lang === 'zh' ? '保存配置' : 'Save configuration'}</button>
         </div>
         {configMessage && <p role="status" className="text-xs text-emerald-300">{configMessage}</p>}
       </div>

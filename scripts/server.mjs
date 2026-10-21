@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
+import { execFileSync } from 'node:child_process';
 import { createPublicKey, createVerify, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { planBuildingWithModel, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
+import { fitStructurePlanToEnvelope, planBuildingWithModel, structurePlanToGrid, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
 
 const root = resolve(process.env.CRAFTAIB_PUBLIC_DIR || 'dist');
 const maxBodyBytes = 8 * 1024 * 1024;
@@ -25,17 +26,56 @@ try {
   if (error.code !== 'ENOENT') throw new Error(`Unable to read server environment file: ${error.message}`);
 }
 
+function configuredWindowsProxy() {
+  if (process.platform !== 'win32' || process.env.HTTPS_PROXY || process.env.https_proxy) return '';
+  const registryKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+  try {
+    const enabledOutput = execFileSync('reg.exe', ['query', registryKey, '/v', 'ProxyEnable'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    if (!/ProxyEnable\s+REG_DWORD\s+0x1\b/i.test(enabledOutput)) return '';
+    const proxyOutput = execFileSync('reg.exe', ['query', registryKey, '/v', 'ProxyServer'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const rawProxy = /ProxyServer\s+REG_SZ\s+(.+)$/im.exec(proxyOutput)?.[1]?.trim();
+    if (!rawProxy) return '';
+    const routes = rawProxy.split(';').map((route) => route.trim());
+    const httpsRoute = routes.find((route) => /^https=/i.test(route));
+    const proxy = (httpsRoute ?? routes.find((route) => !/^(http|https|socks)=/i.test(route)) ?? routes.find((route) => /^http=/i.test(route)))?.replace(/^(https?|socks)=/i, '').trim();
+    if (!proxy || proxy.startsWith('socks=')) return '';
+    return proxy.includes('://') ? proxy : `http://${proxy}`;
+  } catch {
+    return '';
+  }
+}
+
+const systemProxy = configuredWindowsProxy();
+if (systemProxy) {
+  process.env.HTTPS_PROXY = systemProxy;
+  process.env.HTTP_PROXY ??= systemProxy;
+}
+if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) {
+  const bypassedHosts = new Set(['localhost', '127.0.0.1', '::1']);
+  for (const host of `${process.env.NO_PROXY ?? ''},${process.env.no_proxy ?? ''}`.split(',')) {
+    if (host.trim()) bypassedHosts.add(host.trim());
+  }
+  process.env.NO_PROXY = [...bypassedHosts].join(',');
+  process.env.no_proxy = process.env.NO_PROXY;
+  const { setGlobalProxyFromEnv } = await import('node:http');
+  setGlobalProxyFromEnv();
+}
+
 function serviceConfig(withImage) {
-  const prefix = withImage ? 'CRAFTAIB_VISION' : 'CRAFTAIB_TEXT';
-  const endpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env[`${prefix}_API_URL`] || (withImage ? process.env.CRAFTAIB_TEXT_API_URL : ''))?.trim();
-  const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env[`${prefix}_API_KEY`] || (withImage ? process.env.CRAFTAIB_TEXT_API_KEY : ''))?.trim();
-  const model = (process.env.CRAFTAIB_MODEL || process.env[`${prefix}_MODEL`] || (withImage ? process.env.CRAFTAIB_TEXT_MODEL : ''))?.trim();
-  const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env[`${prefix}_TIMEOUT_MS`] || (withImage ? process.env.CRAFTAIB_TEXT_TIMEOUT_MS : ''));
-  const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env[`${prefix}_MAX_RETRIES`] || (withImage ? process.env.CRAFTAIB_TEXT_MAX_RETRIES : ''));
-  return endpoint && model ? { endpoint, apiKey, model,
+  // Reference images and text share one multimodal model. Legacy TEXT_* values
+  // remain a compatibility fallback, but VISION_* must not silently switch models.
+  const configuredEndpoint = (process.env.CRAFTAIB_MODEL_API_URL || process.env.CRAFTAIB_TEXT_API_URL)?.trim();
+  const apiKey = (process.env.CRAFTAIB_MODEL_API_KEY || process.env.CRAFTAIB_TEXT_API_KEY)?.trim();
+  const model = (process.env.CRAFTAIB_MODEL || process.env.CRAFTAIB_TEXT_MODEL)?.trim();
+  if (!configuredEndpoint || !model) return null;
+  let endpoint;
+  try { endpoint = validEndpoint(configuredEndpoint); } catch { return null; }
+  const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env.CRAFTAIB_TEXT_TIMEOUT_MS);
+  const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env.CRAFTAIB_TEXT_MAX_RETRIES);
+  return { endpoint, apiKey, model,
     timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, Math.floor(timeoutMs))) : 30000,
     retries: Number.isFinite(retries) ? Math.max(0, Math.min(5, Math.floor(retries))) : 1,
-  } : null;
+  };
 }
 
 function sendJson(response, status, body) {
@@ -121,6 +161,8 @@ function validEndpoint(value) {
   if (!value) return '';
   const parsed = new URL(value);
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Model endpoint must use HTTP or HTTPS.');
+  if (parsed.pathname === '' || parsed.pathname === '/') parsed.pathname = '/v1/chat/completions';
+  else if (/\/v\d+\/?$/i.test(parsed.pathname)) parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/chat/completions`;
   return parsed.toString().replace(/\/$/, '');
 }
 
@@ -159,6 +201,14 @@ async function readJson(request) {
   catch { throw Object.assign(new Error('Request body must be valid JSON.'), { statusCode: 400 }); }
 }
 
+async function readProviderErrorMessage(response) {
+  let payload;
+  try { payload = await response.json(); } catch { return ''; }
+  const message = payload?.error?.message ?? payload?.message;
+  if (typeof message !== 'string') return '';
+  return message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').replace(/\b(?:sk|key|token)-[A-Za-z0-9._-]{12,}\b/gi, '[redacted]').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 400);
+}
+
 async function serveStatic(pathname, response) {
   let relative;
   try { relative = decodeURIComponent(pathname === '/' ? '/index.html' : pathname).replace(/^[/\\]+/, ''); }
@@ -195,6 +245,48 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
+  if (request.method === 'POST' && url.pathname === '/api/ai/test-connection') {
+    if (!originAllowed(request)) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Request origin is not allowed.' } });
+    if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
+    try {
+      const input = await readJson(request);
+      const draft = input?.generation;
+      const config = draft ? {
+        endpoint: validEndpoint(String(draft.endpoint ?? '').trim()),
+        apiKey: String(draft.apiKey ?? '').trim(),
+        model: String(draft.model ?? '').trim(),
+        timeoutMs: Math.max(1000, Math.min(120000, Number(draft.timeoutMs) || 30000)),
+        retries: 0,
+      } : serviceConfig(input?.capability === 'vision');
+      if (!config?.endpoint || !config.model) return sendJson(response, 503, { ok: false, error: { code: 'MODEL_NOT_CONFIGURED', message: 'Enter an endpoint and model name before testing the connection.' } });
+      const headers = { 'content-type': 'application/json' };
+      if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
+      const visionProbe = input?.capability === 'vision';
+      const probeMessage = visionProbe
+        ? [{ role: 'user', content: [{ type: 'text', text: 'Identify the image as a single word: pixel.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' } }] }]
+        : [{ role: 'user', content: 'Reply with OK.' }];
+      const responseFromModel = await fetch(config.endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model: config.model, messages: probeMessage }),
+        signal: AbortSignal.timeout(config.timeoutMs),
+      });
+      if (!responseFromModel.ok) {
+        const providerMessage = await readProviderErrorMessage(responseFromModel);
+        const credentialsRejected = [401, 403].includes(responseFromModel.status) || /no valid credentials|invalid (?:api )?key|unauthori[sz]ed|authentication failed/i.test(providerMessage);
+        if (credentialsRejected) return sendJson(response, 422, { ok: false, error: { code: 'MODEL_AUTH_FAILED', message: 'The provider rejected the configured API key or account permissions. Replace the key in Settings and retry.' } });
+        if (responseFromModel.status === 404) return sendJson(response, 422, { ok: false, error: { code: 'MODEL_ENDPOINT_NOT_FOUND', message: 'The model endpoint returned HTTP 404. Check that the URL includes the provider API route, commonly /v1/chat/completions.' } });
+        if (responseFromModel.status === 429) return sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'The provider rate-limited the connection test. Retry shortly.' } });
+        return sendJson(response, 502, { ok: false, error: { code: 'MODEL_REQUEST_FAILED', message: providerMessage ? `The provider rejected the test request (HTTP ${responseFromModel.status}): ${providerMessage}` : `The provider rejected the test request (HTTP ${responseFromModel.status}). Check the model name and endpoint compatibility.` } });
+      }
+      const payload = await responseFromModel.json();
+      if (!payload?.choices?.[0]?.message) return sendJson(response, 502, { ok: false, error: { code: 'INVALID_MODEL_RESPONSE', message: 'The endpoint responded, but did not return an OpenAI-compatible chat completion.' } });
+      return sendJson(response, 200, { ok: true, capability: input?.capability === 'vision' ? 'vision' : 'text', model: config.model, message: 'Connection successful.' });
+    } catch (error) {
+      const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+      return sendJson(response, isTimeout ? 504 : 502, { ok: false, error: { code: isTimeout ? 'MODEL_TIMEOUT' : 'MODEL_REQUEST_FAILED', message: isTimeout ? 'The connection test timed out. Check the provider service and timeout setting.' : 'Could not connect to the configured model endpoint. Check the URL and network access.' } });
+    }
+  }
   if (request.method === 'POST' && url.pathname === '/api/ai/structure-plan') {
     if (!allowPlanRequest(request, response)) return;
     if (planningInFlight >= maxPlanningConcurrency) return sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'The planning service is busy. Retry shortly.' } });
@@ -217,13 +309,57 @@ const server = createServer(async (request, response) => {
       const constraints = input.constraints && typeof input.constraints === 'object' ? input.constraints : {};
       const type = typeof constraints.type === 'string' ? constraints.type.slice(0, 40) : '';
       const style = typeof constraints.style === 'string' ? constraints.style.slice(0, 40) : '';
-      const floors = Number.isInteger(constraints.floors) ? Math.max(1, Math.min(12, constraints.floors)) : null;
-      const width = Number.isInteger(constraints.width) ? Math.max(8, Math.min(128, constraints.width)) : null;
-      const length = Number.isInteger(constraints.length) ? Math.max(8, Math.min(128, constraints.length)) : null;
-      const constraintText = [style, type, floors && `${floors} floors`, width && length && `${width} x ${length} blocks`].filter(Boolean).join(', ');
-      const plan = await planBuildingWithModel({ prompt: [constraintText, prompt].filter(Boolean).join('. '), seed: Number.isInteger(input.seed) ? input.seed : 42, referenceImage: hasImage ? { dataUrl: image.dataUrl } : undefined }, { ...config, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs, signal: clientAbortController.signal });
-      try { validateStructurePlan(plan); }
-      catch { throw Object.assign(new Error('The model returned a structure plan that failed validation.'), { statusCode: 422, code: 'INVALID_STRUCTURE_PLAN' }); }
+      const floors = Number.isInteger(constraints.floors) ? Math.max(1, Math.min(64, constraints.floors)) : null;
+      const width = Number.isInteger(constraints.width) ? Math.max(8, Math.min(512, constraints.width)) : null;
+      const height = Number.isInteger(constraints.height) ? Math.max(8, Math.min(512, constraints.height)) : null;
+      const length = Number.isInteger(constraints.length) ? Math.max(8, Math.min(512, constraints.length)) : null;
+      const detailLevel = Number.isInteger(constraints.detailLevel) ? Math.max(1, Math.min(5, constraints.detailLevel)) : null;
+      const includeInterior = constraints.includeInterior !== false;
+      const interiorSpec = !includeInterior
+        ? 'Exterior-only build; omit interior furnishings.'
+        : detailLevel >= 4
+          ? 'Create a complete, walkable and furnished interior while preserving the requested exterior. Return connected named rooms on occupied floors, corridors, partitions, floors and ceilings, stairs, door/window openings, lighting, beds, tables, chairs, storage, kitchen, bath and service rooms. Tag room, partition, circulation, furniture and lighting geometry parts. For enclosed buildings include at least two rooms and three separate furniture parts. Do not return an empty shell.'
+          : 'Include a walkable room layout with connecting stairs, doors, windows and essential furnishings.';
+      const blockBudget = Math.max(10000, Math.min(12000000, Number(process.env.CRAFTAIB_MAX_GENERATED_BLOCKS || 12000000)));
+      const constraintText = [style, type, floors && `${floors} floors`, width && height && length && `${width} x ${height} x ${length} blocks (hard dimensions; fill the requested footprint, do not leave a compact centered build)`, detailLevel && `detail level ${detailLevel} of 5`, interiorSpec, `Keep geometry.parts to at most 1024 parts and estimated solid block count under ${blockBudget} blocks.`].filter(Boolean).join(", ");
+      const rawPlan = await planBuildingWithModel({
+        prompt: [constraintText, prompt].filter(Boolean).join('. '),
+        seed: Number.isInteger(input.seed) ? input.seed : 42,
+        constraints: { type, style, floors, width, height, length, detailLevel, includeInterior },
+        referenceImage: hasImage ? { dataUrl: image.dataUrl, referenceFeatures: image.referenceFeatures } : undefined,
+      }, { ...config, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs, signal: clientAbortController.signal });
+      const plan = width && height && length ? fitStructurePlanToEnvelope(rawPlan, { width, height, length }) : rawPlan;
+      try {
+        validateStructurePlan(plan);
+        const dimensionsMismatch = (width && plan.dimensions.width !== width)
+          || (height && plan.dimensions.height !== height)
+          || (length && plan.dimensions.length !== length);
+        if (dimensionsMismatch) throw new Error('The model plan dimensions do not match the requested block dimensions.');
+        let generatedBlockCount;
+        try {
+          // Geometry parts overlap heavily for shells, roofs, rooms, and facade details.
+          // Measure the deduplicated BlockGrid instead of summing every part envelope.
+          generatedBlockCount = structurePlanToGrid(plan).cells.length;
+        } catch (error) {
+          if (/exceeds the .* block limit|too large/i.test(error instanceof Error ? error.message : '')) {
+            throw new Error('The requested building is too large for the current generation budget. Reduce its dimensions or detail level.');
+          }
+          throw error;
+        }
+        if (generatedBlockCount > blockBudget) throw new Error(`The requested building would place ${generatedBlockCount.toLocaleString()} blocks, above the ${blockBudget.toLocaleString()} block budget. Reduce its dimensions or detail level.`);
+        if (includeInterior && detailLevel >= 4 && !/statue|sculpture|monument/i.test(`${plan.type} ${plan.name}`)) {
+          const parts = plan.geometry?.parts ?? [];
+          const purposes = new Set(parts.map((part) => part.purpose));
+          const furnitureCount = parts.filter((part) => part.purpose === 'furniture').length;
+          const interiorRegions = (plan.regions ?? []).filter((region) => /room|barracks|guard|residential|chamber|kitchen|service|corridor|passage|hall|store|watch|keep|interior/i.test(`${region.name} ${region.role}`));
+          const hasRooms = purposes.has('room') || (plan.rooms?.length ?? 0) >= 2 || interiorRegions.length >= 2;
+          const hasCirculation = purposes.has('circulation') || interiorRegions.some((region) => /corridor|passage|stairs|connected|circulation/i.test(`${region.name} ${region.role}`));
+          const hasFurniture = furnitureCount >= 3 || (plan.components ?? []).filter((component) => /furniture|table|chair|bed|storage|lamp|kitchen|counter/i.test(`${component.id} ${component.type}`)).length >= 3 || ((plan.rooms?.length ?? 0) >= 2 && interiorRegions.length >= 2);
+          if (!hasRooms || !hasCirculation || !hasFurniture) throw new Error('The high-detail plan is missing interior rooms, circulation, or furniture. Retry with a smaller building or lower detail level.');
+        }
+      } catch (error) {
+        throw Object.assign(new Error(error instanceof Error ? error.message : 'The model returned an invalid building plan.'), { statusCode: 422, code: 'INVALID_STRUCTURE_PLAN' });
+      }
       return sendJson(response, 200, { ok: true, plan });
     } catch (error) {
       if (clientAbortController.signal.aborted || response.destroyed) return;

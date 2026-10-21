@@ -9,13 +9,25 @@ import { planBuilding } from '../packages/ai-planner/dist/index.js';
 let upstreamAuth = null;
 let upstreamMode = 'success';
 let upstreamCalls = 0;
+let upstreamPath = null;
 const plan = planBuilding({ prompt: 'small stone house', seed: 17 });
 const upstream = createServer((request, response) => {
   upstreamAuth = request.headers.authorization;
+  upstreamPath = request.url;
   upstreamCalls += 1;
   if (upstreamMode === 'rate') {
     response.writeHead(429, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: { message: 'busy' } }));
+    return;
+  }
+  if (upstreamMode === 'notfound') {
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'not found' } }));
+    return;
+  }
+  if (upstreamMode === 'badrequest') {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'This model only supports max_completion_tokens.', code: 'unsupported_parameter' } }));
     return;
   }
   if (upstreamMode === 'slow') {
@@ -30,7 +42,7 @@ const upstreamPort = upstream.address().port;
 const testCwd = await mkdtemp(join(tmpdir(), 'craftaib-server-smoke-'));
 const child = spawn(process.execPath, [resolve('scripts/server.mjs')], {
   cwd: testCwd,
-  env: { ...process.env, PORT: '0', CRAFTAIB_PUBLIC_DIR: resolve('dist'), CRAFTAIB_ADMIN_TOKEN: 'admin-secret', CRAFTAIB_MODEL_API_URL: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, CRAFTAIB_MODEL_API_KEY: 'smoke-secret', CRAFTAIB_MODEL: 'mock-text', CRAFTAIB_MODEL_TIMEOUT_MS: '5000', CRAFTAIB_MODEL_MAX_RETRIES: '1', CRAFTAIB_TEXT_API_URL: '', CRAFTAIB_TEXT_API_KEY: '', CRAFTAIB_TEXT_MODEL: '', CRAFTAIB_VISION_API_URL: '', CRAFTAIB_VISION_API_KEY: '', CRAFTAIB_VISION_MODEL: '' },
+  env: { ...process.env, PORT: '0', HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1', NO_PROXY: 'example.invalid', CRAFTAIB_PUBLIC_DIR: resolve('dist'), CRAFTAIB_ADMIN_TOKEN: 'admin-secret', CRAFTAIB_MODEL_API_URL: `http://127.0.0.1:${upstreamPort}/v1`, CRAFTAIB_MODEL_API_KEY: 'smoke-secret', CRAFTAIB_MODEL: 'mock-text', CRAFTAIB_MODEL_TIMEOUT_MS: '5000', CRAFTAIB_MODEL_MAX_RETRIES: '1', CRAFTAIB_TEXT_API_URL: '', CRAFTAIB_TEXT_API_KEY: '', CRAFTAIB_TEXT_MODEL: '', CRAFTAIB_VISION_API_URL: '', CRAFTAIB_VISION_API_KEY: '', CRAFTAIB_VISION_MODEL: '' },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 const base = await new Promise((resolve, reject) => {
@@ -63,18 +75,36 @@ try {
 
   const generated = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small stone house', seed: 17, constraints: { floors: 2, width: 24, length: 20 } }) });
   assert.equal(generated.status, 200);
+  assert.equal(upstreamPath, '/v1/chat/completions', 'server startup should normalize OpenAI base URLs before planning');
   const output = await generated.json();
   assert.equal(output.ok, true);
   assert.equal(output.plan.version, 1);
   assert.equal(output.plan.regions.length > 0, true);
   assert.equal(upstreamAuth, 'Bearer smoke-secret');
   assert.equal(JSON.stringify(output).includes('smoke-secret'), false, 'model credentials must not be included in planner output');
+  upstreamMode = 'badrequest';
+  const rejectedPlan = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small stone house' }) });
+  assert.equal(rejectedPlan.status, 400);
+  const rejectedBody = await rejectedPlan.json();
+  assert.equal(rejectedBody.error.code, 'MODEL_REQUEST_REJECTED');
+  assert.match(rejectedBody.error.message, /max_completion_tokens/);
+  upstreamMode = 'success';
   const unauthorized = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generation: {} }) });
   assert.equal(unauthorized.status, 403);
   assert.equal((await unauthorized.json()).error.code, 'FORBIDDEN');
   const saved = await fetch(`${base}/api/ai/config`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000, retries: 2 }, vision: { endpoint: '', model: '', apiKey: '', timeoutMs: 5000, retries: 0 } }) });
   assert.equal(saved.status, 200);
   assert.equal(JSON.stringify(await saved.json()).includes('new-secret'), false, 'config response must not expose API credentials');
+  const connectionTest = await fetch(`${base}/api/ai/test-connection`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000 } }) });
+  assert.equal(connectionTest.status, 200);
+  assert.equal((await connectionTest.json()).ok, true);
+  const baseEndpointTest = await fetch(`${base}/api/ai/test-connection`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/v1`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000 } }) });
+  assert.equal(baseEndpointTest.status, 200);
+  assert.equal(upstreamPath, '/v1/chat/completions', 'bare OpenAI /v1 base URLs should resolve to chat completions');
+  upstreamMode = 'notfound';
+  const wrongEndpoint = await fetch(`${base}/api/ai/test-connection`, { method: 'POST', headers: { authorization: 'Bearer admin-secret', 'content-type': 'application/json' }, body: JSON.stringify({ generation: { endpoint: `http://127.0.0.1:${upstreamPort}/wrong-path`, model: 'mock-text', apiKey: 'new-secret', timeoutMs: 5000 } }) });
+  assert.equal(wrongEndpoint.status, 422);
+  assert.equal((await wrongEndpoint.json()).error.code, 'MODEL_ENDPOINT_NOT_FOUND');
 
   upstreamMode = 'rate';
   upstreamCalls = 0;

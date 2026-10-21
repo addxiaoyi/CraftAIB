@@ -64,10 +64,25 @@ export interface CraftAibProject {
   language: 'zh' | 'en';
   autoSave: boolean;
   structure: StructureData;
-  ai?: { prompt: string; referenceImage?: string; source?: 'ai' | 'local' };
+  ai?: { prompt: string; referenceImage?: string; source?: 'ai' | 'local'; referenceReport?: ReferenceReport };
   history?: StructureData[];
   placements?: LitematicaPlacementState[];
+  materialInventory?: Record<string, number>;
   savedAt: string;
+}
+
+export interface ReferenceReport {
+  subjectBounds?: { left: number; top: number; right: number; bottom: number };
+  floors?: number;
+  windowColumns?: number;
+  towerColumns?: number;
+  symmetry?: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  silhouetteScore?: number;
+  frontScore?: number;
+  sideScore?: number;
+  roofScore?: number;
 }
 
 export interface BlockMeta {

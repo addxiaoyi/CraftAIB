@@ -5,6 +5,63 @@ import { StructureData, VoxelBlock } from '../types/minecraft';
 import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 
+const MINECRAFT_TEXTURE_BASE = 'https://assets.mcasset.cloud/1.21.4/assets/minecraft/textures/block/';
+const MAX_PREVIEW_BLOCKS = 240_000;
+
+function textureUrlForBlock(blockId: string): string {
+  const name = blockId.replace(/^minecraft:/, '');
+  const aliases: Record<string, string> = {
+    dark_oak_door: 'dark_oak_door_bottom',
+    iron_door: 'iron_door_bottom',
+    grass_block: 'grass_block_side',
+    dirt_path: 'dirt_path_side',
+    glass_pane: 'glass_pane_top',
+    barrel: 'barrel_side',
+    furnace: 'furnace_side',
+    stone_brick_stairs: 'stone_bricks',
+    dark_oak_stairs: 'dark_oak_planks',
+    oak_stairs: 'oak_planks',
+    stone_brick_slab: 'stone_bricks',
+    dark_oak_slab: 'dark_oak_planks',
+    oak_slab: 'oak_planks',
+    red_bed: 'red_wool',
+    white_bed: 'white_wool',
+    orange_bed: 'orange_wool',
+    yellow_bed: 'yellow_wool',
+    lime_bed: 'lime_wool',
+    green_bed: 'green_wool',
+    cyan_bed: 'cyan_wool',
+    light_blue_bed: 'light_blue_wool',
+    blue_bed: 'blue_wool',
+    purple_bed: 'purple_wool',
+    magenta_bed: 'magenta_wool',
+    pink_bed: 'pink_wool',
+    brown_bed: 'brown_wool',
+    gray_bed: 'gray_wool',
+    light_gray_bed: 'light_gray_wool',
+    black_bed: 'black_wool',
+  };
+  const textureName = aliases[name] ?? (name.endsWith('_bed') ? `${name.slice(0, -4)}_wool` : name);
+  return `${MINECRAFT_TEXTURE_BASE}${textureName}.png`;
+}
+
+function focusForStructure(structure: StructureData): { center: THREE.Vector3; size: number } {
+  if (!structure.blocks.length) {
+    return {
+      center: new THREE.Vector3(structure.size.x / 2, structure.size.y / 2, structure.size.z / 2),
+      size: Math.max(structure.size.x, structure.size.y, structure.size.z, 16),
+    };
+  }
+  const bounds = structure.blocks.reduce((acc, block) => ({
+    minX: Math.min(acc.minX, block.x), maxX: Math.max(acc.maxX, block.x),
+    minY: Math.min(acc.minY, block.y), maxY: Math.max(acc.maxY, block.y),
+    minZ: Math.min(acc.minZ, block.z), maxZ: Math.max(acc.maxZ, block.z),
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity });
+  return {
+    center: new THREE.Vector3((bounds.minX + bounds.maxX + 1) / 2, (bounds.minY + bounds.maxY + 1) / 2, (bounds.minZ + bounds.maxZ + 1) / 2),
+    size: Math.max(bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1, bounds.maxZ - bounds.minZ + 1, 16),
+  };
+}
 interface ThreeViewportProps {
   structure: StructureData;
   activeRegionId?: string | null;
@@ -90,21 +147,56 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     });
   }, [structure, minY, maxY]);
 
+  const previewBlocks = useMemo(() => {
+    if (visibleBlocks.length <= MAX_PREVIEW_BLOCKS) return visibleBlocks;
+    const priority = visibleBlocks.filter((block) => /stairs|door|lantern|glass|torch|bed|chest|table|bookshelf|furnace|anvil|bell|scaffolding/i.test(block.blockId));
+    const stride = Math.max(1, Math.ceil(visibleBlocks.length / Math.max(1, MAX_PREVIEW_BLOCKS - priority.length)));
+    const sampled = visibleBlocks.filter((_, index) => index % stride === 0);
+    const seen = new Set(sampled.map((block) => `${block.x},${block.y},${block.z}`));
+    for (const block of priority) {
+      if (seen.size >= MAX_PREVIEW_BLOCKS) break;
+      const key = `${block.x},${block.y},${block.z}`;
+      if (!seen.has(key)) {
+        sampled.push(block);
+        seen.add(key);
+      }
+    }
+    return sampled.slice(0, MAX_PREVIEW_BLOCKS);
+  }, [visibleBlocks]);
+
+  const colorForBlock = (blockId: string): string => {
+    const registered = BLOCK_REGISTRY[blockId];
+    if (registered) return registered.color;
+    if (/obsidian|blackstone|netherite/.test(blockId)) return '#292333';
+    if (/deepslate/.test(blockId)) return '#45454a';
+    if (/quartz|calcite|diorite|white_concrete/.test(blockId)) return '#d4d1c9';
+    if (/glass|ice/.test(blockId)) return '#74b7c7';
+    if (/copper|prismarine/.test(blockId)) return '#579d8d';
+    if (/oak|spruce|birch|jungle|acacia|mangrove|cherry|planks|log/.test(blockId)) return '#8d6842';
+    if (/redstone/.test(blockId)) return '#a94238';
+    if (/black_concrete|coal/.test(blockId)) return '#292a2e';
+    if (/stone|andesite|granite|tuff|cobble/.test(blockId)) return '#77736c';
+    return '#888888';
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 500;
 
-    // Atmospheric obsidian studio scene
+    const focus = focusForStructure(structure);
+    const maxDim = focus.size;
+    const fogDensity = maxDim > 128 ? 0.0009 : 0.006;
+
+    // Keep large structures visible across the full schematic envelope.
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#090a0f');
-    scene.fog = new THREE.FogExp2('#090a0f', 0.006);
+    scene.fog = maxDim > 128 ? null : new THREE.FogExp2('#090a0f', fogDensity);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 1200);
-    const maxDim = Math.max(structure.size.x, structure.size.y, structure.size.z, 16);
-    camera.position.set(maxDim * 1.6, maxDim * 1.35, maxDim * 1.8);
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, Math.max(1200, maxDim * 6));
+    camera.position.set(focus.center.x + maxDim * 1.6, focus.center.y + maxDim * 1.35, focus.center.z + maxDim * 1.8);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -128,8 +220,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05; // Buttery smooth inertial drag
-    controls.target.set(structure.size.x / 2, structure.size.y / 3, structure.size.z / 2);
-    controls.maxDistance = 320;
+    controls.target.copy(focus.center);
+    controls.maxDistance = Math.max(320, maxDim * 6);
     controls.minDistance = 2;
     controlsRef.current = controls;
 
@@ -138,18 +230,18 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     scene.add(ambientLight);
 
     const keyLight = new THREE.DirectionalLight('#fffcf5', 1.85);
-    keyLight.position.set(maxDim * 2.2, maxDim * 3.2, maxDim * 2.2);
+    keyLight.position.set(focus.center.x + maxDim * 2.2, focus.center.y + maxDim * 3.2, focus.center.z + maxDim * 2.2);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
 
     const fillLight = new THREE.DirectionalLight('#a1a1aa', 0.48);
-    fillLight.position.set(-maxDim * 2, maxDim * 1.5, -maxDim);
+    fillLight.position.set(focus.center.x - maxDim * 2, focus.center.y + maxDim * 1.5, focus.center.z - maxDim);
     scene.add(fillLight);
 
     const rimLight = new THREE.DirectionalLight('#10b981', 0.28);
-    rimLight.position.set(0, -maxDim, maxDim * 2.5);
+    rimLight.position.set(focus.center.x, focus.center.y - maxDim, focus.center.z + maxDim * 2.5);
     scene.add(rimLight);
 
     // Ground Grid with delicate subdivisions
@@ -271,6 +363,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   useEffect(() => {
     if (!sceneRef.current) return;
     const scene = sceneRef.current;
+    let cancelled = false;
 
     const sharedGeometry = instancedMeshesRef.current[0]?.geometry;
     instancedMeshesRef.current.forEach((mesh) => {
@@ -284,45 +377,62 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     sharedGeometry?.dispose();
     instancedMeshesRef.current = [];
 
-    const blocksByColor: Record<string, VoxelBlock[]> = {};
-    for (const block of visibleBlocks) {
-      const meta = BLOCK_REGISTRY[block.blockId];
-      const colorHex = meta ? meta.color : '#888888';
-      if (!blocksByColor[colorHex]) {
-        blocksByColor[colorHex] = [];
-      }
-      blocksByColor[colorHex].push(block);
-    }
-
     const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
     const dummy = new THREE.Object3D();
 
-    Object.entries(blocksByColor).forEach(([colorHex, blocks]) => {
-      const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(colorHex),
-        roughness: 0.65,
-        metalness: 0.1,
-        wireframe: wireframe,
+    const renderBlocks = async () => {
+      const groups = new Map<string, VoxelBlock[]>();
+      for (const block of previewBlocks) {
+        const url = textureUrlForBlock(block.blockId);
+        const group = groups.get(url);
+        if (group) group.push(block);
+        else groups.set(url, [block]);
+      }
+      const loader = new THREE.TextureLoader();
+      const loaded = await Promise.all([...groups.entries()].map(async ([url, blocks]) => {
+        try {
+          const texture = await loader.loadAsync(url);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.magFilter = THREE.NearestFilter;
+          texture.minFilter = THREE.NearestFilter;
+          texture.generateMipmaps = false;
+          return { url, blocks, texture };
+        } catch {
+          return { url, blocks, texture: null };
+        }
+      }));
+      if (cancelled) {
+        loaded.forEach(({ texture }) => texture?.dispose());
+        return;
+      }
+      loaded.forEach(({ url, blocks, texture }) => {
+        const material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(colorForBlock(blocks[0]?.blockId ?? '')),
+          ...(texture ? { map: texture } : {}),
+          roughness: 0.78,
+          metalness: 0.04,
+          wireframe,
+        });
+        const instancedMesh = new THREE.InstancedMesh(boxGeometry, material, blocks.length);
+        instancedMesh.frustumCulled = true;
+        instancedMesh.castShadow = true;
+        instancedMesh.receiveShadow = true;
+        blocks.forEach((block, index) => {
+          dummy.position.set(block.x + 0.5, block.y + 0.5, block.z + 0.5);
+          dummy.updateMatrix();
+          instancedMesh.setMatrixAt(index, dummy.matrix);
+        });
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        (instancedMesh as any).userData = { blocks, textureUrl: url };
+        scene.add(instancedMesh);
+        instancedMeshesRef.current.push(instancedMesh);
       });
-
-      const instancedMesh = new THREE.InstancedMesh(boxGeometry, material, blocks.length);
-      instancedMesh.frustumCulled = true;
-      instancedMesh.castShadow = true;
-      instancedMesh.receiveShadow = true;
-
-      blocks.forEach((b, index) => {
-        dummy.position.set(b.x + 0.5, b.y + 0.5, b.z + 0.5);
-        dummy.updateMatrix();
-        instancedMesh.setMatrixAt(index, dummy.matrix);
-      });
-
-      instancedMesh.instanceMatrix.needsUpdate = true;
-      (instancedMesh as any).userData = { blocks };
-
-      scene.add(instancedMesh);
-      instancedMeshesRef.current.push(instancedMesh);
-    });
-  }, [visibleBlocks, wireframe]);
+    };
+    void renderBlocks();
+    return () => {
+      cancelled = true;
+    };
+  }, [previewBlocks, wireframe]);
 
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const mouse = useMemo(() => new THREE.Vector2(), []);
@@ -363,10 +473,11 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       if (!cameraRef.current || !controlsRef.current) return;
       const camera = cameraRef.current;
       const controls = controlsRef.current;
-      const cx = structure.size.x / 2;
-      const cy = structure.size.y / 2;
-      const cz = structure.size.z / 2;
-      const maxDim = Math.max(structure.size.x, structure.size.y, structure.size.z, 16);
+      const focus = focusForStructure(structure);
+      const cx = focus.center.x;
+      const cy = focus.center.y;
+      const cz = focus.center.z;
+      const maxDim = focus.size;
 
       const targetLookAt = new THREE.Vector3(cx, cy, cz);
       const targetPos = new THREE.Vector3();
@@ -424,6 +535,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         <span className="text-zinc-700 hidden sm:inline">/</span>
         <span className="font-mono text-zinc-400 tabular-nums hidden sm:inline">{fps} FPS</span>
         <span className="text-zinc-700">/</span>
+        {previewBlocks.length < visibleBlocks.length && <span className="font-mono text-amber-300 tabular-nums hidden sm:inline">preview {previewBlocks.length.toLocaleString()}</span>}
+        {previewBlocks.length < visibleBlocks.length && <span className="text-zinc-700">/</span>}
         <span className="font-mono text-zinc-300 tabular-nums font-semibold">
           {structure.size.x}×{structure.size.y}×{structure.size.z}
         </span>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createGrid } from '../packages/core/dist/index.js';
-import { planBuilding, structurePlanToRegionGrids } from '../packages/ai-planner/dist/index.js';
+import { planBuilding, structurePlanToGrid, structurePlanToRegionGrids } from '../packages/ai-planner/dist/index.js';
 import { serializeLitematica, serializeLitematicaRegions } from '../packages/cartographer-adapter/dist/index.js';
 import { applyLitematicaPlacement, parseLitematicaDocumentBytes, parseLitematicaPlacements, Reader, serializeLitematicaPlacements, summarizeLitematicaDocument } from '../packages/craftmatic-adapter/dist/index.js';
 
@@ -17,6 +17,13 @@ const packedDocument = await parseLitematicaDocumentBytes(packedBytes);
 assert.equal(packedDocument.regions[0].cells.length, 4);
 assert.deepEqual(packedDocument.regions[0].cells.map((cell) => cell.block.id), packed.cells.map((cell) => cell.block.id));
 assert.deepEqual(summarizeLitematicaDocument(packedDocument).regions[0].dimensions, { x: 4, y: 1, z: 1 });
+
+const wideCells = Array.from({ length: 257 }, (_, x) => ({ x, y: 0, z: 0, block: { id: x % 3 === 0 ? 'minecraft:stone' : x % 3 === 1 ? 'minecraft:deepslate_bricks' : 'minecraft:polished_deepslate' } }));
+const wideGrid = createGrid(wideCells, { width: wideCells.length, height: 1, length: 1 });
+const wideBytes = await serializeLitematica(wideGrid, { name: 'Long boundary packing' });
+const wideDocument = await parseLitematicaDocumentBytes(wideBytes);
+assert.equal(wideDocument.regions[0].cells.length, wideGrid.cells.length);
+assert.deepEqual(wideDocument.regions[0].cells.map((cell) => `${cell.x},${cell.block.id}`), wideGrid.cells.map((cell) => `${cell.x},${cell.block.id}`));
 
 const negative = createGrid([
   { x: 0, y: 0, z: 0, block: { id: 'minecraft:stone' } },
@@ -38,4 +45,16 @@ const plannedDocument = await parseLitematicaDocumentBytes(plannedBytes);
 assert.equal(plannedDocument.regions.length, 4);
 const placedCells = plannedDocument.regions.flatMap((region) => region.cells.map((cell) => `${cell.x},${cell.y},${cell.z}`));
 assert.equal(new Set(placedCells).size, placedCells.length);
+const partialPlan = { ...plan, regions: [{ name: 'tower-tip', role: 'spire', x: 0, y: plan.dimensions.height - 1, z: 0, width: 1, height: 1, length: 1 }] };
+const completeRegions = structurePlanToRegionGrids(partialPlan);
+assert.equal(completeRegions.at(-1).name, 'Unassigned structure');
+const completeGrid = structurePlanToGrid(partialPlan);
+assert.equal(completeRegions.reduce((count, region) => count + region.grid.cells.length, 0), completeGrid.cells.length);
+const completeBytes = await serializeLitematicaRegions(completeRegions, { name: partialPlan.name, author: 'CraftAIB' });
+const completeDocument = await parseLitematicaDocumentBytes(completeBytes);
+const completeCells = completeDocument.regions.flatMap((region) => region.cells.map((cell) => `${cell.x + region.position.x},${cell.y + region.position.y},${cell.z + region.position.z}`));
+const expectedWorldBlocks = new Set(completeGrid.cells.map((cell) => `${cell.x},${cell.y},${cell.z},${cell.block.id},${JSON.stringify(cell.block.properties ?? {})}`));
+const importedWorldBlocks = new Set(completeDocument.regions.flatMap((region) => region.cells.map((cell) => `${cell.x},${cell.y},${cell.z},${cell.block.id},${JSON.stringify(cell.block.properties ?? {})}`)));
+assert.equal(importedWorldBlocks.size, completeGrid.cells.length);
+assert.deepEqual(importedWorldBlocks, expectedWorldBlocks);
 console.log('litematica semantic smoke passed');

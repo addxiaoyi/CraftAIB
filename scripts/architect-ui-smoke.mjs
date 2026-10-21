@@ -7,6 +7,7 @@ const browser = await chromium.launch({ headless: true, executablePath: 'C:/User
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
+await page.route('**/api/ai/status', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, text: false, vision: false }) }));
 try {
   await page.goto(process.env.CRAFTAIB_ARCHITECT_URL || 'http://127.0.0.1:4183/?architect-smoke=1');
   await page.locator('[data-workspace-id="ai_builder"]').waitFor();

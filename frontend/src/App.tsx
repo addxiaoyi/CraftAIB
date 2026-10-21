@@ -40,8 +40,20 @@ import {
   Wrench,
 } from 'lucide-react';
 
+function safeStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    if (key === 'craftaib.edit-history') {
+      try { localStorage.removeItem(key); } catch { /* storage can remain unavailable */ }
+    }
+  }
+}
 export default function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>('ai_builder');
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>(() => {
+    const saved = localStorage.getItem('craftaib.active-workspace');
+    return saved && ['ai_builder', 'viewer_3d', 'projections', 'materials', 'pixel_art', 'map_art', 'voxel_lab', 'geo_scene', 'lego_ldraw', 'settings'].includes(saved) ? saved as WorkspaceId : 'ai_builder';
+  });
   const [lang, setLang] = useState<'zh' | 'en'>(() => {
     const saved = localStorage.getItem('craftaib.language');
     return saved === 'en' || saved === 'zh' ? saved : 'zh';
@@ -51,8 +63,21 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const i18n = tr(lang);
-  const [aiMeta, setAiMeta] = useState<CraftAibProject['ai']>({ prompt: '' });
-  const [editHistory, setEditHistory] = useState<StructureData[]>([]);
+  const [aiMeta, setAiMeta] = useState<CraftAibProject['ai']>(() => {
+    const saved = localStorage.getItem('craftaib.ai-meta');
+    if (!saved) return { prompt: '' };
+    try { return JSON.parse(saved) as CraftAibProject['ai']; } catch { return { prompt: '' }; }
+  });
+  const [editHistory, setEditHistory] = useState<StructureData[]>(() => {
+    const saved = localStorage.getItem('craftaib.edit-history');
+    if (!saved) return [];
+    try { const value = JSON.parse(saved); return Array.isArray(value) ? value : []; } catch { return []; }
+  });
+  const [materialInventory, setMaterialInventory] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('craftaib.material-inventory');
+    if (!saved) return {};
+    try { return JSON.parse(saved) as Record<string, number>; } catch { return {}; }
+  });
   const [placements, setPlacements] = useState<LitematicaPlacementState[]>(() => {
     const saved = localStorage.getItem('craftaib.placements');
     if (!saved) return [];
@@ -76,17 +101,29 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (autoSave) localStorage.setItem('blockcraft_current_structure', JSON.stringify(structure));
-    localStorage.setItem('craftaib.auto-save', String(autoSave));
+    if (autoSave) safeStorageSet('blockcraft_current_structure', JSON.stringify(structure));
+    safeStorageSet('craftaib.auto-save', String(autoSave));
   }, [autoSave, structure]);
 
   useEffect(() => {
-    localStorage.setItem('craftaib.placements', JSON.stringify(placements));
+    safeStorageSet('craftaib.active-workspace', activeWorkspace);
+    safeStorageSet('craftaib.edit-history', JSON.stringify(editHistory.slice(-5)));
+    safeStorageSet('craftaib.material-inventory', JSON.stringify(materialInventory));
+    try {
+      safeStorageSet('craftaib.ai-meta', JSON.stringify(aiMeta ?? { prompt: '' }));
+    } catch {
+      // Keep the structure snapshot usable when a large reference image exceeds localStorage quota.
+      if (aiMeta?.referenceImage) safeStorageSet('craftaib.ai-meta', JSON.stringify({ ...aiMeta, referenceImage: undefined }));
+    }
+  }, [activeWorkspace, aiMeta, editHistory, materialInventory]);
+
+  useEffect(() => {
+    safeStorageSet('craftaib.placements', JSON.stringify(placements));
   }, [placements]);
 
   const handleLanguageChange = (next: 'zh' | 'en') => {
     setLang(next);
-    localStorage.setItem('craftaib.language', next);
+    safeStorageSet('craftaib.language', next);
   };
 
   const showToast = useCallback((msg: string) => {
@@ -97,7 +134,7 @@ export default function App() {
   const handleStructureChange = (newStructure: StructureData) => {
     setStructure(newStructure);
     if (autoSave) {
-      localStorage.setItem('blockcraft_current_structure', JSON.stringify(newStructure));
+      safeStorageSet('blockcraft_current_structure', JSON.stringify(newStructure));
     }
     
   };
@@ -105,13 +142,13 @@ export default function App() {
   const handleResetDefaults = () => {
     const def = createDefaultStructure();
     setStructure(def);
-    localStorage.setItem('blockcraft_current_structure', JSON.stringify(def));
+    safeStorageSet('blockcraft_current_structure', JSON.stringify(def));
     
     showToast(lang === 'zh' ? '已重置为默认建筑结构' : 'Reset to default structure');
   };
 
   const saveProject = () => {
-    const project: CraftAibProject = { version: 1, activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, placements, savedAt: new Date().toISOString() };
+    const project: CraftAibProject = { version: 1, activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, placements, materialInventory, savedAt: new Date().toISOString() };
     const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
@@ -130,6 +167,7 @@ export default function App() {
       setAiMeta(project.ai ?? { prompt: '' });
       setEditHistory(project.history ?? [project.structure]);
       setPlacements((project.placements ?? []).map(normalizePlacement));
+      setMaterialInventory(project.materialInventory ?? {});
       if (project.language === 'zh' || project.language === 'en') handleLanguageChange(project.language);
       if (typeof project.autoSave === 'boolean') setAutoSave(project.autoSave);
       if (project.activeWorkspace && allNavItems.some((item) => item.id === project.activeWorkspace)) setActiveWorkspace(project.activeWorkspace);
@@ -482,6 +520,8 @@ export default function App() {
           <MaterialsView
             structure={structure}
             onStructureChange={handleStructureChange}
+            initialInventory={materialInventory}
+            onInventoryChange={setMaterialInventory}
             lang={lang}
           />
         )}

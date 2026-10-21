@@ -18,14 +18,18 @@ interface MaterialsViewProps {
   structure: StructureData;
   onStructureChange: (newStructure: StructureData) => void;
   lang: 'zh' | 'en';
+  initialInventory?: Record<string, number>;
+  onInventoryChange?: (inventory: Record<string, number>) => void;
 }
 
 export const MaterialsView: React.FC<MaterialsViewProps> = ({
   structure,
   onStructureChange,
   lang,
+  initialInventory,
+  onInventoryChange,
 }) => {
-  const [inventories, setInventories] = useState<Record<string, number>>({});
+  const [inventories, setInventories] = useState<Record<string, number>>(initialInventory ?? {});
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [shortageOnly, setShortageOnly] = useState<boolean>(false);
@@ -77,6 +81,10 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({
     },
   }[lang];
   const t = lang === 'zh' ? { ...base, title: tr(lang).pages.materials, subtitle: '统计方块需求、库存、缺口和替代材料，并导出 CSV。' } : base;
+
+  useEffect(() => {
+    onInventoryChange?.(inventories);
+  }, [inventories, onInventoryChange]);
 
   useEffect(() => {
     let active = true;
