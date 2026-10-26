@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { LitematicaPlacementState, PlacementMirror, PlacementRotation, StructureData, VoxelBlock, VoxelRegion } from '../../types/minecraft';
 import { downloadPlacements, normalizePlacement } from '../../integrations/placement';
 import { ThreeViewport } from '../ThreeViewport';
@@ -24,6 +24,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Upload,
 } from 'lucide-react';
 
 interface Viewer3dViewProps {
@@ -62,6 +63,8 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [wireframe, setWireframe] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [rendererMode, setRendererMode] = useState<'native' | 'lodestone'>('native');
+  const [resourcePackFile, setResourcePackFile] = useState<File | null>(null);
+  const resourcePackInputRef = useRef<HTMLInputElement>(null);
 
   // Responsive panel defaults: open on desktop, closed by default on small screens
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(() => {
@@ -339,7 +342,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     <div className="flex-1 h-full relative overflow-hidden flex bg-[#090a0f]">
       {/* 3D CAD Dominant Viewport */}
       <div className="flex-1 h-full relative">
-        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} className="h-full w-full" /> : <ThreeViewport
+        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} className="h-full w-full" /> : <ThreeViewport
             structure={structure}
             activeRegionId={activeRegionId}
             onSelectBlock={(b) => {
@@ -384,6 +387,16 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
           >
             <Box className="h-3 w-3 text-amber-300" />
             <span className="hidden sm:inline">{rendererMode === 'native' ? 'Lodestone models' : 'Native inspector'}</span>
+          </button>
+
+          <input ref={resourcePackInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => setResourcePackFile(event.target.files?.[0] ?? null)} />
+          <button
+            onClick={() => resourcePackInputRef.current?.click()}
+            className="px-2 py-1 rounded text-[11px] font-mono text-zinc-300 hover:text-white hover:bg-white/[0.08] flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+            title={lang === 'zh' ? '上传 Minecraft 资源包 ZIP' : 'Upload Minecraft resource-pack ZIP'}
+          >
+            <Upload className="h-3 w-3 text-cyan-300" />
+            <span className="hidden md:inline">{resourcePackFile ? resourcePackFile.name : 'Resource pack'}</span>
           </button>
 
           {/* Spatial Rotate & Mirror */}

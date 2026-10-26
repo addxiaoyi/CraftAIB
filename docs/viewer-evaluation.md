@@ -19,6 +19,8 @@ Keep CraftAIB's existing `ThreeViewport` and BlockGrid boundary for editing. Lod
 
 The native Viewer uses vanilla 1.21.4 block textures from `assets.mcasset.cloud` through a CORS-aware fetch/cache. The Lodestone mode uses the bundled default pack under `frontend/public/lodestone-default-pack`, including blockstates, models, atlas and block flags. Missing native texture files fall back to the existing material color without passing an undefined `map` to Three.js.
 
+Lodestone mode also accepts a standard Minecraft resource-pack ZIP from the Viewer toolbar. Blockstates and models are merged over the bundled pack; block textures are packed into a generated atlas and override matching vanilla textures. Hold `Alt` and move over the canvas to ray-pick a block; the selected BlockGrid cell is sent to the existing Inspector. The native renderer remains the authoritative editing surface when model geometry cannot be mapped back to a single voxel.
+
 This is a representative block-face renderer, not a complete Minecraft model renderer. Doors, panes, stairs and redstone components still need model/state geometry if exact client appearance is required.
 
 ## Large structures

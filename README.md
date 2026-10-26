@@ -91,6 +91,8 @@ The browser Worker exposes `litematic.inspect` and `ai.generate-litematic`. The 
 
 The 3D Viewer includes an opt-in `Lodestone models` renderer backed by Lodestone 0.6.0 and its MIT-licensed vanilla default pack. It renders Minecraft blockstates and model geometry for doors, stairs, slabs, panes and other non-cube blocks, with asynchronous 16-block chunk meshing. Switch back to `Native inspector` when Alt block inspection and direct voxel editing are needed.
 
+In `Lodestone models` mode, use `Resource pack` to upload a standard Minecraft resource-pack ZIP. Its blockstates, models and block textures are merged over the bundled vanilla pack. Hold `Alt` while moving over the model to select the underlying Minecraft block and update the existing Inspector.
+
 To use a real reference-image vision model, set `CRAFTAIB_VISION_API_URL`, `CRAFTAIB_VISION_API_KEY`, and optionally `CRAFTAIB_VISION_MODEL`. The adapter sends an OpenAI-compatible multimodal request and validates the returned StructurePlan before any blocks are generated.
 # AI building server
 

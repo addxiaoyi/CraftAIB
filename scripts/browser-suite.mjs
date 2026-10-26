@@ -18,7 +18,7 @@ try {
     server.once('error', (error) => { clearTimeout(timer); reject(error); });
     server.once('exit', (code) => { clearTimeout(timer); reject(new Error(`Fixture server exited (${code}).`)); });
   });
-  const tests = ['architect-ui-smoke.mjs', 'ai-generation-browser-smoke.mjs', 'ui-button-smoke.mjs', 'ui-file-action-smoke.mjs', 'viewer-region-browser-smoke.mjs', 'responsive-browser-smoke.mjs', 'viewer-performance-smoke.mjs'];
+  const tests = ['architect-ui-smoke.mjs', 'ai-generation-browser-smoke.mjs', 'ui-button-smoke.mjs', 'ui-file-action-smoke.mjs', 'viewer-region-browser-smoke.mjs', 'resource-pack-browser-smoke.mjs', 'responsive-browser-smoke.mjs', 'viewer-performance-smoke.mjs'];
   for (const test of tests) {
     console.log(`Browser suite: ${test}`);
     await new Promise((resolveTest, reject) => {
