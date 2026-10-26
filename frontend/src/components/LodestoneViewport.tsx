@@ -129,8 +129,18 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         resize();
         renderer.resetCamera();
         await renderer.whenReady();
+        let frameId = 0;
+        const draw = () => {
+          if (disposed) return;
+          renderer.drawStructure(renderer.getViewMatrix());
+          frameId = requestAnimationFrame(draw);
+        };
+        draw();
         if (!disposed) setStatus('Minecraft resource pack ready');
-        return () => observer.disconnect();
+        return () => {
+          observer.disconnect();
+          cancelAnimationFrame(frameId);
+        };
       } catch (error) {
         if (!disposed) setStatus(error instanceof Error ? `Resource pack failed: ${error.message}` : 'Resource pack failed');
       }

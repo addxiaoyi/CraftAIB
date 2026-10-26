@@ -26,3 +26,5 @@ This is a representative block-face renderer, not a complete Minecraft model ren
 ## Large structures
 
 The current preview keeps a bounded surface sample for very large structures, groups blocks by 16x16x16 render chunks, and yields between chunk mesh insertions. This keeps the UI responsive while preserving the full BlockGrid for export and material counts. It does not discard blocks from Litematic/Schematic export.
+
+Measured fixture: a 1,048,576-block Litematic imported and navigated successfully in about 19.8 seconds on the local browser smoke. The renderer uses Lodestone's asynchronous chunk builder on the main UI renderer; it is not yet a Worker-based mesh generator. The native engine Worker remains responsible for parsing, validation, material analysis and export.
