@@ -7,6 +7,12 @@ import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 
 const MINECRAFT_TEXTURE_BASE = 'https://assets.mcasset.cloud/1.21.4/assets/minecraft/textures/block/';
 const MAX_PREVIEW_BLOCKS = 500_000;
+const RENDER_CHUNK_SIZE = 16;
+const textureCache = new Map<string, Promise<THREE.Texture | null>>();
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
 
 function textureUrlForBlock(blockId: string): string {
   const name = blockId.replace(/^minecraft:/, '');
@@ -43,6 +49,49 @@ function textureUrlForBlock(blockId: string): string {
   };
   const textureName = aliases[name] ?? (name.endsWith('_bed') ? `${name.slice(0, -4)}_wool` : name);
   return `${MINECRAFT_TEXTURE_BASE}${textureName}.png`;
+}
+
+function loadBlockTexture(url: string): Promise<THREE.Texture | null> {
+  const cached = textureCache.get(url);
+  if (cached) return cached;
+
+  const request = fetch(url, { mode: 'cors', credentials: 'omit' })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      if ('createImageBitmap' in window) {
+        const bitmap = await createImageBitmap(blob);
+        const texture = new THREE.Texture(bitmap);
+        texture.needsUpdate = true;
+        return texture;
+      }
+      const source = URL.createObjectURL(blob);
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error(`Unable to decode block texture: ${url}`));
+          element.src = source;
+        });
+        const texture = new THREE.Texture(image);
+        texture.needsUpdate = true;
+        return texture;
+      } finally {
+        URL.revokeObjectURL(source);
+      }
+    })
+    .then((texture) => {
+      if (!texture) return null;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.generateMipmaps = false;
+      return texture;
+    })
+    .catch(() => null);
+
+  textureCache.set(url, request);
+  return request;
 }
 
 function focusForStructure(structure: StructureData): { center: THREE.Vector3; size: number } {
@@ -437,28 +486,22 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       const groups = new Map<string, VoxelBlock[]>();
       for (const block of previewBlocks) {
         const url = textureUrlForBlock(block.blockId);
-        const group = groups.get(url);
+        const chunk = `${Math.floor(block.x / RENDER_CHUNK_SIZE)},${Math.floor(block.y / RENDER_CHUNK_SIZE)},${Math.floor(block.z / RENDER_CHUNK_SIZE)}`;
+        const key = `${url}|${chunk}`;
+        const group = groups.get(key);
         if (group) group.push(block);
-        else groups.set(url, [block]);
+        else groups.set(key, [block]);
       }
-      const loader = new THREE.TextureLoader();
-      const loaded = await Promise.all([...groups.entries()].map(async ([url, blocks]) => {
-        try {
-          const texture = await loader.loadAsync(url);
-          texture.colorSpace = THREE.SRGBColorSpace;
-          texture.magFilter = THREE.NearestFilter;
-          texture.minFilter = THREE.NearestFilter;
-          texture.generateMipmaps = false;
-          return { url, blocks, texture };
-        } catch {
-          return { url, blocks, texture: null };
-        }
+      const loaded = await Promise.all([...groups.entries()].map(async ([key, blocks]) => {
+        const separator = key.lastIndexOf('|');
+        const url = key.slice(0, separator);
+        return { url, blocks, texture: await loadBlockTexture(url) };
       }));
       if (cancelled) {
         loaded.forEach(({ texture }) => texture?.dispose());
         return;
       }
-      loaded.forEach(({ url, blocks, texture }) => {
+      for (const [{ url, blocks, texture }, index] of loaded.map((entry, index) => [entry, index] as const)) {
         const material = new THREE.MeshStandardMaterial({
           color: new THREE.Color(texture ? '#ffffff' : colorForBlock(blocks[0]?.blockId ?? '')),
           ...(texture ? { map: texture } : {}),
@@ -479,7 +522,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         (instancedMesh as any).userData = { blocks, textureUrl: url };
         scene.add(instancedMesh);
         instancedMeshesRef.current.push(instancedMesh);
-      });
+        if (index % 24 === 23) await nextFrame();
+      }
     };
     void renderBlocks();
     return () => {
