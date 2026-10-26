@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { LitematicaPlacementState, PlacementMirror, PlacementRotation, StructureData, VoxelBlock, VoxelRegion } from '../../types/minecraft';
 import { downloadPlacements, normalizePlacement } from '../../integrations/placement';
 import { ThreeViewport } from '../ThreeViewport';
+import { LodestoneViewport } from '../LodestoneViewport';
 import { BLOCK_REGISTRY } from '../../utils/blockRegistry';
 import {
   Eye,
@@ -60,6 +61,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [showRegions, setShowRegions] = useState<boolean>(true);
   const [wireframe, setWireframe] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(true);
+  const [rendererMode, setRendererMode] = useState<'native' | 'lodestone'>('native');
 
   // Responsive panel defaults: open on desktop, closed by default on small screens
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(() => {
@@ -337,23 +339,20 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     <div className="flex-1 h-full relative overflow-hidden flex bg-[#090a0f]">
       {/* 3D CAD Dominant Viewport */}
       <div className="flex-1 h-full relative">
-        <ThreeViewport
-          structure={structure}
-          activeRegionId={activeRegionId}
-          onSelectBlock={(b) => {
-            setSelectedBlock(b);
-            // On mobile, if a block is clicked, automatically open inspector
-            if (b && window.innerWidth < 1024) {
-              setIsRightPanelOpen(true);
-            }
-          }}
-          minY={minY}
-          maxY={maxY}
-          showRegions={showRegions}
-          wireframe={wireframe}
-          showGrid={showGrid}
-          className="w-full h-full"
-        />
+        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} className="h-full w-full" /> : <ThreeViewport
+            structure={structure}
+            activeRegionId={activeRegionId}
+            onSelectBlock={(b) => {
+              setSelectedBlock(b);
+              if (b && window.innerWidth < 1024) setIsRightPanelOpen(true);
+            }}
+            minY={minY}
+            maxY={maxY}
+            showRegions={showRegions}
+            wireframe={wireframe}
+            showGrid={showGrid}
+            className="w-full h-full"
+          />}
 
         {/* Floating Top CAD Spatial Toolbelt (Quick Actions) */}
         <div className="absolute top-3 left-1/2 -translate-x-1/2 studio-glass px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg shadow-2xl flex items-center gap-1 sm:gap-2 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-120px)] overflow-x-auto">
@@ -376,6 +375,16 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
               <Redo2 className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          <button
+            data-renderer-mode={rendererMode}
+            onClick={() => setRendererMode((mode) => mode === 'native' ? 'lodestone' : 'native')}
+            className="px-2 py-1 rounded text-[11px] font-mono text-zinc-300 hover:text-white hover:bg-white/[0.08] flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+            title={lang === 'zh' ? '切换 Minecraft 真实模型渲染器' : 'Toggle Minecraft model renderer'}
+          >
+            <Box className="h-3 w-3 text-amber-300" />
+            <span className="hidden sm:inline">{rendererMode === 'native' ? 'Lodestone models' : 'Native inspector'}</span>
+          </button>
 
           {/* Spatial Rotate & Mirror */}
           <button

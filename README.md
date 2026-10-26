@@ -89,6 +89,8 @@ craftaib litematic info building.litematic
 
 The browser Worker exposes `litematic.inspect` and `ai.generate-litematic`. The Litematica Java runtime itself (Easy Place, verifier, client mixins, and schematic-world rendering) is not copied into the browser; CraftAIB implements the file and placement semantics at the adapter boundary.
 
+The 3D Viewer includes an opt-in `Lodestone models` renderer backed by Lodestone 0.6.0 and its MIT-licensed vanilla default pack. It renders Minecraft blockstates and model geometry for doors, stairs, slabs, panes and other non-cube blocks, with asynchronous 16-block chunk meshing. Switch back to `Native inspector` when Alt block inspection and direct voxel editing are needed.
+
 To use a real reference-image vision model, set `CRAFTAIB_VISION_API_URL`, `CRAFTAIB_VISION_API_KEY`, and optionally `CRAFTAIB_VISION_MODEL`. The adapter sends an OpenAI-compatible multimodal request and validates the returned StructurePlan before any blocks are generated.
 # AI building server
 

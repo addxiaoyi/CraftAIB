@@ -17,6 +17,11 @@ try {
   await roof.waitFor();
   await roof.click();
   assert.equal(await page.getByRole('button', { name: /Rotate 90/ }).first().isEnabled(), true);
+  const rendererToggle = page.locator('[data-renderer-mode="native"]');
+  await rendererToggle.click();
+  await page.getByText('Minecraft resource pack ready').waitFor({ timeout: 30000 });
+  assert.equal(await page.locator('[data-renderer-mode="lodestone"]').count(), 1);
+  await page.locator('[data-renderer-mode="lodestone"]').click();
   const before = await roof.getAttribute('data-region-name');
   await page.getByRole('button', { name: /Rotate 90/ }).first().click();
   await page.getByRole('button', { name: /Mirror X/ }).first().click();

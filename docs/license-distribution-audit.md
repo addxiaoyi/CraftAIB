@@ -58,6 +58,14 @@ Required action before release: choose an explicit distribution model, replace o
 - Current use: format and placement semantics reference; no Java UI, Mixin, renderer, or runtime code copied
 - Risk: keep the reference provenance documented. Reassess if any Java implementation is copied later.
 
+### Lodestone
+
+- Source: `https://github.com/mattzh72/lodestone`
+- Version: `0.6.0`
+- Notice: MIT
+- Current use: opt-in Three.js blockstate/model renderer and bundled vanilla default pack under `frontend/public/lodestone-default-pack`.
+- Required action: preserve the Lodestone MIT notice and the default-pack license notice in any distributed build that includes these assets.
+
 ## Current safe posture
 
 - Treat the workspace as internal integration only.
