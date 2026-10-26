@@ -180,11 +180,7 @@ export default function App() {
   };
 
   const coreNavItems = [
-    {
-      id: 'ai_builder' as WorkspaceId,
-      label: lang === 'zh' ? 'AI 建筑' : 'AI Architect',
-      icon: Sparkles,
-    },
+    { id: 'ai_builder' as WorkspaceId, label: lang === 'zh' ? 'AI 建筑' : 'AI Architect', icon: Sparkles },
     {
       id: 'viewer_3d' as WorkspaceId,
       label: lang === 'zh' ? '3D 查看器' : '3D Viewer',
@@ -252,12 +248,13 @@ export default function App() {
           TOP BAR CONTRACT (Luxury Minimalist Architectural CAD Workbench):
           [Brand Wordmark + Model Info] — [Segmented Workspace Switcher] — [Presence + Actions]
           ========================================================================= */}
-      <header className="h-13 border-b border-white/[0.08] bg-[#0c0f17]/90 backdrop-blur-2xl flex items-center justify-between px-3.5 sm:px-5 lg:px-6 gap-3 z-40 shrink-0">
+      <header className="min-h-[52px] overflow-hidden border-b border-white/[0.08] bg-[#0c0f17]/95 backdrop-blur-2xl flex items-center px-3.5 sm:px-5 lg:px-6 gap-3 z-40 shrink-0">
         {/* Zone 1: Geometric Wordmark & Model Context */}
-        <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5 shrink-0">
           <button
+            data-mobile-menu-toggle="true"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] lg:hidden transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] 2xl:hidden transition-colors cursor-pointer"
           >
             {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
@@ -296,9 +293,9 @@ export default function App() {
         </div>
 
         {/* Zone 2: Minimal Segmented Workspace Switcher (Desktop) */}
-        <nav className="hidden lg:flex items-center gap-1.5 text-xs">
+        <nav className="hidden 2xl:flex flex-1 min-w-0 items-center justify-center gap-2 text-xs">
           {/* Core Suite */}
-          <div className="flex items-center bg-white/[0.03] border border-white/[0.07] rounded-md p-0.5">
+          <div className="flex min-w-0 items-center bg-white/[0.03] border border-white/[0.07] rounded-md p-0.5">
             {localizedCoreNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeWorkspace === item.id;
@@ -307,7 +304,7 @@ export default function App() {
                   key={item.id}
                   data-workspace-id={item.id}
                   onClick={() => setActiveWorkspace(item.id)}
-                  className={`px-3 py-1 rounded-[4px] text-xs font-medium transition-all duration-150 flex items-center gap-1.5 whitespace-nowrap ${
+                    className={`px-2.5 xl:px-3 py-1.5 rounded-[4px] text-xs font-medium transition-all duration-150 flex items-center gap-1.5 whitespace-nowrap ${
                     isActive
                       ? 'bg-white/10 text-white shadow-sm font-semibold'
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.02]'
@@ -321,10 +318,12 @@ export default function App() {
           </div>
 
           {/* Toolbox Dropdown */}
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               data-toolbox-toggle="true"
               onClick={() => setIsToolboxOpen(!isToolboxOpen)}
+              aria-expanded={isToolboxOpen}
+              aria-haspopup="menu"
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 border ${
                 isToolboxActive
                   ? 'bg-white/10 border-white/20 text-white shadow-sm'
@@ -348,7 +347,7 @@ export default function App() {
                   className="fixed inset-0 z-30"
                   onClick={() => setIsToolboxOpen(false)}
                 />
-                <div className="absolute top-full mt-1.5 right-0 z-40 w-48 bg-[#0c0e15]/95 backdrop-blur-2xl border border-white/[0.08] rounded-md shadow-2xl p-1 space-y-0.5 animate-fade-in">
+                <div role="menu" className="absolute top-full mt-1.5 right-0 z-40 w-48 bg-[#0c0e15]/95 backdrop-blur-2xl border border-white/[0.08] rounded-md shadow-2xl p-1 space-y-0.5 animate-fade-in">
                   {localizedToolboxNavItems.map((item) => {
                     const Icon = item.icon;
                     const isActive = activeWorkspace === item.id;
@@ -360,6 +359,7 @@ export default function App() {
                           setActiveWorkspace(item.id);
                           setIsToolboxOpen(false);
                         }}
+                        role="menuitem"
                         className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs transition-colors ${
                           isActive
                             ? 'bg-white/10 text-white font-medium'
@@ -424,7 +424,7 @@ export default function App() {
 
       {/* Mobile Drawer Menu (Silky slide down) */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden border-b border-white/[0.08] bg-[#0c0e15]/98 backdrop-blur-2xl p-3 space-y-1 z-30 shadow-2xl animate-fade-in max-h-[80vh] overflow-y-auto">
+        <div className="2xl:hidden border-b border-white/[0.08] bg-[#0c0e15]/98 backdrop-blur-2xl p-3 space-y-1 z-30 shadow-2xl animate-fade-in max-h-[80vh] overflow-y-auto">
           <div className="text-[10px] font-mono text-zinc-500 uppercase px-2 pb-1">Core Workspaces</div>
           {localizedCoreNavItems.map((item) => {
             const Icon = item.icon;

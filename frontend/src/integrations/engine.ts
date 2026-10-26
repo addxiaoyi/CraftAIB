@@ -14,12 +14,13 @@ export type BlockGrid = {
 };
 
 type WorkerEvent =
-  | { type: 'progress'; value: number; stage: string }
+  | { type: 'progress'; value: number; stage: string; log?: TaskProgressLog }
   | { type: 'result'; output: unknown }
-  | { type: 'error'; code: string; message: string }
+  | { type: 'error'; code: string; message: string; generationLog?: Array<Record<string, unknown>> }
   | { type: 'cancelled' };
 
-export type TaskProgress = (value: number, stage: string) => void;
+export type TaskProgressLog = { stage: string; at?: string; turn?: number; tool?: string; ok?: boolean; blocks?: number; regions?: number; silhouette?: number; interiorBlocks?: number; interiorLights?: number; message?: string };
+export type TaskProgress = (value: number, stage: string, log?: TaskProgressLog) => void;
 const ENGINE_TASK_TIMEOUT_MS = 120000;
 const MODEL_BUILD_TASK_TIMEOUT_MS = 960000;
 
@@ -45,7 +46,12 @@ export function runEngineTask<T>(
       signal?.removeEventListener('abort', cancel);
       worker.terminate();
     };
-    const cancel = () => worker.postMessage({ type: 'cancel', taskId: id });
+    const cancel = () => {
+      if (settled) return;
+      // A busy voxel loop cannot receive a cancel message until it finishes.
+      finish();
+      reject(new DOMException('Task cancelled.', 'AbortError'));
+    };
     const fail = (error: Error) => {
       if (settled) return;
       finish();
@@ -53,11 +59,12 @@ export function runEngineTask<T>(
     };
 
     signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) { cancel(); return; }
     worker.onerror = (event) => fail(new Error(event.message || `Worker task failed: ${type}`));
     worker.onmessage = ({ data }: MessageEvent<WorkerEvent & { taskId?: string }>) => {
       if (data.taskId !== id || settled) return;
       if (data.type === 'progress') {
-        onProgress?.(data.value, data.stage);
+        onProgress?.(data.value, data.stage, data.log);
         return;
       }
       if (data.type === 'cancelled') {
@@ -66,7 +73,7 @@ export function runEngineTask<T>(
         return;
       }
       if (data.type === 'error') {
-        fail(Object.assign(new Error(data.message || `Worker task failed: ${data.code}`), { code: data.code }));
+        fail(Object.assign(new Error(data.message || `Worker task failed: ${data.code}`), { code: data.code, generationLog: data.generationLog }));
         return;
       }
       finish();
@@ -80,7 +87,8 @@ export function structureToGrid(structure: StructureData): BlockGrid {
   const palette = new Map<string, BlockState>([['minecraft:air', { id: 'minecraft:air' }]]);
   const cells = structure.blocks.map((block) => {
     const state: BlockState = { id: normalizeBlockId(block.blockId), ...(block.state ? { properties: block.state } : {}) };
-    palette.set(state.id, state);
+    const key = `${state.id}:${JSON.stringify(Object.entries(state.properties ?? {}).sort(([left], [right]) => left.localeCompare(right)))}`;
+    palette.set(key, state);
     return { x: block.x, y: block.y, z: block.z, block: state, source: 'user' };
   });
   return {

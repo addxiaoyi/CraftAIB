@@ -95,6 +95,7 @@ export interface BlockMeta {
   blastResistance?: number;
   litematicaCode?: string;
   mapBaseColor?: string;
+  mapColorId?: number;
 }
 
 export interface MaterialItem {

@@ -1,4 +1,4 @@
-export type BlockSource = 'voxelartcraft' | 'cartographer' | 'craftmatic' | 'user';
+export type BlockSource = 'voxelartcraft' | 'cartographer' | 'waxmapart' | 'craftmatic' | 'user';
 
 export type Rgba = { r: number; g: number; b: number; a: number };
 
@@ -66,9 +66,9 @@ export type EngineTask = {
 };
 
 export type EngineEvent =
-  | { type: 'progress'; taskId: string; value: number; stage: string }
+  | { type: 'progress'; taskId: string; value: number; stage: string; log?: Record<string, unknown> }
   | { type: 'result'; taskId: string; output: unknown }
-  | { type: 'error'; taskId: string; code: string; message: string }
+  | { type: 'error'; taskId: string; code: string; message: string; generationLog?: Array<Record<string, unknown>> }
   | { type: 'cancelled'; taskId: string };
 
 export type ExportFormat = 'json' | 'nbt' | 'schem' | 'litematic' | 'png' | 'jpeg' | 'glb' | 'html';

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
 import { ThreeViewport } from '../ThreeViewport';
 import { exportLitematic, exportSchematic, exportBlockGridJson } from '../../utils/exporters';
-import { compareReferenceProfiles, compareReferenceSilhouette, generateBuilding } from '../../integrations/building';
+import { compareReferenceProfiles, compareReferenceSilhouette, generateBuilding, type GenerationLogEntry } from '../../integrations/building';
 import {
   Sparkles,
   ChevronDown,
@@ -142,8 +142,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [generationLog, setGenerationLog] = useState<GenerationLogEntry[]>([]);
   const [generationSource, setGenerationSource] = useState<'ai' | 'local' | null>(initialAiMeta?.source ?? null);
-  const [referenceReport, setReferenceReport] = useState<ReferenceReport | undefined>(initialAiMeta?.referenceReport);
+  const [referenceReport, setReferenceReport] = useState<ReferenceReport | undefined>(initialAiMeta?.referenceImage ? initialAiMeta.referenceReport : undefined);
   const [allowLocalPreview, setAllowLocalPreview] = useState<boolean>(false);
   const abortController = useRef<AbortController | null>(null);
 
@@ -164,17 +165,23 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [minY, setMinY] = useState<number>(0);
   const [maxY, setMaxY] = useState<number>(structure.size.y);
   const [wireframe, setWireframe] = useState<boolean>(false);
+  const [viewportBackground, setViewportBackground] = useState<string>(() => localStorage.getItem('craftaib.viewport-background') || '#090a0f');
 
   useEffect(() => {
     setPrompt(initialAiMeta?.prompt ?? '');
     setReferenceImage(initialAiMeta?.referenceImage ?? null);
     setGenerationSource(initialAiMeta?.source ?? null);
-    setReferenceReport(initialAiMeta?.referenceReport);
+    setReferenceReport(initialAiMeta?.referenceImage ? initialAiMeta.referenceReport : undefined);
   }, [initialAiMeta]);
 
   useEffect(() => {
     onAiMetaChange?.({ prompt, referenceImage: referenceImage ?? undefined, source: generationSource ?? undefined, referenceReport });
   }, [prompt, referenceImage, generationSource, referenceReport, onAiMetaChange]);
+
+  const changeViewportBackground = (color: string) => {
+    setViewportBackground(color);
+    localStorage.setItem('craftaib.viewport-background', color);
+  };
 
   const base = {
     en: {
@@ -257,6 +264,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       setReferenceImage(reader.result as string);
+      setReferenceReport(undefined);
     };
     reader.readAsDataURL(file);
   };
@@ -286,8 +294,10 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     setIsLoading(true);
     setErrorMessage(null);
     setErrorCode(null);
+    setGenerationLog([]);
     setAllowLocalPreview(false);
     setGenerationSource(null);
+    setReferenceReport(undefined);
     setLoadingStep(forceLocal ? 'Creating a local preview…' : 'Checking model service…');
 
     try {
@@ -298,18 +308,22 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         : style.toLowerCase().includes('oriental') ? 'colonial'
         : style.toLowerCase().includes('nether') ? 'underwater' : 'fantasy';
       const result = await generateBuilding({
-        prompt: [prompt, styleId ? `Secondary style preference: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme, hasCustomDetail || !referenceImage ? 'Detail level: ' + detailLevel + '/5' : '', includeInterior ? 'Add a walkable furnished interior behind the visible exterior without changing the reference silhouette' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
+        prompt: [prompt, styleId ? `Secondary style preference: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme, hasCustomDetail || !referenceImage ? 'Detail level: ' + detailLevel + '/5' : '', includeInterior ? 'Complete the subject interior appropriately: buildings have usable rooms; objects retain their physical cavity, assembly and light source without inventing habitable rooms.' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: referenceOwnsEnvelope ? undefined : Math.max(1, Math.min(64, Math.round(dimY / 6))),
+        floors: referenceImage ? undefined : Math.max(1, Math.min(64, Math.round(dimY / 6))),
         width: referenceOwnsEnvelope ? undefined : dimX,
         height: referenceOwnsEnvelope ? undefined : dimY,
         length: referenceOwnsEnvelope ? undefined : dimZ,
-        detailLevel: referenceImage && !hasCustomDetail ? undefined : detailLevel,
+        detailLevel,
         includeInterior,
         seed: 42,
-      }, controller.signal, (value, stage) => setLoadingStep(Math.round(value * 100) + '% · ' + stage), forceLocal);
+      }, controller.signal, (value, stage, log) => {
+        setLoadingStep(Math.round(value * 100) + '% · ' + stage);
+        if (log) setGenerationLog((entries) => [...entries, log].slice(-100));
+      }, forceLocal);
+      setGenerationLog(result.generationLog);
       onStructureChange(result.structure);
       const features = (result.structure.plan as any)?.referenceFeatures;
       if (features) setReferenceReport({
@@ -328,6 +342,10 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       setGenerationSource(result.source);
       setMobileTab('viewport');
     } catch (error) {
+      const failedLog = error && typeof error === 'object' && 'generationLog' in error && Array.isArray(error.generationLog)
+        ? error.generationLog as GenerationLogEntry[]
+        : [];
+      setGenerationLog(failedLog);
       const cancelled = error instanceof DOMException && error.name === 'AbortError';
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
       const message = error instanceof Error ? error.message : 'Structure generation failed.';
@@ -335,7 +353,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         ? (referenceImage
           ? (lang === 'zh' ? '统一建筑模型未在限定时间内完成参考图建模。原图和描述已保留，可稍后重试或主动选择本地预览。' : 'The unified building model did not finish the reference-based plan in time. Your image and description are preserved; retry later or explicitly create a local preview.')
           : (lang === 'zh' ? '模型响应超时。当前请求已停止；请检查模型服务连通性，或在 Settings 增加超时时间后重试。' : 'The model request timed out and was stopped. Check model-service connectivity or increase the Settings timeout, then retry.'))
-        : code === 'MODEL_AUTH_FAILED' || /no valid credentials|api key|authentication failed/i.test(message)
+        : code === 'MODEL_TLS_CERTIFICATE_INVALID'
+          ? (lang === 'zh' ? '模型服务的 HTTPS 证书密钥强度过低，当前 Node.js 拒绝建立安全连接。请升级服务端证书或更换证书有效的模型 Endpoint；没有绕过 TLS 验证。' : message)
+          : code === 'MODEL_AUTH_FAILED' || /no valid credentials|api key|authentication failed/i.test(message)
           ? (lang === 'zh' ? '模型服务拒绝了当前 API 密钥或账户权限。请在 Settings 更新密钥后重试。' : 'The model provider rejected the configured API key or account permissions. Update the key in Settings and retry.')
         : code === 'RATE_LIMITED'
           ? (lang === 'zh' ? '模型服务请求过于频繁，请稍后重试。' : 'The model is rate limiting requests. Please retry shortly.')
@@ -469,7 +489,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     </div>
                   </div>
                   <button
-                    onClick={() => setReferenceImage(null)}
+                    data-reference-remove="true"
+                    onClick={() => { setReferenceImage(null); setReferenceReport(undefined); }}
                     className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
                     title={t.clearPhoto}
                   >
@@ -803,6 +824,34 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   {errorMessage}
                 </div>
               )}
+              {(isLoading || generationLog.length > 0) && (
+                <section aria-live="polite" aria-label={lang === 'zh' ? 'AI 建造日志' : 'AI construction log'} className="space-y-1.5 rounded-md border border-white/[0.08] bg-black/20 p-2.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-300">
+                    <span>{lang === 'zh' ? 'AI 工具建造日志' : 'AI tool construction log'}</span>
+                    {generationLog.length > 0 && <span className="font-mono text-zinc-500">{generationLog.length} {lang === 'zh' ? '条' : 'events'}</span>}
+                  </div>
+                  {isLoading && <p className="text-[10px] text-emerald-300">{loadingStep || (lang === 'zh' ? '等待模型调用建造工具...' : 'Waiting for the model to call construction tools...')}</p>}
+                  {generationLog.length > 0 ? (
+                    <ol className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                      {generationLog.map((entry, index) => (
+                        <li key={`${entry.turn ?? 0}-${entry.stage}-${index}`} className="flex items-start gap-1.5 text-[10px] leading-relaxed">
+                          <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${entry.ok === false ? 'bg-red-400' : entry.stage === 'model_request' || entry.stage === 'tool_call' ? 'bg-amber-300' : 'bg-emerald-400'}`} />
+                          <span className="min-w-0 break-words text-zinc-300">
+                            <span className="font-mono text-zinc-400">{entry.turn != null ? `T${entry.turn} · ` : ''}{entry.stage}</span>
+                            {entry.tool ? ` · ${entry.tool}` : ''}
+                            {entry.blocks != null ? ` · ${entry.blocks.toLocaleString()} blocks` : ''}
+                            {entry.regions != null ? ` · ${entry.regions} Regions` : ''}
+                            {entry.silhouette != null ? ` · ${lang === 'zh' ? '轮廓' : 'silhouette'} ${Math.round(entry.silhouette * 100)}%` : ''}
+                            {entry.interiorBlocks != null ? ` · ${lang === 'zh' ? '内部实放' : 'interior voxels'} ${entry.interiorBlocks.toLocaleString()}` : ''}
+                            {entry.interiorLights != null ? ` · ${lang === 'zh' ? '内部光源' : 'interior lights'} ${entry.interiorLights}` : ''}
+                            {entry.message ? ` · ${entry.message}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
+                </section>
+              )}
             </div>
 
             {/* Spatial Partitions Schedule */}
@@ -818,7 +867,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </div>
 
               {structure.plan?.notes?.length ? <div className="rounded border border-white/[0.06] bg-white/[0.02] p-2 text-[10px] text-zinc-400">{structure.plan.notes.join(' ')}</div> : null}
-              {referenceReport ? <div className="rounded border border-cyan-400/20 bg-cyan-400/[0.04] p-2 text-[10px] text-cyan-100/80">
+              {referenceReport ? <div data-reference-report="true" className="rounded border border-cyan-400/20 bg-cyan-400/[0.04] p-2 text-[10px] text-cyan-100/80">
                 <div className="mb-1 font-semibold text-cyan-200">{lang === 'zh' ? '参考图特征报告' : 'Reference feature report'}</div>
                 <div>{lang === 'zh' ? '图像' : 'Image'} {referenceReport.sourceWidth}×{referenceReport.sourceHeight} · {lang === 'zh' ? '层级' : 'floors'} {referenceReport.floors ?? '-'} · {lang === 'zh' ? '窗列' : 'window columns'} {referenceReport.windowColumns ?? 0} · {lang === 'zh' ? '塔楼锚点' : 'tower anchors'} {referenceReport.towerColumns ?? 0}</div>
                 <div>{lang === 'zh' ? '主体占比' : 'subject bounds'} {referenceReport.subjectBounds ? `${Math.round((referenceReport.subjectBounds.right - referenceReport.subjectBounds.left) * 100)}% × ${Math.round((referenceReport.subjectBounds.bottom - referenceReport.subjectBounds.top) * 100)}%` : '-'} · {lang === 'zh' ? '对称度' : 'symmetry'} {referenceReport.symmetry == null ? '-' : `${Math.round(referenceReport.symmetry * 100)}%`} · {lang === 'zh' ? '轮廓匹配' : 'silhouette match'} {referenceReport.silhouetteScore == null ? '-' : `${Math.round(referenceReport.silhouetteScore * 100)}%`}</div>
@@ -888,6 +937,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
           <div className="flex-1 relative">
             <ThreeViewport
               structure={structure}
+                backgroundColor={viewportBackground}
+                onBackgroundColorChange={changeViewportBackground}
               minY={minY}
               maxY={maxY}
               wireframe={wireframe}

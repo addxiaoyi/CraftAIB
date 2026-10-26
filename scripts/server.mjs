@@ -2,10 +2,11 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, createVerify, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { fitStructurePlanToEnvelope, planBuildingWithModel, structurePlanToGrid, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
+import { renderVoxelReview } from './lib/voxel-preview.mjs';
+import { fitStructurePlanToEnvelope, planBuildingWithModel, structurePlanToGrid, summarizeInteriorVoxelization, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
 
 const root = resolve(process.env.CRAFTAIB_PUBLIC_DIR || 'dist');
 const maxBodyBytes = 8 * 1024 * 1024;
@@ -72,9 +73,34 @@ function serviceConfig() {
   const timeoutMs = Number(process.env.CRAFTAIB_MODEL_TIMEOUT_MS || process.env.CRAFTAIB_TEXT_TIMEOUT_MS);
   const retries = Number(process.env.CRAFTAIB_MODEL_MAX_RETRIES || process.env.CRAFTAIB_TEXT_MAX_RETRIES);
   return { endpoint, apiKey, model,
-    timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, Math.floor(timeoutMs))) : 30000,
+    timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(300000, Math.floor(timeoutMs))) : 30000,
     retries: Number.isFinite(retries) ? Math.max(0, Math.min(5, Math.floor(retries))) : 1,
   };
+}
+
+function ensureLanternCore(plan, prompt) {
+  const isLantern = /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(`${prompt} ${plan.type} ${plan.name}`);
+  if (!isLantern) return plan;
+  const chamber = plan.regions.find((region) => /chamber|interior|lantern.?body|灯笼内腔/i.test(`${region.name} ${region.role}`))
+    ?? plan.regions.filter((region) => !/roof|spire|dome|battlement|apron|crown|tassel/i.test(`${region.name} ${region.role}`)).sort((a, b) => b.width * b.height * b.length - a.width * a.height * a.length)[0];
+  const coreRegion = chamber && chamber.width >= 3 && chamber.height >= 3 && chamber.length >= 3
+    ? chamber
+    : { x: 0, y: 0, z: 0, ...plan.dimensions };
+  const parts = [...(plan.geometry?.parts ?? [])];
+  const hasSeaLantern = parts.some((part) => part.material === 'minecraft:sea_lantern'
+    && part.x > coreRegion.x && part.x < coreRegion.x + coreRegion.width - 1
+    && part.y > coreRegion.y && part.y < coreRegion.y + coreRegion.height - 1
+    && part.z > coreRegion.z && part.z < coreRegion.z + coreRegion.length - 1);
+  if (hasSeaLantern) return plan;
+  parts.push({
+    id: 'server-lantern-light-core', type: 'box',
+    x: coreRegion.x + Math.floor(coreRegion.width / 2),
+    y: coreRegion.y + Math.floor(coreRegion.height / 2),
+    z: coreRegion.z + Math.floor(coreRegion.length / 2),
+    width: 1, height: 1, length: 1, material: 'minecraft:sea_lantern',
+    hollow: false, thickness: 1, facing: null, openSides: [], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'lighting',
+  });
+  return { ...plan, geometry: { parts } };
 }
 
 function sendJson(response, status, body) {
@@ -87,6 +113,7 @@ function allowPlanRequest(request, response) {
   const now = Date.now();
   const current = planRateBuckets.get(address);
   if (!current || now - current.startedAt >= planRateWindowMs) {
+    for (const [key, bucket] of planRateBuckets) if (now - bucket.startedAt >= planRateWindowMs) planRateBuckets.delete(key);
     planRateBuckets.set(address, { startedAt: now, count: 1 });
     return true;
   }
@@ -118,10 +145,12 @@ async function oidcAdminAuthorized(request) {
   try {
     const header = decodeJwtPart(parts[0]);
     const payload = decodeJwtPart(parts[1]);
-    if (payload.iss !== issuer || (payload.exp && payload.exp <= Math.floor(Date.now() / 1000))) return false;
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.iss !== issuer || !Number.isFinite(payload.exp) || payload.exp <= now) return false;
+    if (payload.nbf !== undefined && (!Number.isFinite(payload.nbf) || payload.nbf > now)) return false;
     const audience = process.env.CRAFTAIB_OIDC_AUDIENCE?.trim();
     const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    if (audience && !audiences.includes(audience)) return false;
+    if (!audience || !audiences.includes(audience)) return false;
     const jwksUrl = process.env.CRAFTAIB_OIDC_JWKS_URL?.trim();
     if (!jwksUrl || !header.kid || header.alg !== 'RS256') return false;
     const jwksResponse = await fetch(jwksUrl, { signal: AbortSignal.timeout(5000) });
@@ -143,7 +172,7 @@ async function configAdminAuthorized(request) {
   const oidcResult = await oidcAdminAuthorized(request);
   if (oidcResult !== null) return oidcResult;
   const required = process.env.CRAFTAIB_ADMIN_TOKEN?.trim();
-  if (!required) return true;
+  if (!required) return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress);
   const supplied = readBearer(request);
   const expected = Buffer.from(required);
   const actual = Buffer.from(supplied);
@@ -152,8 +181,11 @@ async function configAdminAuthorized(request) {
 
 function originAllowed(request) {
   const allowed = process.env.CRAFTAIB_ALLOWED_ORIGIN?.trim();
-  if (!allowed) return true;
-  return request.headers.origin === allowed || request.headers.referer?.startsWith(`${allowed}/`);
+  const expected = allowed || `${request.socket.encrypted ? 'https' : 'http'}://${request.headers.host}`;
+  if (request.headers.origin) return request.headers.origin === expected;
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false;
+  if (!request.headers.referer) return true;
+  try { return new URL(request.headers.referer).origin === new URL(expected).origin; } catch { return false; }
 }
 
 function validEndpoint(value) {
@@ -174,7 +206,7 @@ async function saveModelConfig(input) {
   values.CRAFTAIB_MODEL_API_URL = validEndpoint(String(shared.endpoint ?? '').trim());
   values.CRAFTAIB_MODEL = String(shared.model ?? '').trim().slice(0, 160);
   if (shared.apiKey) values.CRAFTAIB_MODEL_API_KEY = String(shared.apiKey).trim();
-  values.CRAFTAIB_MODEL_TIMEOUT_MS = String(Math.max(1000, Math.min(120000, Number(shared.timeoutMs) || 30000)));
+  values.CRAFTAIB_MODEL_TIMEOUT_MS = String(Math.max(1000, Math.min(300000, Number(shared.timeoutMs) || 30000)));
   values.CRAFTAIB_MODEL_MAX_RETRIES = String(Math.max(0, Math.min(5, Number(shared.retries) || 0)));
   const vision = input?.vision ?? {};
   if (vision.endpoint || vision.model || vision.apiKey) {
@@ -233,11 +265,13 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/config') {
     if (!originAllowed(request)) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Request origin is not allowed.' } });
+    if (process.env.CRAFTAIB_OIDC_ISSUER?.trim() && !readBearer(request)) return sendJson(response, 401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Administrator sign-in is required.' } });
     if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
     try {
       await saveModelConfig(await readJson(request));
       const text = serviceConfig();
       const vision = serviceConfig();
+      await appendFile(resolve('config-audit.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), action: 'model_config_updated', model: text?.model ?? null, timeoutMs: text?.timeoutMs ?? null, peer: request.socket.remoteAddress, auth: process.env.CRAFTAIB_OIDC_ISSUER ? 'oidc' : 'local' })}\n`, 'utf8');
       sendJson(response, 200, { ok: true, text: Boolean(text), vision: Boolean(vision), textModel: text?.model ?? null, visionModel: vision?.model ?? null });
     } catch (error) {
       sendJson(response, Number(error?.statusCode) || 400, { ok: false, error: { code: 'CONFIG_INVALID', message: error instanceof Error ? error.message : 'Model configuration is invalid.' } });
@@ -246,6 +280,7 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/ai/test-connection') {
     if (!originAllowed(request)) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Request origin is not allowed.' } });
+    if (process.env.CRAFTAIB_OIDC_ISSUER?.trim() && !readBearer(request)) return sendJson(response, 401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Administrator sign-in is required.' } });
     if (!(await configAdminAuthorized(request))) return sendJson(response, 403, { ok: false, error: { code: 'FORBIDDEN', message: 'Administrator authorization is required.' } });
     try {
       const input = await readJson(request);
@@ -254,7 +289,7 @@ const server = createServer(async (request, response) => {
         endpoint: validEndpoint(String(draft.endpoint ?? '').trim()),
         apiKey: String(draft.apiKey ?? '').trim(),
         model: String(draft.model ?? '').trim(),
-        timeoutMs: Math.max(1000, Math.min(120000, Number(draft.timeoutMs) || 30000)),
+        timeoutMs: Math.max(1000, Math.min(300000, Number(draft.timeoutMs) || 30000)),
         retries: 0,
       } : serviceConfig();
       if (!config?.endpoint || !config.model) return sendJson(response, 503, { ok: false, error: { code: 'MODEL_NOT_CONFIGURED', message: 'Enter an endpoint and model name before testing the connection.' } });
@@ -264,12 +299,39 @@ const server = createServer(async (request, response) => {
       const probeMessage = visionProbe
         ? [{ role: 'user', content: [{ type: 'text', text: 'Identify the image as a single word: pixel.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' } }] }]
         : [{ role: 'user', content: 'Reply with OK.' }];
-      const responseFromModel = await fetch(config.endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ model: config.model, messages: probeMessage }),
-        signal: AbortSignal.timeout(config.timeoutMs),
+      const probeTool = {
+        type: 'function',
+        function: {
+          name: 'craftaib_probe',
+          description: 'Connectivity probe for CraftAIB construction tool calling.',
+          parameters: { type: 'object', additionalProperties: false, properties: { ready: { type: 'boolean' } } },
+        },
+      };
+      const probeText = visionProbe
+        ? 'Call craftaib_probe with {"ready":true} to confirm tool calling, then identify this image as one word.'
+        : 'Call craftaib_probe with {"ready":true} to confirm tool calling.';
+      const probeMessages = visionProbe
+        ? [{ role: 'user', content: [{ type: 'text', text: probeText }, { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' } }] }]
+        : [{ role: 'user', content: probeText }];
+      const probeBody = { model: config.model, temperature: 0, tools: [probeTool], tool_choice: 'auto', messages: probeMessages };
+      let responseFromModel = await fetch(config.endpoint, {
+        method: 'POST', headers, body: JSON.stringify(probeBody), signal: AbortSignal.timeout(config.timeoutMs),
       });
+      let forcedProbe = false;
+      if (responseFromModel.ok) {
+        const firstPayload = await responseFromModel.json();
+        const firstMessage = firstPayload?.choices?.[0]?.message;
+        const firstCalls = Array.isArray(firstMessage?.tool_calls) ? firstMessage.tool_calls : [];
+        if (firstCalls.some((call) => call?.function?.name === 'craftaib_probe')) {
+          return sendJson(response, 200, { ok: true, capability: visionProbe ? 'vision' : 'text', model: config.model, supportsToolCalls: true, probeMode: 'auto', message: 'Connection and tool-calling test successful.' });
+        }
+        forcedProbe = true;
+        responseFromModel = await fetch(config.endpoint, {
+          method: 'POST', headers,
+          body: JSON.stringify({ ...probeBody, tool_choice: { type: 'function', function: { name: 'craftaib_probe' } } }),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
+      }
       if (!responseFromModel.ok) {
         const providerMessage = await readProviderErrorMessage(responseFromModel);
         const credentialsRejected = [401, 403].includes(responseFromModel.status) || /no valid credentials|invalid (?:api )?key|unauthori[sz]ed|authentication failed/i.test(providerMessage);
@@ -280,7 +342,10 @@ const server = createServer(async (request, response) => {
       }
       const payload = await responseFromModel.json();
       if (!payload?.choices?.[0]?.message) return sendJson(response, 502, { ok: false, error: { code: 'INVALID_MODEL_RESPONSE', message: 'The endpoint responded, but did not return an OpenAI-compatible chat completion.' } });
-      return sendJson(response, 200, { ok: true, capability: input?.capability === 'vision' ? 'vision' : 'text', model: config.model, message: 'Connection successful.' });
+      const message = payload.choices[0].message;
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      const supportsToolCalls = toolCalls.some((call) => call?.function?.name === 'craftaib_probe');
+      return sendJson(response, 200, { ok: true, capability: visionProbe ? 'vision' : 'text', model: config.model, supportsToolCalls, probeMode: forcedProbe ? 'forced' : 'auto', finishReason: payload.choices[0].finish_reason ?? null, message: supportsToolCalls ? 'Connection and tool-calling test successful.' : 'Connection succeeded, but the model did not call the offered tool after an explicit function-call request.' });
     } catch (error) {
       const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
       return sendJson(response, isTimeout ? 504 : 502, { ok: false, error: { code: isTimeout ? 'MODEL_TIMEOUT' : 'MODEL_REQUEST_FAILED', message: isTimeout ? 'The connection test timed out. Check the provider service and timeout setting.' : 'Could not connect to the configured model endpoint. Check the URL and network access.' } });
@@ -291,6 +356,14 @@ const server = createServer(async (request, response) => {
     if (planningInFlight >= maxPlanningConcurrency) return sendJson(response, 429, { ok: false, error: { code: 'RATE_LIMITED', message: 'The planning service is busy. Retry shortly.' } });
     planningInFlight += 1;
     const clientAbortController = new AbortController();
+    const generationLog = [];
+    const streamEvents = url.searchParams.get('stream') === '1';
+    let streamStarted = false;
+    const publishPlanEvent = (event) => {
+      const entry = { at: new Date().toISOString(), ...event };
+      generationLog.push(entry);
+      if (streamStarted && !response.destroyed) response.write(`event: progress\ndata: ${JSON.stringify(entry)}\n\n`);
+    };
     const abortOnClientClose = () => { if (!response.writableEnded) clientAbortController.abort(); };
     request.once('aborted', abortOnClientClose);
     response.once('close', abortOnClientClose);
@@ -312,10 +385,18 @@ const server = createServer(async (request, response) => {
       const width = Number.isInteger(constraints.width) ? Math.max(8, Math.min(512, constraints.width)) : null;
       const height = Number.isInteger(constraints.height) ? Math.max(8, Math.min(512, constraints.height)) : null;
       const length = Number.isInteger(constraints.length) ? Math.max(8, Math.min(512, constraints.length)) : null;
+      const sizeMode = constraints.sizeMode === 'envelope' && hasImage ? 'envelope' : 'exact';
       const detailLevel = Number.isInteger(constraints.detailLevel) ? Math.max(1, Math.min(5, constraints.detailLevel)) : null;
       const includeInterior = constraints.includeInterior !== false;
+      const isLightFixture = /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(prompt);
       const interiorSpec = !includeInterior
         ? 'Exterior-only build; omit interior furnishings.'
+        : hasImage
+          ? isLightFixture
+            ? 'OBJECT reconstruction, not a habitable building. Complete the pictured fixture as a physical 3D object, preserve its visible housing, frame, panels, crown and hanging details, and place an actual minecraft:sea_lantern inside its housing cavity. Do not add rooms, floors, corridors or furniture.'
+            : 'Infer the subject category and intended function from the original image first. Complete its hidden geometry consistently with visible evidence. For buildings provide usable interior rooms, circulation, furniture and lights; for objects reconstruct their physical internals without adding habitable rooms.'
+        : isLightFixture
+          ? 'This is an OBJECT reconstruction, not a habitable building. Do not add rooms, floors, corridors, furniture or building-sized interiors. Construct the lantern housing, frame, translucent panels, cap, chain and tassels from the reference. Put one actual minecraft:sea_lantern inside the housing cavity; keep the cap and frame proportional to the image outline.'
         : detailLevel >= 4
           ? 'Create a complete, walkable and furnished interior while preserving the requested exterior. Return connected named rooms on occupied floors, corridors, partitions, floors and ceilings, stairs, door/window openings, lighting, beds, tables, chairs, storage, kitchen, bath and service rooms. Tag room, partition, circulation, furniture and lighting geometry parts. For enclosed buildings include at least two rooms and three separate furniture parts. Do not return an empty shell.'
           : 'Include a walkable room layout with connecting stairs, doors, windows and essential furnishings.';
@@ -325,30 +406,50 @@ const server = createServer(async (request, response) => {
         : '';
       const requestedSize = width && height && length
         ? hasImage
-          ? `${width} x ${height} x ${length} blocks. Preserve the image proportions and fit geometry to this target without stretching any axis independently.`
+          ? `Maximum envelope ${width} x ${height} x ${length} blocks. The image defines the proportions: choose actual dimensions at or below every envelope axis, preserve the reference proportions, and do not pad unused space.`
           : `${width} x ${height} x ${length} blocks (hard dimensions; fill the requested footprint, do not leave a compact centered build)`
         : '';
       const constraintText = [referencePriority, style, type, floors && `${floors} floors`, requestedSize, detailLevel && `detail level ${detailLevel} of 5`, interiorSpec, `Keep geometry.parts to at most 1024 parts and estimated solid block count under ${blockBudget} blocks.`].filter(Boolean).join(", ");
+      if (streamEvents) {
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+        response.flushHeaders?.();
+        streamStarted = true;
+        publishPlanEvent({ stage: 'request_ready', turn: 0, ok: true, message: hasImage ? 'Reference image and constraints are ready; starting the unified model.' : 'Constraints are ready; starting the building model.' });
+      }
       const rawPlan = await planBuildingWithModel({
         prompt: [constraintText, prompt].filter(Boolean).join('. '),
         seed: Number.isInteger(input.seed) ? input.seed : 42,
-        constraints: { type, style, floors, width, height, length, detailLevel, includeInterior },
+        constraints: { type, style, floors, width, height, length, sizeMode, detailLevel, includeInterior },
         referenceImage: hasImage ? { dataUrl: image.dataUrl, referenceFeatures: image.referenceFeatures } : undefined,
-      }, { ...config, maxRetries: config.retries, requestTimeoutMs: config.timeoutMs, signal: clientAbortController.signal });
-      const plan = !hasImage && width && height && length ? fitStructurePlanToEnvelope(rawPlan, { width, height, length }) : rawPlan;
+      }, {
+        ...config,
+        maxRetries: config.retries,
+        requestTimeoutMs: config.timeoutMs,
+        signal: clientAbortController.signal,
+        onToolEvent: publishPlanEvent,
+        renderPreview: (grid, plan) => renderVoxelReview(grid, plan.referenceFacing),
+      });
+      const sizedPlan = !hasImage && width && height && length ? fitStructurePlanToEnvelope(rawPlan, { width, height, length }) : rawPlan;
+      const plan = ensureLanternCore(sizedPlan, prompt);
       try {
         validateStructurePlan(plan);
-        const dimensionsMismatch = (width && plan.dimensions.width !== width)
-          || (height && plan.dimensions.height !== height)
-          || (length && plan.dimensions.length !== length);
-        if (dimensionsMismatch) throw new Error(hasImage
-          ? 'The visual plan dimensions do not match the requested size. Retry with a size that preserves the reference proportions, or let the image determine dimensions.'
+        const dimensionsMismatch = sizeMode === 'envelope'
+          ? (width && plan.dimensions.width > width) || (height && plan.dimensions.height > height) || (length && plan.dimensions.length > length)
+          : (width && plan.dimensions.width !== width) || (height && plan.dimensions.height !== height) || (length && plan.dimensions.length !== length);
+        if (dimensionsMismatch) throw new Error(hasImage && sizeMode === 'envelope'
+          ? 'The visual plan exceeds the selected maximum size. Keep its image proportions and fit it within the target envelope.'
+          : hasImage
+            ? 'The visual plan dimensions do not match the requested size. Retry with a size that preserves the reference proportions, or let the image determine dimensions.'
           : 'The model plan dimensions do not match the requested block dimensions.');
         let generatedBlockCount;
+        let generatedGrid;
+        let interiorAudit;
         try {
           // Geometry parts overlap heavily for shells, roofs, rooms, and facade details.
           // Measure the deduplicated BlockGrid instead of summing every part envelope.
-          generatedBlockCount = structurePlanToGrid(plan).cells.length;
+          generatedGrid = structurePlanToGrid(plan);
+          generatedBlockCount = generatedGrid.cells.length;
+          interiorAudit = summarizeInteriorVoxelization(plan, generatedGrid.cells, `${prompt} ${plan.type} ${plan.name}`);
         } catch (error) {
           if (/exceeds the .* block limit|too large/i.test(error instanceof Error ? error.message : '')) {
             throw new Error('The requested building is too large for the current generation budget. Reduce its dimensions or detail level.');
@@ -356,26 +457,50 @@ const server = createServer(async (request, response) => {
           throw error;
         }
         if (generatedBlockCount > blockBudget) throw new Error(`The requested building would place ${generatedBlockCount.toLocaleString()} blocks, above the ${blockBudget.toLocaleString()} block budget. Reduce its dimensions or detail level.`);
-        if (includeInterior && detailLevel >= 4 && !/statue|sculpture|monument/i.test(`${plan.type} ${plan.name}`)) {
-          const parts = plan.geometry?.parts ?? [];
-          const purposes = new Set(parts.map((part) => part.purpose));
-          const furnitureCount = parts.filter((part) => part.purpose === 'furniture').length;
-          const interiorRegions = (plan.regions ?? []).filter((region) => /room|barracks|guard|residential|chamber|kitchen|service|corridor|passage|hall|store|watch|keep|interior/i.test(`${region.name} ${region.role}`));
-          const hasRooms = purposes.has('room') || (plan.rooms?.length ?? 0) >= 2 || interiorRegions.length >= 2;
-          const hasCirculation = purposes.has('circulation') || interiorRegions.some((region) => /corridor|passage|stairs|connected|circulation/i.test(`${region.name} ${region.role}`));
-          const hasFurniture = furnitureCount >= 3 || (plan.components ?? []).filter((component) => /furniture|table|chair|bed|storage|lamp|kitchen|counter/i.test(`${component.id} ${component.type}`)).length >= 3 || ((plan.rooms?.length ?? 0) >= 2 && interiorRegions.length >= 2);
-          if (!hasRooms || !hasCirculation || !hasFurniture) throw new Error('The high-detail plan is missing interior rooms, circulation, or furniture. Retry with a smaller building or lower detail level.');
+        publishPlanEvent({ stage: 'grid_validation', ok: generatedBlockCount > 0, blocks: generatedBlockCount, regions: plan.regions.length, interiorBlocks: interiorAudit.occupiedBlocks, interiorLights: interiorAudit.lightBlocks, message: generatedBlockCount ? `Validated final BlockGrid; ${interiorAudit.occupiedBlocks} occupied interior voxels, ${interiorAudit.lightBlocks} interior lights.` : 'The final BlockGrid is empty.' });
+        if (generatedBlockCount === 0) throw Object.assign(new Error('The model plan produced an empty BlockGrid; no structure was generated.'), { statusCode: 422, code: 'EMPTY_BLOCK_GRID' });
+        if (includeInterior && detailLevel >= 4 && (!plan.inference?.category || ['building', 'object'].includes(plan.inference.category)) && !/statue|sculpture|monument/i.test(`${plan.type} ${plan.name}`)) {
+          const isGeneratedLightFixture = /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(`${prompt} ${plan.type} ${plan.name}`);
+          if (isGeneratedLightFixture) {
+            const regions = plan.regions ?? [];
+            const chamber = regions.find((region) => /chamber|interior|lantern.?body/i.test(`${region.name} ${region.role}`) && region.width >= 3 && region.height >= 3 && region.length >= 3)
+              ?? regions.filter((region) => region.width >= 3 && region.height >= 3 && region.length >= 3 && !/roof|spire|dome|battlement|apron|crown|tassel/i.test(`${region.name} ${region.role}`)).sort((a, b) => b.width * b.height * b.length - a.width * a.height * a.length)[0]
+              ?? { x: 0, y: 0, z: 0, ...plan.dimensions };
+            const hasInteriorLight = chamber && generatedGrid.cells.some((cell) => cell.block.id === 'minecraft:sea_lantern'
+              && cell.x > chamber.x && cell.x < chamber.x + chamber.width - 1
+              && cell.y > chamber.y && cell.y < chamber.y + chamber.height - 1
+              && cell.z > chamber.z && cell.z < chamber.z + chamber.length - 1);
+            if (!hasInteriorLight) throw new Error('The lantern is only a decorative shell. Place a minecraft:sea_lantern inside its chamber before finishing.');
+          } else if (!plan.inference?.category || plan.inference.category === 'building') {
+            const parts = plan.geometry?.parts ?? [];
+            const purposes = new Set(parts.map((part) => part.purpose));
+            const furnitureCount = parts.filter((part) => part.purpose === 'furniture').length;
+            const interiorRegions = (plan.regions ?? []).filter((region) => /room|barracks|guard|residential|chamber|kitchen|service|corridor|passage|hall|store|watch|keep|interior/i.test(`${region.name} ${region.role}`));
+            const hasRooms = purposes.has('room') || (plan.rooms?.length ?? 0) >= 2 || interiorRegions.length >= 2;
+            const hasCirculation = purposes.has('circulation') || interiorRegions.some((region) => /corridor|passage|stairs|connected|circulation/i.test(`${region.name} ${region.role}`));
+            const hasFurniture = furnitureCount >= 3 || (plan.components ?? []).filter((component) => /furniture|table|chair|bed|storage|lamp|kitchen|counter/i.test(`${component.id} ${component.type}`)).length >= 3 || ((plan.rooms?.length ?? 0) >= 2 && interiorRegions.length >= 2);
+            if (!hasRooms || !hasCirculation || !hasFurniture) throw new Error('The high-detail plan is missing interior rooms, circulation, or furniture. Retry with a smaller building or lower detail level.');
+            if (interiorAudit.occupiedBlocks < 3 || interiorAudit.lightBlocks < 1) throw new Error(`The high-detail plan only describes its interior: the voxel grid has ${interiorAudit.occupiedBlocks} interior blocks and ${interiorAudit.lightBlocks} interior lights. Place actual furnishings and lighting inside the room bounds.`);
+          }
         }
       } catch (error) {
         throw Object.assign(new Error(error instanceof Error ? error.message : 'The model returned an invalid building plan.'), { statusCode: 422, code: 'INVALID_STRUCTURE_PLAN' });
       }
-      return sendJson(response, 200, { ok: true, plan });
+      if (streamStarted) {
+        response.write(`event: result\ndata: ${JSON.stringify({ payload: { ok: true, plan }, generationLog })}\n\n`);
+        return response.end();
+      }
+      return sendJson(response, 200, { ok: true, plan, generationLog });
     } catch (error) {
       if (clientAbortController.signal.aborted || response.destroyed) return;
       const status = Number(error?.statusCode) || 502;
       const code = error?.code || (status === 422 ? 'INVALID_STRUCTURE_PLAN' : status === 502 ? 'MODEL_REQUEST_FAILED' : 'INVALID_REQUEST');
       const message = error?.message || 'The AI service could not produce a valid building plan.';
-      return sendJson(response, status, { ok: false, error: { code, message } });
+      if (streamStarted) {
+        response.write(`event: failure\ndata: ${JSON.stringify({ statusCode: status, payload: { ok: false, error: { code, message }, generationLog } })}\n\n`);
+        return response.end();
+      }
+      return sendJson(response, status, { ok: false, error: { code, message }, generationLog });
     } finally {
       request.off('aborted', abortOnClientClose);
       response.off('close', abortOnClientClose);

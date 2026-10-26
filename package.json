@@ -26,16 +26,20 @@
     "test:ui": "node scripts/architect-ui-smoke.mjs",
     "fixtures:generate": "node scripts/build-engine.mjs && node scripts/generate-fixtures.mjs && node scripts/generate-grid-fixture.mjs",
     "test:cli": "node scripts/build-engine.mjs && node scripts/cli-smoke.mjs",
-    "test:all": "npm run test:engine && npm run test:server",
+    "test:all": "npm run test:engine && npm run test:waxmapart && npm run test:server && npm run typecheck:ui",
     "test:server": "node scripts/server-smoke.mjs",
+    "test:waxmapart": "node scripts/build-engine.mjs && node scripts/waxmapart-smoke.mjs",
     "build:browser-worker": "pwsh -NoProfile -File scripts/build-browser-worker.ps1",
-    "test:browser-ai": "node scripts/ai-litematic-browser-smoke.mjs",
+    "test:browser-ai": "node scripts/ai-generation-browser-smoke.mjs",
     "test:ai-ui": "node scripts/ai-generation-browser-smoke.mjs",
     "test:architect-ui": "node scripts/architect-ui-smoke.mjs",
     "test:vision-live": "node scripts/build-engine.mjs && node scripts/vision-live-smoke.mjs",
     "test:viewer-regions": "node scripts/viewer-region-browser-smoke.mjs",
     "test:buttons": "node scripts/ui-button-smoke.mjs",
-    "test:file-actions": "node scripts/ui-file-action-smoke.mjs"
+    "test:file-actions": "node scripts/ui-file-action-smoke.mjs",
+    "setup:browser": "playwright-core install chromium --only-shell",
+    "test:browser": "node scripts/browser-suite.mjs",
+    "verify": "npm run test:all && npm run build:ui && npm run test:browser"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
@@ -45,6 +49,8 @@
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "6.1.1",
     "esbuild": "0.28.2",
+    "playwright-core": "1.63.0",
+    "pngjs": "7.0.0",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "8.3.0"

@@ -95,12 +95,12 @@ export function flattenLitematicaDocument(document: LitematicaDocument): BlockGr
     return createGrid([], { width: Math.max(1, size.x), height: Math.max(1, size.y), length: Math.max(1, size.z) }, 'craftmatic');
   }
 
-  const minX = Math.min(...entries.map((cell) => cell.x));
-  const minY = Math.min(...entries.map((cell) => cell.y));
-  const minZ = Math.min(...entries.map((cell) => cell.z));
-  const maxX = Math.max(...entries.map((cell) => cell.x));
-  const maxY = Math.max(...entries.map((cell) => cell.y));
-  const maxZ = Math.max(...entries.map((cell) => cell.z));
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const cell of entries) {
+    minX = Math.min(minX, cell.x); minY = Math.min(minY, cell.y); minZ = Math.min(minZ, cell.z);
+    maxX = Math.max(maxX, cell.x); maxY = Math.max(maxY, cell.y); maxZ = Math.max(maxZ, cell.z);
+  }
   const cells = new Map<string, BlockGrid['cells'][number]>();
   for (const cell of entries) {
     const x = cell.x - minX;

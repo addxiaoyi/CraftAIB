@@ -36,7 +36,7 @@ The canonical grid uses zero-based `xyz` coordinates, a required `minecraft:air`
 
 ## Development
 
-Requirements: Node.js 22, pnpm 11, and Git.
+Requirements: Node.js 24 or newer, pnpm 11, and Git. The server uses Node's built-in proxy support for configured upstream endpoints.
 
 ```powershell
 pnpm install --offline --ignore-scripts
@@ -96,3 +96,28 @@ Run `npm start`; its prestart step builds the shared engine and browser Worker. 
 
 
 See [`docs/frontend-api-contract.md`](docs/frontend-api-contract.md) for request/response schemas, limits, error codes, and the endpoints the frontend expects. No server-side project, materials, or export endpoints are needed.
+
+## Unified model configuration
+
+Reference-image generation uses the same multimodal model as text generation. Configure only the shared server-side endpoint, model and key:
+
+```text
+CRAFTAIB_MODEL_API_URL=https://provider.example/v1/chat/completions
+CRAFTAIB_MODEL_API_KEY=server-only-secret
+CRAFTAIB_MODEL=your-tool-capable-vision-model
+CRAFTAIB_MODEL_TIMEOUT_MS=300000
+CRAFTAIB_MODEL_MAX_RETRIES=2
+```
+
+The endpoint must support image input and chat-completions tool calls. The construction loop requires `analyze_reference_image`, `build_voxel_structure`, `inspect_voxel_structure`, `review_reference_structure`, and `finish_structure` or a revision. A reference image remains attached on every turn; the model receives executed orthographic voxel previews before it can finalize. No model-generated JavaScript is executed.
+
+The local server is available at `http://127.0.0.1:4183`. Check `GET /api/ai/status` before generating. `npm run test:vision-live` performs a real, bounded generation against the configured server and writes plans, event logs, orthographic review PNGs, Litematic/Schematic files and exact block-state round-trip reports under `outputs/vision-live`.
+
+## Verification
+
+```powershell
+npm run test:all       # engine, WaxMapArt, server and UI type checks
+npm run build:ui
+npm run test:browser   # isolated browser fixture server; no model requests
+npm run verify
+```

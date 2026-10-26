@@ -6,6 +6,7 @@
   "dependencies": {
     "@craftaib/core": "workspace:*",
     "@craftaib/cartographer-adapter": "workspace:*",
+    "@craftaib/waxmapart-adapter": "workspace:*",
     "@craftaib/craftmatic-adapter": "workspace:*",
     "@craftaib/ai-planner": "workspace:*"
   },

@@ -6,7 +6,7 @@ import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 
 const MINECRAFT_TEXTURE_BASE = 'https://assets.mcasset.cloud/1.21.4/assets/minecraft/textures/block/';
-const MAX_PREVIEW_BLOCKS = 240_000;
+const MAX_PREVIEW_BLOCKS = 500_000;
 
 function textureUrlForBlock(blockId: string): string {
   const name = blockId.replace(/^minecraft:/, '');
@@ -74,6 +74,8 @@ interface ThreeViewportProps {
   className?: string;
   onToggleFullscreen?: () => void;
   isFullscreen?: boolean;
+  backgroundColor?: string;
+  onBackgroundColorChange?: (color: string) => void;
 }
 
 export const ThreeViewport: React.FC<ThreeViewportProps> = ({
@@ -88,6 +90,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   className = '',
   onToggleFullscreen,
   isFullscreen = false,
+  backgroundColor = '#090a0f',
+  onBackgroundColorChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -95,6 +99,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const instancedMeshesRef = useRef<THREE.InstancedMesh[]>([]);
+  const hoverOutlineRef = useRef<THREE.LineSegments | null>(null);
   const boundingBoxesGroupRef = useRef<THREE.Group | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
 
@@ -110,8 +115,27 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   } | null>(null);
 
   const [hoveredBlock, setHoveredBlock] = useState<VoxelBlock | null>(null);
+  const [isInspectingBlock, setIsInspectingBlock] = useState(false);
   const [fps, setFps] = useState<number>(60);
   const [activeCameraView, setActiveCameraView] = useState<'iso' | 'top' | 'front' | 'side'>('iso');
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Alt') setIsInspectingBlock(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Alt') setIsInspectingBlock(false);
+    };
+    const onWindowBlur = () => setIsInspectingBlock(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onWindowBlur);
+    };
+  }, []);
 
   const visibleBlocks = useMemo(() => {
     return structure.blocks.filter((b: VoxelBlock) => {
@@ -149,19 +173,17 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
   const previewBlocks = useMemo(() => {
     if (visibleBlocks.length <= MAX_PREVIEW_BLOCKS) return visibleBlocks;
-    const priority = visibleBlocks.filter((block) => /stairs|door|lantern|glass|torch|bed|chest|table|bookshelf|furnace|anvil|bell|scaffolding/i.test(block.blockId));
-    const stride = Math.max(1, Math.ceil(visibleBlocks.length / Math.max(1, MAX_PREVIEW_BLOCKS - priority.length)));
-    const sampled = visibleBlocks.filter((_, index) => index % stride === 0);
-    const seen = new Set(sampled.map((block) => `${block.x},${block.y},${block.z}`));
-    for (const block of priority) {
-      if (seen.size >= MAX_PREVIEW_BLOCKS) break;
-      const key = `${block.x},${block.y},${block.z}`;
-      if (!seen.has(key)) {
-        sampled.push(block);
-        seen.add(key);
-      }
-    }
-    return sampled.slice(0, MAX_PREVIEW_BLOCKS);
+    const occupied = new Set(visibleBlocks.map((block) => `${block.x},${block.y},${block.z}`));
+    const surface = visibleBlocks.filter((block) => [
+      [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+    ].some(([dx, dy, dz]) => !occupied.has(`${block.x + dx},${block.y + dy},${block.z + dz}`)));
+    if (surface.length <= MAX_PREVIEW_BLOCKS) return surface;
+
+    const stride = Math.ceil(surface.length / MAX_PREVIEW_BLOCKS);
+    return surface.filter((block) => {
+      const hash = Math.imul(block.x + 1, 73_856_093) ^ Math.imul(block.y + 1, 19_349_663) ^ Math.imul(block.z + 1, 83_492_791);
+      return (hash >>> 0) % stride === 0;
+    }).slice(0, MAX_PREVIEW_BLOCKS);
   }, [visibleBlocks]);
 
   const colorForBlock = (blockId: string): string => {
@@ -187,16 +209,28 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
     const focus = focusForStructure(structure);
     const maxDim = focus.size;
-    const fogDensity = maxDim > 128 ? 0.0009 : 0.006;
+    const isLightBackground = backgroundColor === '#d9dde5';
 
     // Keep large structures visible across the full schematic envelope.
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#090a0f');
-    scene.fog = maxDim > 128 ? null : new THREE.FogExp2('#090a0f', fogDensity);
+    scene.background = new THREE.Color(backgroundColor);
+    // Distance fog washes out pale blocks and makes large reference builds look empty.
+    scene.fog = null;
     sceneRef.current = scene;
 
+    const outlineSource = new THREE.BoxGeometry(1.025, 1.025, 1.025);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(outlineSource),
+      new THREE.LineBasicMaterial({ color: '#34d399', depthTest: false, depthWrite: false, transparent: true, opacity: 0.98 }),
+    );
+    outlineSource.dispose();
+    outline.visible = false;
+    outline.renderOrder = 1000;
+    scene.add(outline);
+    hoverOutlineRef.current = outline;
+
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, Math.max(1200, maxDim * 6));
-    camera.position.set(focus.center.x + maxDim * 1.6, focus.center.y + maxDim * 1.35, focus.center.z + maxDim * 1.8);
+    camera.position.set(focus.center.x + maxDim * 1.3, focus.center.y + maxDim, focus.center.z + maxDim * 1.3);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -209,7 +243,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = isLightBackground ? 0.78 : 1.12;
 
     while (container.firstChild) {
       container.removeChild(container.firstChild);
@@ -226,27 +260,33 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     controlsRef.current = controls;
 
     // Architectural Studio Lighting
-    const ambientLight = new THREE.AmbientLight('#ffffff', 0.88);
+    const ambientLight = new THREE.AmbientLight('#ffffff', isLightBackground ? 0.52 : 0.88);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight('#fffcf5', 1.85);
+    const keyLight = new THREE.DirectionalLight('#fffcf5', isLightBackground ? 0.95 : 1.85);
     keyLight.position.set(focus.center.x + maxDim * 2.2, focus.center.y + maxDim * 3.2, focus.center.z + maxDim * 2.2);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight('#a1a1aa', 0.48);
+    const fillLight = new THREE.DirectionalLight('#a1a1aa', isLightBackground ? 0.2 : 0.48);
     fillLight.position.set(focus.center.x - maxDim * 2, focus.center.y + maxDim * 1.5, focus.center.z - maxDim);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight('#10b981', 0.28);
+    const rimLight = new THREE.DirectionalLight('#10b981', isLightBackground ? 0.12 : 0.28);
     rimLight.position.set(focus.center.x, focus.center.y - maxDim, focus.center.z + maxDim * 2.5);
     scene.add(rimLight);
 
     // Ground Grid with delicate subdivisions
-    const gridSize = Math.max(32, Math.ceil(maxDim / 16) * 16 * 2);
-    const gridHelper = new THREE.GridHelper(gridSize, gridSize, '#27272a', '#18181b');
+    const gridSize = Math.max(32, Math.ceil(Math.max(structure.size.x, structure.size.z) * 1.15 / 16) * 16);
+    const gridHelper = new THREE.GridHelper(gridSize, Math.min(64, gridSize), '#27272a', '#18181b');
+    const gridMaterials = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
+    gridMaterials.forEach((material) => {
+      material.transparent = true;
+      material.opacity = backgroundColor === '#d9dde5' ? 0.2 : 0.38;
+      material.depthWrite = false;
+    });
     gridHelper.position.set(structure.size.x / 2, -0.01, structure.size.z / 2);
     scene.add(gridHelper);
     gridHelperRef.current = gridHelper;
@@ -309,8 +349,21 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       resizeObserver.disconnect();
       renderer.dispose();
       controls.dispose();
+      outline.geometry.dispose();
+      (outline.material as THREE.Material).dispose();
+      hoverOutlineRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    scene.background = new THREE.Color(backgroundColor);
+    if (scene.fog instanceof THREE.FogExp2) {
+      scene.fog.color.set(backgroundColor);
+    }
+  }, [backgroundColor]);
 
   useEffect(() => {
     if (gridHelperRef.current) {
@@ -407,7 +460,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       }
       loaded.forEach(({ url, blocks, texture }) => {
         const material = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(colorForBlock(blocks[0]?.blockId ?? '')),
+          color: new THREE.Color(texture ? '#ffffff' : colorForBlock(blocks[0]?.blockId ?? '')),
           ...(texture ? { map: texture } : {}),
           roughness: 0.78,
           metalness: 0.04,
@@ -437,7 +490,19 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const mouse = useMemo(() => new THREE.Vector2(), []);
 
+  useEffect(() => {
+    const outline = hoverOutlineRef.current;
+    if (!outline) return;
+    if (!hoveredBlock || !isInspectingBlock) {
+      outline.visible = false;
+      return;
+    }
+    outline.position.set(hoveredBlock.x + 0.5, hoveredBlock.y + 0.5, hoveredBlock.z + 0.5);
+    outline.visible = true;
+  }, [hoveredBlock, isInspectingBlock]);
+
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.altKey) setIsInspectingBlock(true);
     if (!containerRef.current || !cameraRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -483,16 +548,16 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       const targetPos = new THREE.Vector3();
 
       if (view === 'iso' || view === 'reset') {
-        targetPos.set(cx + maxDim * 1.5, cy + maxDim * 1.25, cz + maxDim * 1.5);
+        targetPos.set(cx + maxDim * 1.3, cy + maxDim, cz + maxDim * 1.3);
         setActiveCameraView('iso');
       } else if (view === 'top') {
-        targetPos.set(cx, cy + maxDim * 2.2, cz + 0.01);
+        targetPos.set(cx, cy + maxDim * 2, cz + 0.01);
         setActiveCameraView('top');
       } else if (view === 'front') {
-        targetPos.set(cx, cy, cz + maxDim * 2.1);
+        targetPos.set(cx, cy, cz + maxDim * 1.8);
         setActiveCameraView('front');
       } else if (view === 'side') {
-        targetPos.set(cx + maxDim * 2.1, cy, cz);
+        targetPos.set(cx + maxDim * 1.8, cy, cz);
         setActiveCameraView('side');
       }
 
@@ -507,14 +572,19 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         active: true,
       };
     },
-    [structure]
+    [structure.blocks, structure.id, structure.size.x, structure.size.y, structure.size.z]
   );
+
+  useEffect(() => {
+    if (structure.blocks.length > 0) setCameraPreset('reset');
+  }, [structure.id, setCameraPreset]);
 
   return (
     <div
       className={`relative w-full h-full min-h-[360px] md:min-h-[420px] bg-[#090a0f] overflow-hidden select-none touch-none ${className}`}
       onPointerMove={handlePointerMove}
       onPointerDown={handlePointerDown}
+      onPointerLeave={() => setHoveredBlock(null)}
     >
       {/* 3D WebGL Canvas */}
       <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
@@ -544,6 +614,27 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
       {/* Floating Camera Viewport Control HUD (Responsive) */}
       <div className="absolute top-3 right-3 flex items-center gap-1 studio-glass p-1 rounded-lg text-xs shadow-xl transition-all z-10">
+        {onBackgroundColorChange && (
+          <div className="flex items-center gap-0.5 px-1" aria-label="Viewport background">
+            {[
+              ['#090a0f', 'Dark'],
+              ['#263244', 'Slate'],
+              ['#71717a', 'Gray'],
+              ['#d9dde5', 'Light'],
+            ].map(([color, label]) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => onBackgroundColorChange(color)}
+                title={`${label} background`}
+                aria-label={`${label} background`}
+                className={`w-3.5 h-3.5 rounded-full border transition-transform ${backgroundColor === color ? 'border-emerald-300 scale-110' : 'border-white/30 hover:scale-105'}`}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        )}
+        {onBackgroundColorChange && <div className="w-px h-3 bg-white/10 mx-0.5" />}
         {(['iso', 'top', 'front', 'side'] as const).map((view) => (
           <button
             key={view}
@@ -577,7 +668,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       </div>
 
       {/* Floating Voxel Property Card */}
-      {hoveredBlock && (
+      {hoveredBlock && isInspectingBlock && (
         <div className="absolute bottom-3 left-3 studio-glass px-3 py-2 rounded-lg flex items-center gap-2.5 pointer-events-none border border-emerald-500/30 animate-fade-in shadow-2xl max-w-[calc(100%-24px)] z-10">
           <div
             className="w-3.5 h-3.5 rounded-sm border border-white/20 shrink-0 shadow-sm"

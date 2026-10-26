@@ -15,3 +15,5 @@ current-ui.png
 packages/**/dist/
 dist/
 frontend/public/engine-worker.js
+
+config-audit.jsonl

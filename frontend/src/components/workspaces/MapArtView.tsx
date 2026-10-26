@@ -1,12 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { StructureData, VoxelBlock } from '../../types/minecraft';
-import { applyMapArtStaircase, DitherAlgorithm } from '../../utils/dithering';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { StructureData } from '../../types/minecraft';
+import type { DitherAlgorithm } from '../../utils/dithering';
 import { BLOCK_REGISTRY } from '../../utils/blockRegistry';
 import { gridToStructure, runEngineTask } from '../../integrations/engine';
 import { useEngineCommit } from '../../hooks/useEngineCommit';
 import { tr } from '../../i18n';
 import {
-  Map,
   Upload,
   Sparkles,
   TrendingUp,
@@ -19,6 +18,37 @@ interface MapArtViewProps {
   lang: 'zh' | 'en';
 }
 
+type MapArtEngine = 'cartographer' | 'waxmapart';
+type WaxComparison = 'rgb' | 'cie76' | 'cie94' | 'cie2000' | 'cmc' | 'delta-e-itp';
+type MapArtGrid = {
+  width: number;
+  height: number;
+  length: number;
+  cells: Array<{ x: number; y: number; z: number; block: { id: string; properties?: Record<string, string> } }>;
+  metadata?: { mapArt?: { materials?: Array<{ block: string; count: number }> } };
+};
+
+const DYE_MAP_COLOR_IDS: Record<string, number> = {
+  white: 8, orange: 15, magenta: 16, light_blue: 17, yellow: 18, lime: 19, pink: 20,
+  gray: 21, light_gray: 22, cyan: 23, purple: 24, blue: 25, brown: 26, green: 27, red: 28, black: 29,
+};
+
+function mapColorIdForBlock(blockId: string): number {
+  const name = blockId.replace(/^minecraft:/, '');
+  const dye = name.match(/^(white|orange|magenta|light_blue|yellow|lime|pink|gray|light_gray|cyan|purple|blue|brown|green|red|black)_(?:concrete|terracotta|wool)$/)?.[1];
+  if (dye) return DYE_MAP_COLOR_IDS[dye];
+  if (/sand|sandstone/.test(name)) return 2;
+  if (/dirt|mud|podzol|rooted_dirt/.test(name)) return 10;
+  if (/stone|deepslate|tuff|ore|cobble|andesite|diorite|granite/.test(name)) return 11;
+  if (/oak|spruce|birch|jungle|acacia|dark_oak|mangrove|cherry|bamboo|crimson|warped|planks|log|wood/.test(name)) return 13;
+  if (/quartz|calcite|diorite/.test(name)) return 14;
+  if (/ice|snow/.test(name)) return 5;
+  if (/water|prismarine|kelp/.test(name)) return 12;
+  if (/leaves|sapling|flower|grass|vine|moss|plant/.test(name)) return 7;
+  if (/iron|gold|copper|diamond|emerald|netherite|chain|anvil/.test(name)) return 6;
+  return 3;
+}
+
 export const MapArtView: React.FC<MapArtViewProps> = ({
   onLoadStructure,
   lang,
@@ -27,10 +57,16 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
   const [mapSize, setMapSize] = useState<number>(128);
   const [mode, setMode] = useState<'staircase' | 'flat'>('staircase');
   const [algorithm, setAlgorithm] = useState<DitherAlgorithm>('floyd-steinberg');
+  const [mapEngine, setMapEngine] = useState<MapArtEngine>('cartographer');
+  const [comparison, setComparison] = useState<WaxComparison>('cie76');
   const [survivalMaterialsOnly, setSurvivalMaterialsOnly] = useState<boolean>(true);
   const [pixelsCount, setPixelsCount] = useState<number>(128 * 128);
+  const [previewGrid, setPreviewGrid] = useState<MapArtGrid | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const engine = useEngineCommit();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewControllerRef = useRef<AbortController | null>(null);
 
   const base = {
     en: {
@@ -66,7 +102,7 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
   }[lang];
   const t = lang === 'zh' ? { ...base, title: tr(lang).pages.mapArt, subtitle: '将图片转换为带阶梯高度的 Minecraft 地图画。', uploadMapImage: '图片来源', staircaseMode: '3D 阶梯', flatMode: '平面模式', mapSizeLabel: '地图尺寸', materialsFilter: '仅使用生存材料', materialsDesc: '排除基岩、屏障和命令方块。', generateStructure: '生成地图画结构', staircaseTitle: '3D 阶梯阴影', flatTitle: '单平面表面' } : base;
 
-  const getMapPalette = () => {
+  const paletteIds = useMemo(() => {
     const all = Object.keys(BLOCK_REGISTRY);
     if (survivalMaterialsOnly) {
       return all.filter(
@@ -81,49 +117,92 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
       );
     }
     return all;
-  };
+  }, [survivalMaterialsOnly]);
 
-  const processMap = () => {
-    if (!imageSrc) return;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = imageSrc;
-
-    img.onload = () => {
-      const offscreen = document.createElement('canvas');
-      offscreen.width = mapSize;
-      offscreen.height = mapSize;
-      const ctx = offscreen.getContext('2d');
-      if (!ctx) return;
-
-      ctx.drawImage(img, 0, 0, mapSize, mapSize);
-      const imgData = ctx.getImageData(0, 0, mapSize, mapSize);
-
-      const palette = getMapPalette();
-      const { pixels } = applyMapArtStaircase(imgData, palette, algorithm);
-      setPixelsCount(pixels.length);
-
-      if (canvasRef.current) {
-        const preview = canvasRef.current;
-        preview.width = mapSize * 3;
-        preview.height = mapSize * 3;
-        const pCtx = preview.getContext('2d');
-        if (pCtx) {
-          pCtx.imageSmoothingEnabled = false;
-          pCtx.clearRect(0, 0, preview.width, preview.height);
-
-          for (const p of pixels) {
-            pCtx.fillStyle = p.block.color;
-            pCtx.fillRect(p.x * 3, p.y * 3, 3, 3);
-          }
-        }
-      }
-    };
-  };
+  const workerPalette = useMemo(() => paletteIds.map((id) => ({
+    block: { id },
+    color: { r: BLOCK_REGISTRY[id].rgb[0], g: BLOCK_REGISTRY[id].rgb[1], b: BLOCK_REGISTRY[id].rgb[2] },
+    colorId: BLOCK_REGISTRY[id].mapColorId ?? mapColorIdForBlock(id),
+    needSupport: Boolean((BLOCK_REGISTRY[id] as any).requiresSupport),
+  })), [paletteIds]);
 
   useEffect(() => {
-    processMap();
-  }, [imageSrc, mapSize, mode, algorithm, survivalMaterialsOnly]);
+    previewControllerRef.current?.abort();
+    setPreviewGrid(null);
+    if (!imageSrc) return;
+    const controller = new AbortController();
+    previewControllerRef.current = controller;
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      void (async () => {
+        setPreviewLoading(true);
+        setPreviewError(null);
+        try {
+          const source = document.createElement('canvas');
+          source.width = mapSize;
+          source.height = mapSize;
+          const context = source.getContext('2d');
+          if (!context) throw new Error('Unable to create the Map Art preview canvas.');
+          context.drawImage(image, 0, 0, mapSize, mapSize);
+          const imageData = context.getImageData(0, 0, mapSize, mapSize);
+          const pixelMap = {
+            width: mapSize,
+            height: mapSize,
+            paletteId: `craftaib-map-art-${mapEngine}`,
+            pixels: Array.from(imageData.data).reduce<Array<{ r: number; g: number; b: number; a: number }>>((list, value, index, values) => {
+              if (index % 4 === 0) list.push({ r: value, g: values[index + 1], b: values[index + 2], a: values[index + 3] });
+              return list;
+            }, []),
+          };
+          const grid = await runEngineTask<MapArtGrid>('map-art.generate', pixelMap, {
+            engine: mapEngine,
+            palette: workerPalette,
+            mode,
+            algorithm,
+            comparison,
+            staircasing: mode === 'flat' ? 'none' : 'baseline',
+            dither: algorithm !== 'nearest',
+            supportBlock: { id: 'minecraft:stone' },
+          }, controller.signal);
+          if (cancelled) return;
+          setPreviewGrid(grid);
+          const previewCells = new Map<string, MapArtGrid['cells'][number]>();
+          for (const cell of grid.cells) {
+            if (cell.z < 1) continue;
+            const key = `${cell.x},${cell.z}`;
+            const current = previewCells.get(key);
+            if (!current || cell.y >= current.y) previewCells.set(key, cell);
+          }
+          setPixelsCount(previewCells.size);
+          const preview = canvasRef.current;
+          const previewContext = preview?.getContext('2d');
+          if (!preview || !previewContext) return;
+          preview.width = mapSize * 3;
+          preview.height = mapSize * 3;
+          previewContext.imageSmoothingEnabled = false;
+          previewContext.clearRect(0, 0, preview.width, preview.height);
+          for (const cell of previewCells.values()) {
+            previewContext.fillStyle = BLOCK_REGISTRY[cell.block.id]?.color ?? '#71717a';
+            previewContext.fillRect(cell.x * 3, (cell.z - 1) * 3, 3, 3);
+          }
+        } catch (error) {
+          if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) setPreviewError(error instanceof Error ? error.message : 'Map Art preview failed.');
+        } finally {
+          if (!cancelled) setPreviewLoading(false);
+        }
+      })();
+    };
+    image.onerror = () => { if (!cancelled) { setPreviewError('The selected image could not be decoded.'); setPreviewLoading(false); } };
+    image.src = imageSrc;
+    return () => {
+      cancelled = true;
+      controller.abort();
+      image.onload = null;
+      image.onerror = null;
+    };
+  }, [imageSrc, mapSize, mode, algorithm, comparison, mapEngine, workerPalette]);
 
   useEffect(() => {
     const demo = document.createElement('canvas');
@@ -158,98 +237,19 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleGenerateStructure = () => {
-    if (!imageSrc) return;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = imageSrc;
-
-    img.onload = async () => {
-      const offscreen = document.createElement('canvas');
-      offscreen.width = mapSize;
-      offscreen.height = mapSize;
-      const ctx = offscreen.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0, mapSize, mapSize);
-      const imgData = ctx.getImageData(0, 0, mapSize, mapSize);
-
-      const palette = getMapPalette();
-      const { pixels } = applyMapArtStaircase(imgData, palette, algorithm);
-
-      const pixelMap = {
-        width: mapSize,
-        height: mapSize,
-        paletteId: 'craftaib-map-art',
-        pixels: Array.from(imgData.data).reduce<Array<{ r: number; g: number; b: number; a: number }>>((list, value, index, values) => {
-          if (index % 4 === 0) list.push({ r: value, g: values[index + 1], b: values[index + 2], a: values[index + 3] });
-          return list;
-        }, []),
-      };
-      const workerPalette = palette.map((id) => ({ block: { id }, color: { r: BLOCK_REGISTRY[id].rgb[0], g: BLOCK_REGISTRY[id].rgb[1], b: BLOCK_REGISTRY[id].rgb[2] } }));
-      const grid = await engine.run(async (signal, report) => runEngineTask<any>('map-art.generate', pixelMap, {
-          palette: workerPalette,
-          staircasing: mode === 'flat' ? 'none' : 'baseline',
-          dither: algorithm !== 'nearest',
-        }, signal, (_value, stage) => report(stage)));
-      if (grid) onLoadStructure(gridToStructure(grid, { name: `Map Art (${mapSize}x${mapSize})`, description: 'Generated through the Cartographer map-art worker.' }));
-      return;
-
-      const blocks: VoxelBlock[] = [];
-      let maxY = 0;
-
-      if (mode === 'staircase') {
-        for (const p of pixels) {
-          const y = p.height || 10;
-          if (y > maxY) maxY = y;
-          blocks.push({
-            x: p.x,
-            y: y,
-            z: p.y,
-            blockId: p.block.id,
-          });
-        }
-      } else {
-        for (const p of pixels) {
-          blocks.push({
-            x: p.x,
-            y: 0,
-            z: p.y,
-            blockId: p.block.id,
-          });
-        }
-        maxY = 1;
-      }
-
-      const struct: StructureData = {
-        id: 'mapart_' + Date.now(),
-        name: `Map Art (${mapSize}×${mapSize})`,
-        description: `Map Art generated using ${mode === 'staircase' ? '3D Staircase' : 'Flat'} algorithm.`,
-        author: 'BlockCraft Map Art Studio',
-        version: '1.20.4',
-        size: {
-          x: mapSize,
-          y: Math.max(maxY + 2, 4),
-          z: mapSize,
-        },
-        regions: [
-          {
-            id: 'reg_map',
-            name: 'Map Art Region',
-            bounds: {
-              min: [0, 0, 0],
-              max: [mapSize, Math.max(maxY + 2, 4), mapSize],
-            },
-            locked: false,
-            visible: true,
-            color: '#10B981',
-          },
-        ],
-        blocks,
-      };
-
-      onLoadStructure(struct);
-    };
+  const handleGenerateStructure = async () => {
+    if (!previewGrid || previewLoading) return;
+    const grid = await engine.run(async (_signal, report) => {
+      report(`Committing ${previewGrid.cells.length.toLocaleString()} blocks from ${mapEngine}.`);
+      return previewGrid;
+    });
+    if (!grid) return;
+    onLoadStructure(gridToStructure(grid as any, {
+      name: `Map Art (${mapSize}x${mapSize})`,
+      description: `Generated through the ${mapEngine === 'waxmapart' ? 'WaxMapArt' : 'Cartographer'} Map Art engine.`,
+    }));
   };
+
 
   return (
     <div className="flex-1 h-full overflow-y-auto p-5 lg:p-7 space-y-6 max-w-7xl mx-auto w-full bg-[#090a0f]">
@@ -314,6 +314,17 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
           </div>
 
           <div className="space-y-1.5">
+            <span className="text-[11px] font-mono tracking-wider uppercase text-zinc-500">{lang === 'zh' ? '生成引擎' : 'Generation engine'}</span>
+            <div role="group" aria-label={lang === 'zh' ? '地图画生成引擎' : 'Map Art engine'} className="grid grid-cols-2 gap-1 rounded-md border border-white/[0.07] bg-black/20 p-1">
+              {(['cartographer', 'waxmapart'] as const).map((source) => (
+                <button key={source} type="button" data-mapart-engine={source} aria-pressed={mapEngine === source} onClick={() => { setMapEngine(source); if (source === 'cartographer' && algorithm !== 'nearest' && algorithm !== 'floyd-steinberg') setAlgorithm('floyd-steinberg'); }} className={`rounded px-2 py-1.5 text-xs transition-colors ${mapEngine === source ? 'bg-emerald-500/15 text-emerald-200' : 'text-zinc-400 hover:text-white'}`}>
+                  {source === 'cartographer' ? 'Cartographer' : 'WaxMapArt'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
             <span className="text-[11px] font-mono tracking-wider uppercase text-zinc-500">{t.mapSizeLabel}</span>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -347,10 +358,26 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
               className="w-full studio-input rounded-md px-2.5 py-1.5 text-xs bg-[#090a0f] text-white"
             >
               <option value="floyd-steinberg">Floyd-Steinberg Error Diffusion</option>
-              <option value="atkinson">Atkinson Crisp Dither</option>
+              {mapEngine === 'waxmapart' && <>
+                <option value="atkinson">Atkinson Crisp Dither</option>
+                <option value="jarvis-judice-ninke">Jarvis-Judice-Ninke</option>
+              </>}
+              {mapEngine === 'cartographer' && <option value="jarvis-judice-ninke">Jarvis-Judice-Ninke</option>}
               <option value="nearest">Nearest Neighbor Quantization</option>
             </select>
           </div>
+
+          {mapEngine === 'waxmapart' && <div className="space-y-1.5">
+            <span className="text-[11px] font-mono tracking-wider uppercase text-zinc-500">{lang === 'zh' ? '色差算法' : 'Color difference'}</span>
+            <select value={comparison} onChange={(event) => setComparison(event.target.value as WaxComparison)} className="w-full studio-input rounded-md px-2.5 py-1.5 text-xs bg-[#090a0f] text-white">
+              <option value="cie76">CIE76</option>
+              <option value="cie94">CIE94</option>
+              <option value="cie2000">CIEDE2000</option>
+              <option value="cmc">CMC l:c</option>
+              <option value="delta-e-itp">Delta E ITP</option>
+              <option value="rgb">RGB Euclidean</option>
+            </select>
+          </div>}
 
           <div className="p-3 bg-white/[0.02] rounded-md border border-white/[0.06] space-y-1">
             <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-200">
@@ -368,22 +395,23 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
           <button
             data-engine-commit="map-art"
             onClick={handleGenerateStructure}
-            disabled={engine.isRunning}
+            disabled={engine.isRunning || previewLoading || !previewGrid}
             className="w-full py-2.5 px-4 rounded-md btn-primary text-xs font-semibold flex items-center justify-center gap-2"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>{engine.isRunning ? engine.progress : t.generateStructure}</span>
+            <span>{engine.isRunning ? engine.progress : previewLoading ? (lang === 'zh' ? '正在生成预览网格...' : 'Building preview grid...') : t.generateStructure}</span>
           </button>
           {engine.isRunning && <button type="button" onClick={engine.cancel} className="w-full mt-2 py-1.5 text-xs border border-white/10 rounded text-zinc-300">Cancel</button>}
           {engine.error && <p role="alert" className="text-xs text-red-300 mt-2">{engine.error}</p>}
+          {previewError && <p role="alert" className="text-xs text-red-300 mt-2">{previewError}</p>}
         </div>
 
         {/* Right Column: High-Precision Map Frame Preview */}
         <div className="lg:col-span-7 bg-[#0e1118] border border-white/[0.07] rounded-lg p-5 flex flex-col items-center justify-center min-h-[460px]">
           <div className="w-full flex items-center justify-between pb-3 border-b border-white/[0.06] text-xs">
-            <span className="font-medium text-zinc-200">128×128 Map Frame Matrix</span>
+            <span className="font-medium text-zinc-200">{mapEngine === 'waxmapart' ? 'WaxMapArt' : 'Cartographer'} · {mode === 'staircase' ? t.staircaseTitle : t.flatTitle}</span>
             <span className="font-mono text-emerald-400 tabular-nums">
-              {mapSize} × {mapSize} ({pixelsCount.toLocaleString()} voxels)
+              {mapSize} × {mapSize} ({pixelsCount.toLocaleString()} mapped pixels)
             </span>
           </div>
 

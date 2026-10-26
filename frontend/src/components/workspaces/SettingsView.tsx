@@ -136,12 +136,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
       const draftIsPresent = Boolean(config.textEndpoint.trim() || config.textModel.trim() || config.textKey.trim());
       const body = draftIsPresent
-        ? { generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs } }
-        : { capability: 'text' };
+        ? { generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs }, capability: 'vision' }
+        : { capability: 'vision' };
       const response = await fetch('/api/ai/test-connection', { method: 'POST', headers, body: JSON.stringify(body) });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error?.message || `Connection test failed (HTTP ${response.status}).`);
-      setConfigMessage(lang === 'zh' ? `连接成功：${result.model}` : `Connection successful: ${result.model}`);
+      setConfigMessage(result.supportsToolCalls === false
+        ? (lang === 'zh' ? `图像请求已连通，但工具调用探测失败（${result.probeMode ?? 'auto'}）：${result.model}。${result.message}` : `Vision request connected, but tool-call probe failed (${result.probeMode ?? 'auto'}): ${result.model}. ${result.message}`)
+        : (lang === 'zh' ? `图像输入与工具调用均可用：${result.model}` : `Image input and tool calling are available: ${result.model}`));
     } catch (error) {
       setConfigMessage(error instanceof Error ? error.message : 'Model connection test failed.');
     } finally { setIsTestingModel(false); }
@@ -269,7 +271,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>)}
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-zinc-400">Timeout <input type="number" min="1000" max="120000" value={config.timeoutMs} onChange={(e) => setConfig((current) => ({ ...current, timeoutMs: Number(e.target.value) }))} className="studio-input ml-1 w-24 rounded px-2 py-1 text-xs" /></label>
+          <label className="text-xs text-zinc-400">Timeout <input type="number" min="1000" max="300000" value={config.timeoutMs} onChange={(e) => setConfig((current) => ({ ...current, timeoutMs: Number(e.target.value) }))} className="studio-input ml-1 w-24 rounded px-2 py-1 text-xs" /></label>
           <label className="text-xs text-zinc-400">Retries <input type="number" min="0" max="5" value={config.retries} onChange={(e) => setConfig((current) => ({ ...current, retries: Number(e.target.value) }))} className="studio-input ml-1 w-16 rounded px-2 py-1 text-xs" /></label>
           <button type="button" onClick={() => void testModelConnection()} disabled={isTestingModel} className="ml-auto px-3 py-1.5 rounded border border-white/10 text-xs text-zinc-200 disabled:opacity-50">{isTestingModel ? (lang === 'zh' ? '测试中…' : 'Testing...') : (lang === 'zh' ? '测试已保存模型连接' : 'Test saved model connection')}</button>
           <button type="button" onClick={() => void saveConfig()} className="px-3 py-1.5 btn-primary rounded text-xs">{lang === 'zh' ? '保存配置' : 'Save configuration'}</button>

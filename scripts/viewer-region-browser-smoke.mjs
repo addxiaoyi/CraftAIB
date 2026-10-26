@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { launchTestBrowser, previewUrl } from './lib/browser.mjs';
 import { resolve } from 'node:path';
-const require = createRequire(import.meta.url);
-const { chromium } = require('../node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core');
-const browser = await chromium.launch({ headless: true, executablePath: 'C:/Users/l/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe', args: ['--use-gl=swiftshader'] });
+const browser = await launchTestBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 try {
-  await page.goto(process.env.CRAFTAIB_ARCHITECT_URL || 'http://127.0.0.1:4183/?viewer-regions-smoke=1');
-  await page.locator('[data-workspace-id="projections"]').first().click();
+  await page.goto(previewUrl);
+  const projectionNav = page.locator('[data-workspace-id="projections"]').filter({ visible: true }).first();
+  if (!(await projectionNav.count())) await page.locator('[data-mobile-menu-toggle="true"]').click();
+  await page.locator('[data-workspace-id="projections"]').filter({ visible: true }).first().click();
   await page.locator('[data-active-workspace="projections"] input[type=file][accept*="litematic"]').first().setInputFiles(resolve('fixtures/ai-smoke.litematic'));
   await page.waitForFunction(() => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === 'viewer_3d', null, { timeout: 30000 });
   await page.getByRole('button', { name: /Rotate 90/ }).first().waitFor();

@@ -14,6 +14,7 @@ export type BuildingPrompt = {
     width?: number;
     height?: number;
     length?: number;
+    sizeMode?: 'exact' | 'envelope';
     detailLevel?: number;
     includeInterior?: boolean;
   };
@@ -112,8 +113,24 @@ export type StructurePlan = {
   seed: number;
   notes: string[];
   geometry?: { parts: GeometryPart[] };
-  inference?: { source: 'prompt' | 'reference-heuristic' | 'vision-model'; detectedType?: string; detectedStyle?: string; confidence?: number };
+  referenceFacing?: 'x-min' | 'x-max' | 'z-min' | 'z-max';
+  inference?: { source: 'prompt' | 'reference-heuristic' | 'vision-model'; detectedType?: string; detectedStyle?: string; confidence?: number; reasoning?: string; category?: 'object' | 'building' | 'vehicle' | 'creature' | 'landscape' | 'other' };
   referenceFeatures?: ReferenceFeatures;
+  referenceValidation?: ReferenceMatch | null;
+};
+
+export type ReferenceMatch = {
+  silhouette: number;
+  occupied: number;
+  missing: number;
+  extra: number;
+  face: 'z-min' | 'z-max' | 'x-min' | 'x-max';
+  generatedYMin?: number;
+  generatedYMax?: number;
+  referenceAspectRatio?: number;
+  generatedAspectRatio?: number;
+  referenceRows: string[];
+  generatedRows: string[];
 };
 
 const BUILDING_TYPES = ['house', 'tower', 'castle', 'dungeon', 'ship', 'cathedral', 'bridge', 'windmill', 'marketplace', 'village', 'city', 'harbor', 'palace', 'industrial'] as const;
@@ -337,14 +354,14 @@ export function attachReferenceFeatures(plan: StructurePlan, features?: Referenc
     ...plan,
     referenceFeatures: features,
     notes: [...plan.notes, 'Pixel-derived reference silhouette is retained and applied during voxelization.'],
-    inference: { ...plan.inference, source: plan.inference?.source === 'vision-model' ? 'vision-model' : 'reference-heuristic', confidence: Math.max(plan.inference?.confidence ?? 0, 0.72) },
+    inference: { ...plan.inference, source: 'vision-model', confidence: Math.max(plan.inference?.confidence ?? 0, 0.72) },
   };
 }
 
 export function analyzeReferencePixels(image: { width: number; height: number; pixels?: Uint8Array | number[] }): ReferenceFeatures {
   const pixels = image.pixels instanceof Uint8Array ? image.pixels : image.pixels ? Uint8Array.from(image.pixels) : new Uint8Array();
-  const sampleWidth = 48;
-  const sampleHeight = 48;
+  const sampleWidth = Math.max(8, Math.round(48 * Math.min(1, image.width / Math.max(1, image.height))));
+  const sampleHeight = Math.max(8, Math.round(48 * Math.min(1, image.height / Math.max(1, image.width))));
   const sample = (x: number, y: number) => {
     const sx = Math.min(image.width - 1, Math.max(0, Math.floor((x + 0.5) * image.width / sampleWidth)));
     const sy = Math.min(image.height - 1, Math.max(0, Math.floor((y + 0.5) * image.height / sampleHeight)));
@@ -354,7 +371,14 @@ export function analyzeReferencePixels(image: { width: number; height: number; p
   const border = [sample(0, 0), sample(sampleWidth - 1, 0), sample(0, sampleHeight - 1), sample(sampleWidth - 1, sampleHeight - 1)];
   const background = border.reduce((acc, color) => ({ r: acc.r + color.r / border.length, g: acc.g + color.g / border.length, b: acc.b + color.b / border.length }), { r: 0, g: 0, b: 0 });
   const distance = (color: { r: number; g: number; b: number; a: number }) => Math.sqrt((color.r - background.r) ** 2 + (color.g - background.g) ** 2 + (color.b - background.b) ** 2);
-  const mask = Array.from({ length: sampleHeight }, (_, y) => Array.from({ length: sampleWidth }, (_, x) => sample(x, y).a > 24 && distance(sample(x, y)) > 34));
+  const hasPixels = pixels.length >= image.width * image.height * 4;
+  const rawMask = Array.from({ length: sampleHeight }, (_, y) => Array.from({ length: sampleWidth }, (_, x) => {
+    const color = sample(x, y);
+    return hasPixels
+      ? color.a > 24 && (color.a < 245 || distance(color) > 34)
+      : x >= Math.round(sampleWidth * 0.18) && x < Math.round(sampleWidth * 0.82) && y >= Math.round(sampleHeight * 0.12) && y < Math.round(sampleHeight * 0.88);
+  }));
+  const mask = keepReferenceComponents(rawMask);
   const points = mask.flatMap((row, y) => row.map((filled, x) => filled ? { x, y } : null).filter(Boolean) as Array<{ x: number; y: number }>);
   if (!points.length) return { sourceWidth: image.width, sourceHeight: image.height, subjectBounds: { left: 0.08, top: 0.08, right: 0.92, bottom: 0.92 }, silhouette: Array.from({ length: 16 }, () => 0.15), towerColumns: [], windowColumns: [], floorBands: [0.25, 0.5, 0.75], symmetry: 1, depthRatio: 0.6, maskWidth: sampleWidth, maskHeight: sampleHeight, frontMask: mask.flat().map((value) => value ? 1 : 0), roofMask: mask.flat().map((value) => value ? 1 : 0), colorMask: Array.from({ length: sampleWidth * sampleHeight }, () => 0), colorPalette: [{ r: 128, g: 128, b: 128 }], depthProfile: Array.from({ length: sampleHeight }, () => 0.6) };
   const minX = Math.min(...points.map((point) => point.x));
@@ -392,8 +416,42 @@ export function analyzeReferencePixels(image: { width: number; height: number; p
   return { sourceWidth: image.width, sourceHeight: image.height, subjectBounds: { left: minX / sampleWidth, top: minY / sampleHeight, right: (maxX + 1) / sampleWidth, bottom: (maxY + 1) / sampleHeight }, silhouette, towerColumns, windowColumns, floorBands, symmetry: 1 - mirrorErrors.reduce((sum, value) => sum + value, 0) / silhouette.length, depthRatio: Math.max(0.35, Math.min(1, (maxX - minX + 1) / Math.max(1, maxY - minY + 1))), maskWidth: sampleWidth, maskHeight: sampleHeight, frontMask: mask.flat().map((value) => value ? 1 : 0), roofMask, colorMask, colorPalette, depthProfile };
 }
 
+function keepReferenceComponents(mask: boolean[][]): boolean[][] {
+  const height = mask.length;
+  const width = mask[0]?.length ?? 0;
+  const visited = new Uint8Array(width * height);
+  const components: number[][] = [];
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const start = y * width + x;
+    if (!mask[y][x] || visited[start]) continue;
+    const queue = [start];
+    const component: number[] = [];
+    visited[start] = 1;
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
+      component.push(current);
+      const cx = current % width;
+      const cy = Math.floor(current / width);
+      for (const [nx, ny] of [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]) {
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const next = ny * width + nx;
+        if (!mask[ny][nx] || visited[next]) continue;
+        visited[next] = 1;
+        queue.push(next);
+      }
+    }
+    components.push(component);
+  }
+  const largest = Math.max(0, ...components.map((component) => component.length));
+  const minimumDetailArea = Math.max(2, Math.floor(largest * 0.01));
+  const kept = new Uint8Array(width * height);
+  for (const component of components) if (component.length >= minimumDetailArea) for (const index of component) kept[index] = 1;
+  return Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => kept[y * width + x] === 1));
+}
+
 export function validateStructurePlan(plan: StructurePlan): StructurePlan {
   if (!plan || plan.version !== 1) throw new Error('Unsupported StructurePlan version.');
+  if (plan.referenceFacing != null && !['x-min', 'x-max', 'z-min', 'z-max'].includes(plan.referenceFacing)) throw new Error('StructurePlan referenceFacing must be x-min, x-max, z-min or z-max.');
   const { width, height, length } = plan.dimensions;
   for (const value of [width, height, length, plan.floors]) if (!Number.isInteger(value) || value < 1) throw new Error('StructurePlan dimensions and floors must be positive integers.');
   if ([width, height, length].some((value) => value > MAX_STRUCTURE_DIMENSION)) throw new Error(`StructurePlan dimensions cannot exceed ${MAX_STRUCTURE_DIMENSION} blocks per axis.`);
@@ -505,11 +563,6 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
 
   if (plan.geometry?.parts?.length) {
     addGeometryParts(put, putId, plan.geometry.parts, plan);
-    addVisionComponents(putId, plan);
-    return validateGrid(createGrid([...cells.values()], { width, height, length }, 'user'));
-  }
-  if (plan.inference?.source === 'vision-model' && plan.referenceFeatures?.frontMask?.length) {
-    addReferenceMaskGeometry(put, putId, plan);
     addVisionComponents(putId, plan);
     return validateGrid(createGrid([...cells.values()], { width, height, length }, 'user'));
   }
@@ -633,6 +686,95 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
   return validateGrid(createGrid([...cells.values()], { width, height, length }, 'user'));
 }
 
+export function compareReferenceFrontMask(plan: StructurePlan, cells: Array<{ x: number; y: number; z: number }>): ReferenceMatch | null {
+  const features = plan.referenceFeatures;
+  if (!features?.frontMask?.length || !features.maskWidth || !features.maskHeight) return null;
+  if (!cells.length) return { silhouette: 0, occupied: 0, missing: 1, extra: 0, face: plan.referenceFacing ?? 'z-max', referenceRows: [], generatedRows: [] };
+  const faces = [
+    { id: 'z-min' as const, cells, horizontal: 'x' as const, reverse: false },
+    { id: 'z-max' as const, cells, horizontal: 'x' as const, reverse: true },
+    { id: 'x-min' as const, cells, horizontal: 'z' as const, reverse: false },
+    { id: 'x-max' as const, cells, horizontal: 'z' as const, reverse: true },
+  ];
+  const intended = plan.referenceFacing ? faces.filter((face) => face.id === plan.referenceFacing) : faces;
+  const matches = intended.filter((face) => face.cells.length).map((face) => compareReferenceFace(plan, face.cells, face.id, face.horizontal, face.reverse));
+  return matches.sort((a, b) => b.silhouette - a.silhouette)[0]
+    ?? { silhouette: 0, occupied: 0, missing: 1, extra: 0, face: 'z-max', referenceRows: [], generatedRows: [] };
+}
+
+function compareReferenceFace(plan: StructurePlan, frontCells: Array<{ x: number; y: number; z: number }>, face: ReferenceMatch['face'], horizontal: 'x' | 'z', reverse: boolean): ReferenceMatch {
+  const features = plan.referenceFeatures!;
+  let frontMinX = Infinity, frontMinY = Infinity, frontMinZ = Infinity;
+  let frontMaxX = -Infinity, frontMaxY = -Infinity, frontMaxZ = -Infinity;
+  // Spreading large grids into Math.min/Math.max exceeds the JavaScript argument limit.
+  for (const cell of frontCells) {
+    frontMinX = Math.min(frontMinX, cell.x); frontMaxX = Math.max(frontMaxX, cell.x);
+    frontMinY = Math.min(frontMinY, cell.y); frontMaxY = Math.max(frontMaxY, cell.y);
+    frontMinZ = Math.min(frontMinZ, cell.z); frontMaxZ = Math.max(frontMaxZ, cell.z);
+  }
+  const frontWidth = horizontal === 'x' ? frontMaxX - frontMinX + 1 : frontMaxZ - frontMinZ + 1;
+  const frontHeight = frontMaxY - frontMinY + 1;
+  const bounds = features.subjectBounds;
+  const minColumn = Math.max(0, Math.floor(bounds.left * features.maskWidth));
+  const maxColumn = Math.min(features.maskWidth - 1, Math.ceil(bounds.right * features.maskWidth) - 1);
+  const minRow = Math.max(0, Math.floor(bounds.top * features.maskHeight));
+  const maxRow = Math.min(features.maskHeight - 1, Math.ceil(bounds.bottom * features.maskHeight) - 1);
+  if (maxColumn < minColumn || maxRow < minRow) return { silhouette: 0, occupied: 0, missing: 1, extra: 0, face, referenceRows: [], generatedRows: [] };
+  const targetWidth = maxColumn - minColumn + 1;
+  const targetHeight = maxRow - minRow + 1;
+  const pixelsPerBlock = Math.min(targetWidth / frontWidth, targetHeight / frontHeight);
+  const fittedWidth = frontWidth * pixelsPerBlock;
+  const fittedHeight = frontHeight * pixelsPerBlock;
+  const fittedLeft = minColumn + (targetWidth - fittedWidth) / 2;
+  const fittedTop = minRow + (targetHeight - fittedHeight) / 2;
+  const occupied = new Set<string>();
+  for (const cell of frontCells) {
+    const coordinate = horizontal === 'x' ? cell.x : cell.z;
+    const localX = reverse
+      ? (horizontal === 'x' ? frontMaxX - coordinate : frontMaxZ - coordinate) / frontWidth
+      : (coordinate - (horizontal === 'x' ? frontMinX : frontMinZ)) / frontWidth;
+    const localY = (frontMaxY - cell.y) / frontHeight;
+    const x0 = Math.max(minColumn, Math.floor(fittedLeft + localX * fittedWidth));
+    const x1 = Math.min(maxColumn, Math.ceil(fittedLeft + (localX + 1 / frontWidth) * fittedWidth) - 1);
+    const y0 = Math.max(minRow, Math.floor(fittedTop + localY * fittedHeight));
+    const y1 = Math.min(maxRow, Math.ceil(fittedTop + (localY + 1 / frontHeight) * fittedHeight) - 1);
+    for (let y = y0; y <= y1; y += 1) for (let x = x0; x <= x1; x += 1) occupied.add(`${x},${y}`);
+  }
+  let intersection = 0;
+  let referenceCount = 0;
+  let generatedCount = 0;
+  const referenceRows = Array.from({ length: features.maskHeight }, () => '');
+  const generatedRows = Array.from({ length: features.maskHeight }, () => '');
+  for (let row = 0; row < features.maskHeight; row += 1) {
+    for (let column = 0; column < features.maskWidth; column += 1) {
+      if (column < minColumn || column > maxColumn || row < minRow || row > maxRow) continue;
+      const expected = features.frontMask[row * features.maskWidth + column] === 1;
+      const actual = occupied.has(`${column},${row}`);
+      if (expected) referenceCount += 1;
+      if (actual) generatedCount += 1;
+      if (expected && actual) intersection += 1;
+      referenceRows[row] += expected ? '#' : '.';
+      generatedRows[row] += actual ? '#' : '.';
+    }
+  }
+  const union = referenceCount + generatedCount - intersection;
+  if (referenceCount === 0) return { silhouette: 0, occupied: 0, missing: 1, extra: 0, face, referenceRows: [], generatedRows: [] };
+  const assessedCells = Math.max(1, (maxColumn - minColumn + 1) * (maxRow - minRow + 1));
+  return {
+    silhouette: union ? intersection / union : 0,
+    occupied: generatedCount / Math.max(1, referenceCount),
+    missing: Math.max(0, referenceCount - intersection) / Math.max(1, referenceCount),
+    extra: Math.max(0, generatedCount - intersection) / assessedCells,
+    face,
+    generatedYMin: frontMinY,
+    generatedYMax: frontMaxY,
+    referenceAspectRatio: targetWidth / targetHeight,
+    generatedAspectRatio: frontWidth / frontHeight,
+    referenceRows: referenceRows.slice(minRow, maxRow + 1),
+    generatedRows: generatedRows.slice(minRow, maxRow + 1),
+  };
+}
+
 function addGeometryParts(
   put: (x: number, y: number, z: number, role: string, properties?: Record<string, string>) => void,
   putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void,
@@ -750,63 +892,6 @@ function resolveGeometryMaterial(value: string, plan: StructurePlan): string {
   const role = value as keyof typeof plan.palette;
   if (plan.palette?.[role]) return plan.palette[role];
   return value.includes(':') ? value : `minecraft:${value || 'stone_bricks'}`;
-}
-
-function addReferenceMaskGeometry(put: (x: number, y: number, z: number, role: string, properties?: Record<string, string>) => void, putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, plan: StructurePlan): void {
-  const features = plan.referenceFeatures;
-  if (!features?.frontMask?.length || !features.maskWidth || !features.maskHeight) return;
-  const { width, height, length } = plan.dimensions;
-  const depth = Math.max(1, Math.min(length, Math.round(length * Math.max(0.2, Math.min(1, features.depthRatio || 0.5)))));
-  for (let row = 0; row < features.maskHeight; row += 1) {
-    for (let column = 0; column < features.maskWidth; column += 1) {
-      const maskIndex = row * features.maskWidth + column;
-      if (!features.frontMask[maskIndex]) continue;
-      const x = Math.min(width - 1, Math.round(column * Math.max(0, width - 1) / Math.max(1, features.maskWidth - 1)));
-      const y = Math.min(height - 1, Math.max(0, height - 1 - Math.round(row * Math.max(0, height - 1) / Math.max(1, features.maskHeight - 1))));
-      const rowDepth = Math.max(1, Math.min(length, Math.round(depth * (features.depthProfile?.[row] ?? 1))));
-      const color = features.colorPalette?.[features.colorMask?.[maskIndex] ?? 0];
-      const role = features.roofMask?.[maskIndex] ? 'roof' : referenceColorRole(color, plan);
-      for (let z = 0; z < rowDepth; z += 1) {
-        if (z === 0 && color) putId(x, y, z, referenceBlockForColor(color));
-        else put(x, y, z, role);
-      }
-    }
-  }
-}
-
-function referenceColorRole(color: { r: number; g: number; b: number } | undefined, plan: StructurePlan): string {
-  if (!color) return 'wall';
-  const brightness = (color.r + color.g + color.b) / 3;
-  if (brightness < 55) return 'roof';
-  if (color.b > color.r * 1.25 && color.b > color.g * 1.05) return 'window';
-  if (color.r > color.g * 1.45 && color.r > color.b * 1.3) return 'accent';
-  return plan.palette.wall ? 'wall' : 'window';
-}
-
-function referenceBlockForColor(color: { r: number; g: number; b: number }): string {
-  const palette: ReadonlyArray<readonly [string, number, number, number]> = [
-    ['minecraft:white_concrete', 221, 221, 221],
-    ['minecraft:light_gray_concrete', 156, 156, 156],
-    ['minecraft:gray_concrete', 56, 56, 56],
-    ['minecraft:black_concrete', 8, 10, 15],
-    ['minecraft:red_concrete', 142, 32, 32],
-    ['minecraft:orange_concrete', 224, 97, 0],
-    ['minecraft:yellow_concrete', 240, 175, 21],
-    ['minecraft:green_concrete', 73, 91, 36],
-    ['minecraft:cyan_concrete', 21, 119, 136],
-    ['minecraft:blue_concrete', 44, 46, 143],
-    ['minecraft:purple_concrete', 100, 31, 156],
-    ['minecraft:brown_concrete', 96, 59, 30],
-    ['minecraft:stone_bricks', 122, 122, 122],
-    ['minecraft:deepslate', 80, 80, 84],
-  ] as const;
-  let best = palette[0];
-  let distance = Number.POSITIVE_INFINITY;
-  for (const candidate of palette) {
-    const next = (color.r - candidate[1]) ** 2 + (color.g - candidate[2]) ** 2 + (color.b - candidate[3]) ** 2;
-    if (next < distance) { distance = next; best = candidate; }
-  }
-  return best[0];
 }
 
 function addVisionRegions(

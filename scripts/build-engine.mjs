@@ -10,7 +10,7 @@ const tscCandidates = [
 const tsc = tscCandidates.find((candidate) => existsSync(candidate));
 if (!tsc) throw new Error('TypeScript compiler was not found. Run npm install or pnpm install.');
 const check = process.argv.includes('--check');
-const packages = ['core', 'ai-planner', 'voxelartcraft-adapter', 'cartographer-adapter', 'craftmatic-adapter', 'engine-worker', 'engine-cli'];
+const packages = ['core', 'ai-planner', 'voxelartcraft-adapter', 'cartographer-adapter', 'waxmapart-adapter', 'craftmatic-adapter', 'engine-worker', 'engine-cli'];
 const runTsc = (project, noEmit = false) => {
   const args = [tsc, '-p', project];
   if (noEmit) args.push('--noEmit');

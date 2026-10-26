@@ -1,7 +1,7 @@
 import { BLOCK_REGISTRY, findClosestBlock } from './blockRegistry';
 import { BlockMeta } from '../types/minecraft';
 
-export type DitherAlgorithm = 'nearest' | 'floyd-steinberg' | 'atkinson';
+export type DitherAlgorithm = 'nearest' | 'floyd-steinberg' | 'atkinson' | 'jarvis-judice-ninke';
 
 export interface ProcessedPixel {
   x: number;

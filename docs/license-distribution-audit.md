@@ -36,6 +36,20 @@ Required action before release: choose an explicit distribution model, replace o
 - Current use: Map Art, palette generation, Litematica serialization concepts and adapter code
 - Risk: a combined distributed work containing GPL-derived implementation may require GPLv3-compatible distribution, source offer, notices, and corresponding obligations. Keep the adapter/source boundary explicit.
 
+### WaxMapArt
+
+- Source: `https://github.com/lllggghhhaaa/WaxMapArt`
+- Notice: Apache-2.0
+- Current use: TypeScript port of the map-color table, color matching, shading, dithering and flat/staircase placement algorithms in `packages/waxmapart-adapter`.
+- Required action: retain Apache attribution and verify any separately sourced palette-data terms before distribution.
+
+### BuilderGPT
+
+- Source: `https://github.com/CyniaAI/BuilderGPT`
+- Notice: Apache-2.0; upstream marks the project paused.
+- Current use: design reference for explicit construction helpers and allowed block IDs only. No BuilderGPT code, CyniaAgents runtime, QuickJS, or generated-code execution is integrated.
+- Required action: include its Apache notice if expressive prompt text/source is copied later; re-review before distribution.
+
 ### Litematica
 
 - Reference checkout: `work/litematica-reference`

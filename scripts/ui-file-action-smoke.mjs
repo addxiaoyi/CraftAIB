@@ -1,22 +1,26 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { launchTestBrowser, previewUrl } from './lib/browser.mjs';
 import { resolve } from 'node:path';
-const require = createRequire(import.meta.url);
-const { chromium } = require('../node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core');
-const browser = await chromium.launch({ headless: true, executablePath: 'C:/Users/l/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe', args: ['--use-gl=swiftshader'] });
+const browser = await launchTestBrowser();
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
-await page.goto(process.env.CRAFTAIB_PREVIEW_URL ?? 'http://127.0.0.1:4183/');
+await page.goto(previewUrl);
 await page.locator('[data-active-workspace]').waitFor();
-const samples = ['example1.png.litematic', 'example2.png.litematic', 'example3.png.litematic', 'example4.png.litematic'];
+const navigate = async (id) => {
+  const visibleButton = page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first();
+  if (!(await visibleButton.count())) await page.locator('[data-mobile-menu-toggle="true"]').click();
+  await page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first().click();
+  await page.waitForFunction((workspace) => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === workspace, id);
+};
+const samples = ['ai-smoke.litematic', 'smoke-two-regions.litematic', 'smoke-multi-region.litematic', 'smoke.litematic'];
 const imported = [];
 for (const sample of samples) {
-  await page.locator('[data-workspace-id="projections"]').first().click();
+  await navigate('projections');
   const input = page.locator('[data-active-workspace="projections"] input[type="file"][accept*="litematic"]').first();
   await input.waitFor({ state: 'attached' });
   assert.equal(await input.count(), 1);
-  await input.setInputFiles(resolve('outputs/vision-live', sample));
+  await input.setInputFiles(resolve('fixtures', sample));
   await page.waitForFunction(() => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === 'viewer_3d');
   await page.locator('[data-region-name]').first().waitFor({ state: 'attached', timeout: 30000 });
   const regions = await page.locator('[data-region-name]').count();
@@ -29,9 +33,9 @@ for (const sample of samples) {
   assert.ok(exportedPath, `${sample} should export a Litematic`);
   imported.push({ sample, regions, exported: true });
 }
-await page.locator('[data-workspace-id="materials"]').first().click();
-await page.waitForFunction(() => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === 'materials');
-assert.ok((await page.locator('body').innerText()).match(/gray_concrete|stone|moss|材料|Material/i));
+await navigate('materials');
+assert.equal(await page.locator('[data-active-workspace="materials"]').count(), 1);
+await page.locator('[data-active-workspace="materials"] h1').waitFor({ state: 'visible' });
 await page.locator('[data-project-action="save"]').click();
 const projectInput = page.locator('input[type="file"]').last();
 await page.locator('[data-project-action="open"]').click();

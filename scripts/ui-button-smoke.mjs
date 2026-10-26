@@ -1,24 +1,30 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { chromium } = require('../node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core');
-const browser = await chromium.launch({ headless: true, executablePath: 'C:/Users/l/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe', args: ['--use-gl=swiftshader'] });
+import { launchTestBrowser, previewUrl } from './lib/browser.mjs';
+const browser = await launchTestBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
-await page.goto(process.env.CRAFTAIB_PREVIEW_URL ?? 'http://127.0.0.1:4183/');
+await page.goto(previewUrl);
 await page.locator('[data-active-workspace]').waitFor();
 const ids = ['ai_builder', 'viewer_3d', 'projections', 'materials', 'pixel_art', 'map_art', 'voxel_lab', 'geo_scene', 'lego_ldraw', 'settings'];
 const navigate = async (id) => {
-  const button = page.locator(`[data-workspace-id="${id}"]`).first();
-  if (!(await button.isVisible())) {
-    const toolbox = page.locator('[data-toolbox-toggle="true"]');
-    if (await toolbox.isVisible()) await toolbox.click();
+  const button = page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first();
+  if (!(await button.count())) {
+    await page.locator('[data-mobile-menu-toggle="true"]').click();
   }
-  await page.locator(`[data-workspace-id="${id}"]`).first().click();
+  await page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first().click();
   await page.waitForFunction((expected) => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === expected, id);
 };
 for (const id of ids) await navigate(id);
+await navigate('map_art');
+await page.locator('[data-mapart-engine="waxmapart"]').click();
+await page.waitForFunction(() => document.querySelector('[data-engine-commit="map-art"]')?.disabled === false, null, { timeout: 30000 });
+assert.equal(await page.locator('[data-mapart-engine="waxmapart"]').getAttribute('aria-pressed'), 'true');
+assert.equal(await page.locator('select').filter({ has: page.locator('option[value="cie76"]') }).count(), 1, 'WaxMapArt should expose its color difference selector');
+assert.equal(await page.locator('option[value="jarvis-judice-ninke"]').count(), 1, 'dithering menu should not duplicate Jarvis-Judice-Ninke');
+await page.locator('[data-mapart-engine="cartographer"]').click();
+await page.waitForFunction(() => document.querySelector('[data-engine-commit="map-art"]')?.disabled === false, null, { timeout: 30000 });
+assert.equal(await page.locator('[data-mapart-engine="cartographer"]').getAttribute('aria-pressed'), 'true');
 for (const task of ['map-art', 'voxel', 'geo', 'lego']) {
   const workspace = task === 'map-art' ? 'map_art' : task === 'voxel' ? 'voxel_lab' : task === 'geo' ? 'geo_scene' : 'lego_ldraw';
   await navigate(workspace);
