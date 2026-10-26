@@ -9,6 +9,9 @@ const pack = zipSync({
   'assets/minecraft/blockstates/stone.json': new TextEncoder().encode(JSON.stringify({ variants: { '': { model: 'block/stone' } } })),
   'assets/minecraft/models/block/stone.json': new TextEncoder().encode(JSON.stringify({ parent: 'block/cube_all', textures: { all: 'minecraft:block/custom_stone' } })),
   'assets/minecraft/textures/block/custom_stone.png': tinyPng,
+  'assets/minecraft/textures/block/oak_planks.png': tinyPng,
+  'assets/minecraft/textures/block/glass_pane_top.png': tinyPng,
+  'assets/minecraft/textures/block/oak_stairs.png': tinyPng,
 });
 
 const browser = await launchTestBrowser();
@@ -27,8 +30,10 @@ try {
   await page.locator('[data-lodestone-status="ready"]').waitFor({ timeout: 30000 });
   await page.locator('input[type=file][accept=".zip,application/zip"]').setInputFiles({ name: 'craftaib-smoke-pack.zip', mimeType: 'application/zip', buffer: Buffer.from(pack) });
   await page.locator('[data-lodestone-status="ready"]').waitFor({ timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: resolve('outputs/viewer-check/custom-resource-pack.png'), fullPage: false });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ customResourcePackLoaded: true, rendererReady: true, errors }, null, 2));
+  console.log(JSON.stringify({ customResourcePackLoaded: true, rendererReady: true, screenshot: 'outputs/viewer-check/custom-resource-pack.png', errors }, null, 2));
 } finally {
   await browser.close();
 }

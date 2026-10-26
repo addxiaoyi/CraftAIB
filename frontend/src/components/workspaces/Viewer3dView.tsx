@@ -54,6 +54,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [activePlacementIndex, setActivePlacementIndex] = useState(0);
   const [selectedBlock, setSelectedBlock] = useState<VoxelBlock | null>(null);
+  const [selectedFace, setSelectedFace] = useState<[number, number, number] | null>(null);
   const [nbtQuery, setNbtQuery] = useState('');
   const [nbtError, setNbtError] = useState<string | null>(null);
 
@@ -342,11 +343,12 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     <div className="flex-1 h-full relative overflow-hidden flex bg-[#090a0f]">
       {/* 3D CAD Dominant Viewport */}
       <div className="flex-1 h-full relative">
-        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} className="h-full w-full" /> : <ThreeViewport
+        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} onSelectFace={setSelectedFace} className="h-full w-full" /> : <ThreeViewport
             structure={structure}
             activeRegionId={activeRegionId}
             onSelectBlock={(b) => {
               setSelectedBlock(b);
+              setSelectedFace(null);
               if (b && window.innerWidth < 1024) setIsRightPanelOpen(true);
             }}
             minY={minY}
@@ -745,7 +747,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
                     <div className="text-xs font-semibold text-white">
                       {selectedBlockMeta?.name || selectedBlock.blockId}
                     </div>
-                    <div className="text-[10px] font-mono text-zinc-500">{selectedBlock.blockId}</div>
+                    <div className="text-[10px] font-mono text-zinc-500">{selectedBlock.blockId}{selectedFace ? ` · face ${selectedFace.join(',')}` : ''}</div>
                   </div>
                 </div>
 

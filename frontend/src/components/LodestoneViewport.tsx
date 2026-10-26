@@ -74,7 +74,7 @@ async function decodePackResources(file: File, defaults: Awaited<ReturnType<type
   return createResourcesFromPack({ assets: { ...assets, textures: scaledTextures }, atlas: { imageData, atlasSize } });
 }
 
-function pickBlock(structure: StructureData, camera: ReturnType<ThreeStructureRenderer['getCamera']>, x: number, y: number, width: number, height: number): [number, number, number] | null {
+function pickBlock(structure: StructureData, camera: ReturnType<ThreeStructureRenderer['getCamera']>, x: number, y: number, width: number, height: number): { pos: [number, number, number]; normal: [number, number, number] } | null {
   const forward = [camera.target[0] - camera.position[0], camera.target[1] - camera.position[1], camera.target[2] - camera.position[2]];
   const forwardLength = Math.hypot(...forward) || 1;
   const f = forward.map((value) => value / forwardLength);
@@ -89,16 +89,25 @@ function pickBlock(structure: StructureData, camera: ReturnType<ThreeStructureRe
   const scale = Math.tan((camera.fov * Math.PI) / 360);
   const direction = [f[0] + right[0] * nx * scale * aspect + upProjected[0] * ny * scale, f[1] + right[1] * nx * scale * aspect + upProjected[1] * ny * scale, f[2] + right[2] * nx * scale * aspect + upProjected[2] * ny * scale];
   const length = Math.hypot(...direction) || 1;
+  let previous = '';
   for (let distance = 0; distance < Math.max(structure.size.x, structure.size.y, structure.size.z) * 4; distance += 0.18) {
     const px = Math.floor(camera.position[0] + direction[0] / length * distance);
     const py = Math.floor(camera.position[1] + direction[1] / length * distance);
     const pz = Math.floor(camera.position[2] + direction[2] / length * distance);
-    if (structure.blocks.some((block) => block.x === px && block.y === py && block.z === pz && block.blockId !== 'minecraft:air')) return [px, py, pz];
+    const key = `${px},${py},${pz}`;
+    if (key === previous) continue;
+    const hit = structure.blocks.some((block) => block.x === px && block.y === py && block.z === pz && block.blockId !== 'minecraft:air');
+    if (hit) {
+      const prior = previous.split(',').map(Number);
+      const normal: [number, number, number] = prior.length === 3 ? [prior[0] - px, prior[1] - py, prior[2] - pz] : [0, 0, 0];
+      return { pos: [px, py, pz], normal };
+    }
+    previous = key;
   }
   return null;
 }
 
-export const LodestoneViewport: React.FC<{ structure: StructureData; className?: string; resourcePackFile?: File | null; onSelectBlock?: (block: StructureData['blocks'][number] | null) => void }> = ({ structure, className = '', resourcePackFile, onSelectBlock }) => {
+export const LodestoneViewport: React.FC<{ structure: StructureData; className?: string; resourcePackFile?: File | null; onSelectBlock?: (block: StructureData['blocks'][number] | null) => void; onSelectFace?: (normal: [number, number, number] | null) => void }> = ({ structure, className = '', resourcePackFile, onSelectBlock, onSelectFace }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<ThreeStructureRenderer | null>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -182,9 +191,10 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         if (event.altKey && rendererRef.current && onSelectBlock) {
           const rect = event.currentTarget.getBoundingClientRect();
           const hit = pickBlock(structure, rendererRef.current.getCamera(), event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
-          const block = hit ? structure.blocks.find((value) => value.x === hit[0] && value.y === hit[1] && value.z === hit[2]) ?? null : null;
-          if (hit) rendererRef.current.drawOutline(hit);
+          const block = hit ? structure.blocks.find((value) => value.x === hit.pos[0] && value.y === hit.pos[1] && value.z === hit.pos[2]) ?? null : null;
+          if (hit) rendererRef.current.drawOutline(hit.pos);
           setPickedBlock(block);
+          onSelectFace?.(hit?.normal ?? null);
           onSelectBlock(block);
         }
         orbit(event);
