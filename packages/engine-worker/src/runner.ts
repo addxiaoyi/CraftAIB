@@ -23,6 +23,28 @@ export function createCoreRunner(): EngineRunner {
       }
       return { chunkSize, blockCount: input.blocks.length, chunkCount: chunks.size, chunks: [...chunks.values()] };
     }
+    if (task.type === 'viewer.mesh-index') {
+      const input = task.input as { blocks: Array<{ x: number; y: number; z: number; blockId?: string }>; chunkSize?: number };
+      const chunkSize = Math.max(4, Math.min(32, Math.floor(input.chunkSize ?? 16)));
+      const occupied = new Set(input.blocks.filter((block) => block.blockId !== 'minecraft:air').map((block) => `${block.x},${block.y},${block.z}`));
+      const chunks = new Map<string, { x: number; y: number; z: number; blocks: number; faces: number }>();
+      const directions = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+      for (let index = 0; index < input.blocks.length; index += 1) {
+        if (signal.aborted) throw new Error('Task cancelled.');
+        const block = input.blocks[index];
+        if (block.blockId === 'minecraft:air') continue;
+        const chunkX = Math.floor(block.x / chunkSize);
+        const chunkY = Math.floor(block.y / chunkSize);
+        const chunkZ = Math.floor(block.z / chunkSize);
+        const key = `${chunkX},${chunkY},${chunkZ}`;
+        let chunk = chunks.get(key);
+        if (!chunk) { chunk = { x: chunkX, y: chunkY, z: chunkZ, blocks: 0, faces: 0 }; chunks.set(key, chunk); }
+        chunk.blocks += 1;
+        chunk.faces += directions.filter(([dx, dy, dz]) => !occupied.has(`${block.x + dx},${block.y + dy},${block.z + dz}`)).length;
+      }
+      const faces = [...chunks.values()].reduce((total, chunk) => total + chunk.faces, 0);
+      return { chunkSize, blockCount: occupied.size, chunkCount: chunks.size, faces, vertices: faces * 4, estimatedBytes: faces * 152, chunks: [...chunks.values()] };
+    }
     const grid = task.input as BlockGrid;
     if (task.type === 'ai.plan-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning building' }); return planBuilding(task.input as any); }
     if (task.type === 'ai.reference-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'analyzing reference image' }); const plan = planBuildingFromReference(task.input as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'generating blocks' }); return structurePlanToGrid(plan); }

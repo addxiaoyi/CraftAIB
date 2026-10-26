@@ -113,7 +113,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [status, setStatus] = useState('Loading Minecraft resource pack...');
   const [pickedBlock, setPickedBlock] = useState<StructureData['blocks'][number] | null>(null);
-  const [chunkCount, setChunkCount] = useState<number | null>(null);
+  const [meshStats, setMeshStats] = useState<{ chunkCount: number; faces: number; estimatedBytes: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,8 +125,8 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
       try {
         const defaultPack = await loadDefaultPackResources({ baseUrl: `${window.location.origin}/lodestone-default-pack/` });
         const resources = resourcePackFile ? await decodePackResources(resourcePackFile, defaultPack) : defaultPack.resources;
-        const index = await runEngineTask<{ chunkCount: number }>('viewer.chunk-index', { blocks: structure.blocks, chunkSize: 16 });
-        if (!disposed) setChunkCount(index.chunkCount);
+        const index = await runEngineTask<{ chunkCount: number; faces: number; estimatedBytes: number }>('viewer.mesh-index', { blocks: structure.blocks, chunkSize: 16 });
+        if (!disposed) setMeshStats(index);
         if (disposed) return;
         const renderer = new ThreeStructureRenderer(canvas, provider, resources, {
           chunkSize: 16,
@@ -209,6 +209,6 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         renderer.setCamera({ position });
       }}
     />
-    <div data-lodestone-status={pickedBlock ? 'block-picked' : 'ready'} className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300">{pickedBlock ? `${pickedBlock.blockId} @ ${pickedBlock.x}, ${pickedBlock.y}, ${pickedBlock.z}` : `${status}${chunkCount == null ? '' : ` · ${chunkCount} chunks`}`}</div>
+    <div data-lodestone-status={pickedBlock ? 'block-picked' : 'ready'} className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300">{pickedBlock ? `${pickedBlock.blockId} @ ${pickedBlock.x}, ${pickedBlock.y}, ${pickedBlock.z}` : `${status}${meshStats == null ? '' : ` · ${meshStats.chunkCount} chunks · ${meshStats.faces.toLocaleString()} faces`}`}</div>
   </div>;
 };

@@ -18,6 +18,7 @@ try {
   await page.locator('[data-active-workspace="viewer_3d"]').waitFor();
   await page.locator('[data-renderer-mode="native"]').click();
   await page.locator('[data-lodestone-status="ready"]').waitFor({ timeout: 30000 });
+  await page.getByText(/faces/).waitFor({ timeout: 30000 });
   await page.waitForTimeout(2500);
   await page.screenshot({ path: resolve('outputs/viewer-check/lodestone-default.png'), fullPage: false });
   assert.equal(await page.locator('[data-lodestone-status="ready"]').count(), 1);
