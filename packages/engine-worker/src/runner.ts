@@ -8,6 +8,21 @@ import { createHtmlSceneViewer, createHtmlViewer, createTexturedHtmlViewer, defa
 export type EngineRunner = (task: EngineTask, emit: (event: EngineEvent) => void, signal: AbortSignal) => Promise<unknown>;
 export function createCoreRunner(): EngineRunner {
   return async (task, emit, signal) => {
+    if (task.type === 'viewer.chunk-index') {
+      const input = task.input as { blocks: Array<{ x: number; y: number; z: number }>; chunkSize?: number };
+      const chunkSize = Math.max(4, Math.min(32, Math.floor(input.chunkSize ?? 16)));
+      const chunks = new Map<string, { x: number; y: number; z: number; blocks: number }>();
+      for (const block of input.blocks) {
+        const x = Math.floor(block.x / chunkSize);
+        const y = Math.floor(block.y / chunkSize);
+        const z = Math.floor(block.z / chunkSize);
+        const key = `${x},${y},${z}`;
+        const chunk = chunks.get(key);
+        if (chunk) chunk.blocks += 1;
+        else chunks.set(key, { x, y, z, blocks: 1 });
+      }
+      return { chunkSize, blockCount: input.blocks.length, chunkCount: chunks.size, chunks: [...chunks.values()] };
+    }
     const grid = task.input as BlockGrid;
     if (task.type === 'ai.plan-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'planning building' }); return planBuilding(task.input as any); }
     if (task.type === 'ai.reference-building') { emit({ type: 'progress', taskId: task.id, value: 0.2, stage: 'analyzing reference image' }); const plan = planBuildingFromReference(task.input as any); emit({ type: 'progress', taskId: task.id, value: 0.6, stage: 'generating blocks' }); return structurePlanToGrid(plan); }
