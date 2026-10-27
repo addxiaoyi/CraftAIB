@@ -1,18 +1,17 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { build } = require('esbuild');
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const file = (relative) => path.join(root, relative);
+import { mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { build } from 'esbuild';
+
+const outfile = resolve('packages/engine-worker/dist/browser/browser-worker.js');
+await mkdir(dirname(outfile), { recursive: true });
 await build({
-  entryPoints: [file('packages/engine-worker/src/browser-worker.ts')],
+  entryPoints: [resolve('packages/engine-worker/src/browser-worker.ts')],
   bundle: true,
   format: 'esm',
   platform: 'browser',
-  target: ['es2022'],
-  outfile: file('packages/engine-worker/dist/browser/browser-worker.js'),
-  alias: { '@craftaib/core': file('packages/core/src/index.ts') },
+  target: 'es2022',
+  outfile,
+  alias: { '@craftaib/core': resolve('packages/core/src/index.ts') },
   external: ['node:*'],
 });
-console.log('browser worker bundled');
+console.log('browser worker bundled with the host-native esbuild binary');

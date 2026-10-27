@@ -30,7 +30,7 @@
     "test:all": "npm run test:engine && npm run test:waxmapart && npm run test:server && npm run typecheck:ui",
     "test:server": "node scripts/server-smoke.mjs",
     "test:waxmapart": "node scripts/build-engine.mjs && node scripts/waxmapart-smoke.mjs",
-    "build:browser-worker": "pwsh -NoProfile -File scripts/build-browser-worker.ps1",
+    "build:browser-worker": "node scripts/build-browser-worker.mjs",
     "test:browser-ai": "node scripts/ai-generation-browser-smoke.mjs",
     "test:ai-ui": "node scripts/ai-generation-browser-smoke.mjs",
     "test:architect-ui": "node scripts/architect-ui-smoke.mjs",

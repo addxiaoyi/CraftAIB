@@ -1,0 +1,20 @@
+{
+  "name": "CraftAIB",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "remoteUser": "node",
+  "forwardPorts": [4183],
+  "portsAttributes": {
+    "4183": {
+      "label": "CraftAIB",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    }
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@11.23.0 --activate && pnpm install --frozen-lockfile --ignore-scripts && npm run build:engine && npm run build:browser-worker && npm run stage:browser-worker && npm run build:ui",
+  "postStartCommand": "npm run start:detached",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}

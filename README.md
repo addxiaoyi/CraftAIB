@@ -125,3 +125,11 @@ npm run build:ui
 npm run test:browser   # isolated browser fixture server; no model requests
 npm run verify
 ```
+
+## GitHub Codespaces
+
+This repository includes a Codespaces configuration for the complete application. Open the repository in GitHub, choose **Code → Codespaces → Create codespace on main**, and wait for the post-create build to finish. Port `4183` is forwarded automatically and the browser opens the CraftAIB workspace.
+
+For AI generation, add these as Codespaces/User Secrets before starting the server: `CRAFTAIB_MODEL_API_URL`, `CRAFTAIB_MODEL_API_KEY`, `CRAFTAIB_MODEL`, `CRAFTAIB_MODEL_TIMEOUT_MS`, and `CRAFTAIB_MODEL_MAX_RETRIES`. Secrets are injected into the Codespace environment and are not committed to GitHub. Without them, local preview, Viewer, Litematic import/export and editing still work, but AI generation is disabled.
+
+The Codespaces image uses Linux Node.js. `npm run build:browser-worker` uses the host-native esbuild package, while the PowerShell script remains available for the existing Windows workflow.
