@@ -808,6 +808,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
 
       {/* Right Dock Toggle Trigger */}
       <button
+        data-viewer-inspector-toggle="true"
         onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
         className="absolute top-3 right-3 z-30 p-1.5 rounded-md studio-glass text-zinc-300 hover:text-white transition-all shadow-xl"
         style={{

@@ -20,8 +20,8 @@ try {
   await page.locator('[data-renderer-mode="native"]').click();
   await page.locator('[data-lodestone-status="ready"]').waitFor({ timeout: 30000 });
   await page.waitForTimeout(3500);
-  const closePanel = page.getByRole('button', { name: /Close inspector|关闭属性|Hide inspector|隐藏属性/i }).first();
-  if (await closePanel.count()) await closePanel.click();
+  const closePanel = page.locator('[data-viewer-inspector-toggle="true"]');
+  if (await closePanel.count()) await closePanel.click({ force: true });
   for (const view of ['iso', 'front', 'side', 'top']) {
     await page.locator(`[data-lodestone-view="${view}"]`).click();
     await page.waitForTimeout(300);
