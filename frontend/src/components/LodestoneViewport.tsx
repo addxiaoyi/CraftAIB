@@ -115,6 +115,21 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
   const [pickedBlock, setPickedBlock] = useState<StructureData['blocks'][number] | null>(null);
   const [meshStats, setMeshStats] = useState<{ chunkCount: number; faces: number; estimatedBytes: number } | null>(null);
 
+  const setView = (view: 'iso' | 'front' | 'side' | 'top') => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const size = Math.max(structure.size.x, structure.size.y, structure.size.z, 16);
+    const center: [number, number, number] = [structure.size.x / 2, structure.size.y / 2, structure.size.z / 2];
+    const position: [number, number, number] = view === 'front'
+      ? [center[0], center[1], center[2] + size * 1.8]
+      : view === 'side'
+        ? [center[0] + size * 1.8, center[1], center[2]]
+        : view === 'top'
+          ? [center[0], center[1] + size * 2, center[2] + 0.01]
+          : [center[0] + size * 1.3, center[1] + size, center[2] + size * 1.3];
+    renderer.setCamera({ position, target: center });
+  };
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -209,6 +224,9 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         renderer.setCamera({ position });
       }}
     />
+    <div className="absolute bottom-3 right-3 flex gap-1 rounded bg-black/55 p-1 text-[10px] text-zinc-300">
+      {(['iso', 'front', 'side', 'top'] as const).map((view) => <button key={view} data-lodestone-view={view} onClick={() => setView(view)} className="rounded px-1.5 py-0.5 hover:bg-white/20">{view}</button>)}
+    </div>
     <div data-lodestone-status={pickedBlock ? 'block-picked' : 'ready'} className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300">{pickedBlock ? `${pickedBlock.blockId} @ ${pickedBlock.x}, ${pickedBlock.y}, ${pickedBlock.z}` : `${status}${meshStats == null ? '' : ` · ${meshStats.chunkCount} chunks · ${meshStats.faces.toLocaleString()} faces`}`}</div>
   </div>;
 };

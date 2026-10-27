@@ -43,7 +43,7 @@ type ReferenceImageAnalysis = {
   inferences: string[];
 };
 
-function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis): { projections: ProjectionAudit[]; interior: InteriorAudit; material: { ok: boolean; issues: string[] }; inferred: string[]; revisions: string[] } {
+export function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis): { projections: ProjectionAudit[]; interior: InteriorAudit; material: { ok: boolean; issues: string[] }; inferred: string[]; revisions: string[] } {
   const spatial = summarizeSpatialStructure(cells, plan.dimensions.width, plan.dimensions.height, plan.dimensions.length);
   const occupied = cells.filter((cell) => cell.block.id !== 'minecraft:air');
   const face = compareReferenceFrontMask(plan, cells);

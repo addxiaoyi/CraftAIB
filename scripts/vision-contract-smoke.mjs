@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzeReferencePixels, attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, planBuilding, planBuildingWithModel, referenceMaterialColorFeedback, structurePlanJsonSchema, structurePlanToGrid, summarizeInteriorVoxelization } from '../packages/ai-planner/dist/index.js';
+import { analyzeReferencePixels, attachReferenceFeatures, auditConstruction, compareReferenceFrontMask, createLitematicaPlannerInstruction, planBuilding, planBuildingWithModel, referenceMaterialColorFeedback, structurePlanJsonSchema, structurePlanToGrid, summarizeInteriorVoxelization } from '../packages/ai-planner/dist/index.js';
 import { serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
 import { parseLitematicaDocumentBytes } from '../packages/craftmatic-adapter/dist/index.js';
 import { referenceSilhouetteFeedback } from '../packages/ai-planner/dist/vision.js';
@@ -91,6 +91,11 @@ assert.equal(referenceGrid.cells.length, 12 * 18 * 10, 'the model-authored volum
 assert.ok(referenceGrid.cells.every((cell) => cell.block.id === 'minecraft:emerald_block'), 'reference pixels must not overwrite model-authored materials or fabricate other faces');
 const referenceMatch = compareReferenceFrontMask(modelGeometry, referenceGrid.cells);
 assert.ok(referenceMatch, 'the image-derived silhouette remains available as a validation signal');
+const facadePlan = { ...modelGeometry, geometry: { parts: [{ ...modelGeometry.geometry.parts[0], type: 'surface', length: 1 }] } };
+const facadeAudit = auditConstruction(facadePlan, structurePlanToGrid(facadePlan).cells, { object: 'building', category: 'building', silhouette: 'front facade', visibleParts: ['facade', 'roof'], symmetry: 'bilateral', view: 'front', depthCues: ['front plane'], topCues: ['roof edge'], negativeSpaces: ['windows'], materialRegions: ['wall'], evidence: ['front'], inferences: ['back inferred'] });
+assert.ok(facadeAudit.revisions.some((issue) => /facade-like|thin/i.test(issue)), 'surface-only structures must fail the volumetric audit');
+const hollowAudit = auditConstruction(modelGeometry, structurePlanToGrid({ ...modelGeometry, geometry: { parts: [{ ...modelGeometry.geometry.parts[0], type: 'shell', hollow: true, thickness: 1 }] } }).cells, { object: 'building', category: 'building', silhouette: 'shell', visibleParts: ['walls', 'roof'], symmetry: 'bilateral', view: 'front', depthCues: ['wall depth'], topCues: ['roof'], negativeSpaces: ['interior'], materialRegions: ['stone'], evidence: ['front'], inferences: ['interior inferred'] });
+assert.ok(hollowAudit.revisions.some((issue) => /interior/i.test(issue)), 'a hollow room label without actual interior voxels must fail the audit');
 const fittedFront = [];
 const referenceLeft = Math.floor(referenceFeatures.subjectBounds.left * referenceFeatures.maskWidth);
 const referenceRight = Math.ceil(referenceFeatures.subjectBounds.right * referenceFeatures.maskWidth);
