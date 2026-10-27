@@ -17,6 +17,7 @@
     "dev:cartographer": "pnpm --dir vendor/cartographer watch",
     "prestart": "npm run build:engine && npm run build:browser-worker && npm run stage:browser-worker && npm run build:ui",
     "start": "node scripts/server.mjs",
+    "start:detached": "node scripts/start-server-detached.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:ui": "vite --config vite.config.ts",
     "build:ui": "vite build --config vite.config.ts",
