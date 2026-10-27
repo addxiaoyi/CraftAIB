@@ -62,6 +62,8 @@ const upstream = createServer(async (request, response) => {
   const hasTools = Array.isArray(upstreamBody?.tools);
   if (hasTools) {
     const calls = upstreamBody.messages.flatMap((message) => message?.tool_calls ?? []).map((call) => call?.function?.name);
+    const isReference = upstreamBody.messages.some((message) => message?.content?.some?.((part) => part?.type === 'image_url'));
+    const projectionCalls = calls.filter((name) => name === 'inspect_projection').length;
     const hasBuild = calls.includes('build_voxel_structure');
     const hasInspect = calls.includes('inspect_voxel_structure');
     const hasFinish = calls.includes('finish_structure');
@@ -76,7 +78,11 @@ const upstream = createServer(async (request, response) => {
         ? { name: 'review_reference_structure', arguments: JSON.stringify({ buildId: 'build-3-1', matchesReference: true, mismatches: [], summary: 'The original subject and the executed voxel views agree in identity, visible components, proportions and materials.' }) }
       : !calls.includes('get_minecraft_blocks') ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
       : !hasBuild ? { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: planOverride ?? modelPlan }) }
+        : isReference && !calls.includes('build_volume_layer') ? { name: 'build_volume_layer', arguments: '{"buildId":"build-3-1"}' }
+        : isReference && projectionCalls < 4 ? { name: 'inspect_projection', arguments: JSON.stringify({ buildId: 'build-3-1', view: ['front', 'side', 'rear', 'top'][projectionCalls] }) }
+        : isReference && !calls.includes('inspect_interior') ? { name: 'inspect_interior', arguments: '{"buildId":"build-3-1"}' }
         : !hasInspect ? { name: 'inspect_voxel_structure', arguments: '{"buildId":"build-3-1"}' }
+        : isReference && !hasFinish && !calls.includes('review_reference_structure') ? { name: 'review_reference_structure', arguments: JSON.stringify({ buildId: 'build-3-1', matchesReference: true, mismatches: [], summary: 'The model-authored volume and visible components match the reference.' }) }
         : !hasFinish ? { name: 'finish_structure', arguments: '{"buildId":"build-3-1"}' }
             : null;
     if (nextCall) {

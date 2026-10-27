@@ -336,6 +336,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         symmetry: features.symmetry,
         silhouetteScore: compareReferenceSilhouette(result.structure),
         ...compareReferenceProfiles(result.structure),
+        constructionReview: (result.structure.plan as any)?.constructionReview,
       });
       setMaxY(result.structure.size.y);
       setMinY(0);
@@ -871,7 +872,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 <div className="mb-1 font-semibold text-cyan-200">{lang === 'zh' ? '参考图特征报告' : 'Reference feature report'}</div>
                 <div>{lang === 'zh' ? '图像' : 'Image'} {referenceReport.sourceWidth}×{referenceReport.sourceHeight} · {lang === 'zh' ? '层级' : 'floors'} {referenceReport.floors ?? '-'} · {lang === 'zh' ? '窗列' : 'window columns'} {referenceReport.windowColumns ?? 0} · {lang === 'zh' ? '塔楼锚点' : 'tower anchors'} {referenceReport.towerColumns ?? 0}</div>
                 <div>{lang === 'zh' ? '主体占比' : 'subject bounds'} {referenceReport.subjectBounds ? `${Math.round((referenceReport.subjectBounds.right - referenceReport.subjectBounds.left) * 100)}% × ${Math.round((referenceReport.subjectBounds.bottom - referenceReport.subjectBounds.top) * 100)}%` : '-'} · {lang === 'zh' ? '对称度' : 'symmetry'} {referenceReport.symmetry == null ? '-' : `${Math.round(referenceReport.symmetry * 100)}%`} · {lang === 'zh' ? '轮廓匹配' : 'silhouette match'} {referenceReport.silhouetteScore == null ? '-' : `${Math.round(referenceReport.silhouetteScore * 100)}%`}</div>
-                <div>{lang === 'zh' ? '正面' : 'front'} {formatScore(referenceReport.frontScore)} · {lang === 'zh' ? '侧面' : 'side'} {formatScore(referenceReport.sideScore)} · {lang === 'zh' ? '屋顶' : 'roof'} {formatScore(referenceReport.roofScore)}</div>
+                <div>{lang === 'zh' ? '参考朝向' : 'reference face'} {formatScore(referenceReport.frontScore)} · {lang === 'zh' ? '未验证侧面/屋顶不显示伪分数' : 'unverified side/top scores are omitted'}</div>
+                {referenceReport.constructionReview ? <div className="mt-1 border-t border-cyan-400/10 pt-1">
+                  <div>{lang === 'zh' ? '三维验收' : '3D acceptance'} {referenceReport.constructionReview.accepted ? 'PASS' : 'REVISE'} · {referenceReport.constructionReview.projectionAudits.map((audit) => `${audit.view}:${Math.round(audit.silhouette * 100)}%`).join(' · ')}</div>
+                  {referenceReport.constructionReview.interiorAudit ? <div>{lang === 'zh' ? '内部实际体素' : 'interior voxels'} {referenceReport.constructionReview.interiorAudit.occupiedVoxels.toLocaleString()} · {lang === 'zh' ? '光源' : 'lights'} {referenceReport.constructionReview.interiorAudit.lights} · {lang === 'zh' ? '开口' : 'openings'} {referenceReport.constructionReview.interiorAudit.openings}</div> : null}
+                  {referenceReport.constructionReview.requiredRevision?.length ? <div className="text-amber-200">{referenceReport.constructionReview.requiredRevision.join('; ')}</div> : null}
+                </div> : null}
               </div> : null}
 
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">

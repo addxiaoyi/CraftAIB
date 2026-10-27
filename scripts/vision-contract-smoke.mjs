@@ -345,6 +345,7 @@ const lanternReferenceFeatures = {
   frontMask: lanternMask,
 };
 const calledLanternTools = new Set();
+let lanternProjectionCount = 0;
 const litLantern = await planBuildingWithModel({
   prompt: '灯笼',
   constraints: { includeInterior: true, detailLevel: 4, sizeMode: 'envelope' },
@@ -363,8 +364,16 @@ const litLantern = await planBuildingWithModel({
         ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
       : !calledLanternTools.has('build_voxel_structure')
         ? { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: lanternPlan }) }
+        : !calledLanternTools.has('build_volume_layer')
+          ? { name: 'build_volume_layer', arguments: '{"buildId":"build-3-1"}' }
+        : lanternProjectionCount < 4
+          ? (lanternProjectionCount += 1, { name: 'inspect_projection', arguments: JSON.stringify({ buildId: 'build-3-1', view: ['front', 'side', 'rear', 'top'][lanternProjectionCount - 1] }) })
+        : !calledLanternTools.has('inspect_interior')
+          ? { name: 'inspect_interior', arguments: '{"buildId":"build-3-1"}' }
         : !calledLanternTools.has('inspect_voxel_structure')
           ? { name: 'inspect_voxel_structure', arguments: '{"buildId":"build-3-1"}' }
+        : !calledLanternTools.has('review_reference_structure')
+          ? { name: 'review_reference_structure', arguments: JSON.stringify({ buildId: 'build-3-1', matchesReference: true, mismatches: [], summary: 'Housing, frame, crown and hanging detail match the fixture reference.' }) }
           : { name: 'finish_structure', arguments: '{"buildId":"build-3-1"}' };
     return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `lantern-${previousCalls.length}`, type: 'function', function: nextTool }] } }] }), { status: 200 });
   },

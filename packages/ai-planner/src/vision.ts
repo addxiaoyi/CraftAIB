@@ -1,4 +1,4 @@
-import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type ReferenceFeatures, type RoomPlan, type StructurePlan, type StructureRegionPlan } from './index.js';
+import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type InteriorAudit, type ProjectionAudit, type ReferenceFeatures, type RoomPlan, type StructurePlan, type StructureRegionPlan } from './index.js';
 
 export type VisionPlannerOptions = {
   endpoint: string;
@@ -36,7 +36,34 @@ type ReferenceImageAnalysis = {
   symmetry: 'bilateral' | 'rotational' | 'asymmetric' | 'unclear';
   view: 'front' | 'three-quarter' | 'side' | 'top' | 'isometric' | 'unclear';
   depthCues: string[];
+  topCues: string[];
+  negativeSpaces: string[];
+  materialRegions: string[];
+  evidence: string[];
+  inferences: string[];
 };
+
+function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis): { projections: ProjectionAudit[]; interior: InteriorAudit; material: { ok: boolean; issues: string[] }; inferred: string[]; revisions: string[] } {
+  const spatial = summarizeSpatialStructure(cells, plan.dimensions.width, plan.dimensions.height, plan.dimensions.length);
+  const occupied = cells.filter((cell) => cell.block.id !== 'minecraft:air');
+  const face = compareReferenceFrontMask(plan, cells);
+  const occupiedY = occupied.length ? Math.max(...occupied.map((cell) => cell.y)) - Math.min(...occupied.map((cell) => cell.y)) + 1 : 0;
+  const depth = Math.min(1, spatial.occupiedSize.length / Math.max(1, plan.dimensions.length));
+  const issues: string[] = [];
+  if (occupiedY < 3 || spatial.occupiedSize.width < 3 || spatial.occupiedSize.length < 3) issues.push('The build is facade-like or too thin for a complete 3D reconstruction.');
+  if (!analysis?.inferences?.length) issues.push('Hidden geometry assumptions were not declared.');
+  const projections: ProjectionAudit[] = [
+    { view: 'front', silhouette: face?.silhouette ?? 0, missing: face?.missing ?? 1, extra: face?.extra ?? 1, depth, materials: 1, issues: face && face.silhouette >= 0.6 ? [] : ['Camera-facing silhouette is below the acceptance threshold.'] },
+    { view: 'side', silhouette: depth, missing: depth < 0.35 ? 0.65 : 0, extra: depth > 1 ? depth - 1 : 0, depth, materials: 1, issues: depth < 0.35 ? ['Side projection is too shallow.'] : [] },
+    { view: 'rear', silhouette: depth, missing: depth < 0.35 ? 0.65 : 0, extra: 0, depth, materials: 1, issues: depth < 0.35 ? ['Rear volume is not established.'] : [] },
+    { view: 'top', silhouette: Math.min(1, spatial.occupiedSize.width * spatial.occupiedSize.length / Math.max(1, plan.dimensions.width * plan.dimensions.length)), missing: 0, extra: 0, depth, materials: 1, issues: [] },
+  ];
+  const interior = summarizeInteriorVoxelization(plan, cells, `${plan.type} ${plan.name}`);
+  const interiorAudit: InteriorAudit = { occupiedVoxels: interior.occupiedBlocks, volume: interior.volume, lights: interior.lightBlocks, connectedComponents: interior.occupiedBlocks > 0 ? 1 : 0, supports: occupied.filter((cell) => cell.y === 0 || cells.some((other) => other.x === cell.x && other.y === cell.y - 1 && other.z === cell.z)).length, openings: cells.filter((cell) => /door|window|opening|pane|glass/i.test(cell.block.id)).length };
+  if (interior.volume > 0 && interior.occupiedBlocks === 0) issues.push('Interior is described but contains no actual voxels.');
+  const material = { ok: !issues.length, issues };
+  return { projections, interior: interiorAudit, material, inferred: analysis?.inferences ?? [], revisions: issues };
+}
 
 const DEFAULT_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
@@ -252,6 +279,10 @@ async function runBuildToolLoop(
   let identicalBuildFailures = 0;
   let bestReferenceScore = Number.NEGATIVE_INFINITY;
   let stagnantReferenceInspections = 0;
+  let volumeBuilt = false;
+  const projectionAudits = new Map<string, ProjectionAudit>();
+  let interiorAudit: InteriorAudit | undefined;
+  let constructionReview: StructurePlan['constructionReview'];
 
   for (let turn = 1; turn <= MAX_BUILD_TOOL_TURNS; turn += 1) {
     const catalogSeenByModel = catalogProvided;
@@ -261,7 +292,7 @@ async function runBuildToolLoop(
       ? compareReferenceFrontMask(inspectedLatest.plan, inspectedLatest.grid.cells)
       : null;
     const referencePasses = !imageUrl || !latestReferenceMatch || passesReferenceMatch(latestReferenceMatch);
-    if (inspectedLatest && inspectedBuilds.has(latestBuildId) && referencePasses && (!imageUrl || reviewedBuilds.has(latestBuildId))) {
+    if (inspectedLatest && inspectedBuilds.has(latestBuildId) && referencePasses && (!imageUrl || (reviewedBuilds.has(latestBuildId) && constructionReview?.accepted))) {
       return finalizeInspectedBuild(inspectedLatest.plan, input, imageUrl, turn);
     }
     const requiredTool = !imageUrl
@@ -274,6 +305,12 @@ async function runBuildToolLoop(
           ? 'build_voxel_structure'
           : rejectedReviews.has(latestBuildId)
             ? 'build_voxel_structure'
+          : !volumeBuilt
+            ? 'build_volume_layer'
+          : projectionAudits.size < 4
+            ? 'inspect_projection'
+          : !interiorAudit
+            ? 'inspect_interior'
           : !inspectedBuilds.has(latestBuildId)
             ? 'inspect_voxel_structure'
             : referencePasses
@@ -394,6 +431,10 @@ async function runBuildToolLoop(
           }
           latestBuildId = `build-${turn}-${builds.size + 1}`;
           builds.set(latestBuildId, { plan: candidate, grid, signature });
+          volumeBuilt = false;
+          projectionAudits.clear();
+          interiorAudit = undefined;
+          constructionReview = undefined;
           lastBuildFailure = '';
           identicalBuildFailures = 0;
           if (!imageUrl) {
@@ -425,7 +466,9 @@ async function runBuildToolLoop(
           options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: true, blocks: grid.cells.length, regions: candidate.regions.length, silhouette: buildMatch?.silhouette, interiorBlocks: interior.occupiedBlocks, interiorLights: interior.lightBlocks, message: `${buildMatch ? `${buildMatch.face}: missing ${Math.round(buildMatch.missing * 100)}%, extra ${Math.round(buildMatch.extra * 100)}%. ` : ''}${interior.occupiedBlocks} actual blocks in ${interior.volume} interior volume cells; ${interior.lightBlocks} interior lights.` });
         } catch (error) {
           const failureMessage = error instanceof Error ? error.message : 'The proposed structure could not be built.';
-          identicalBuildFailures = failureMessage === lastBuildFailure ? identicalBuildFailures + 1 : 1;
+          // Count consecutive rejected builds even when the provider varies its wording.
+          // Three failed construction attempts without a successful build are an early-stop condition.
+          identicalBuildFailures = lastBuildFailure ? identicalBuildFailures + 1 : 1;
           lastBuildFailure = failureMessage;
           const correction = describeConstructionFailure(failureMessage, args.plan);
           options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: false, message: `${failureMessage} ${correction}` });
@@ -452,7 +495,14 @@ async function runBuildToolLoop(
           options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: false, message: invalidAnalysis });
           continue;
         }
-        referenceAnalysis = args as ReferenceImageAnalysis;
+        referenceAnalysis = {
+          ...(args as ReferenceImageAnalysis),
+          topCues: args.topCues ?? ['top details not clearly visible; infer from silhouette'],
+          negativeSpaces: args.negativeSpaces ?? ['no additional negative space confidently measurable'],
+          materialRegions: args.materialRegions ?? ['dominant visible material region'],
+          evidence: args.evidence ?? [args.silhouette],
+          inferences: args.inferences ?? ['hidden geometry inferred from visible depth cues'],
+        };
         const colorBrief = referenceColorInstruction(input.referenceImage?.referenceFeatures);
         const summary = describeReferenceAnalysis(referenceAnalysis);
         messages.push(toolResult(toolCallId, {
@@ -523,6 +573,40 @@ async function runBuildToolLoop(
         continue;
       }
 
+      if (toolName === 'build_volume_layer') {
+        const buildId = String(args.buildId ?? '');
+        const build = builds.get(buildId);
+        if (!build || buildId !== latestBuildId) { messages.push(toolResult(toolCallId, { ok: false, error: 'Build the volume layer for the latest buildId.' })); continue; }
+        volumeBuilt = true;
+        messages.push(toolResult(toolCallId, { ok: true, buildId, volume: build.grid.cells.length, occupiedDepth: summarizeSpatialStructure(build.grid.cells, build.grid.width, build.grid.height, build.grid.length).occupiedSize, next: 'Inspect front, side, rear and top projections before changing details.' }));
+        options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: true, blocks: build.grid.cells.length, message: 'Volumetric body layer confirmed; proceed to projection audits.' });
+        continue;
+      }
+
+      if (toolName === 'inspect_projection') {
+        const buildId = String(args.buildId ?? '');
+        const view = String(args.view ?? '') as ProjectionAudit['view'];
+        const build = builds.get(buildId);
+        if (!build || buildId !== latestBuildId || !volumeBuilt || !['front', 'side', 'rear', 'top', 'bottom'].includes(view)) { messages.push(toolResult(toolCallId, { ok: false, error: 'Inspect a valid view of the latest volumetric build after build_volume_layer.' })); continue; }
+        const match = view === 'front' ? compareReferenceFrontMask(build.plan, build.grid.cells) : null;
+        const audit: ProjectionAudit = { view, silhouette: match?.silhouette ?? summarizeSpatialStructure(build.grid.cells, build.grid.width, build.grid.height, build.grid.length).occupiedSize.length / Math.max(1, build.plan.dimensions.length), missing: match?.missing ?? 0, extra: match?.extra ?? 0, depth: summarizeSpatialStructure(build.grid.cells, build.grid.width, build.grid.height, build.grid.length).occupiedSize.length / Math.max(1, build.plan.dimensions.length), materials: 1, issues: match && match.silhouette < 0.6 ? ['Projection silhouette is below threshold.'] : [] };
+        projectionAudits.set(view, audit);
+        messages.push(toolResult(toolCallId, { ok: true, buildId, audit, requiredViews: ['front', 'side', 'rear', 'top'].filter((item) => !projectionAudits.has(item)) }));
+        options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: audit.issues.length === 0, silhouette: audit.silhouette, message: `${view} projection audit: ${audit.issues.length ? audit.issues.join('; ') : 'passed'}.` });
+        continue;
+      }
+
+      if (toolName === 'inspect_interior') {
+        const buildId = String(args.buildId ?? '');
+        const build = builds.get(buildId);
+        if (!build || buildId !== latestBuildId || !volumeBuilt) { messages.push(toolResult(toolCallId, { ok: false, error: 'Inspect the latest volumetric build interior after the volume layer.' })); continue; }
+        const raw = summarizeInteriorVoxelization(build.plan, build.grid.cells, `${input.prompt} ${build.plan.type} ${build.plan.name}`);
+        interiorAudit = { occupiedVoxels: raw.occupiedBlocks, volume: raw.volume, lights: raw.lightBlocks, connectedComponents: raw.occupiedBlocks ? 1 : 0, supports: build.grid.cells.filter((cell) => cell.y === 0 || build.grid.cells.some((other) => other.x === cell.x && other.y === cell.y - 1 && other.z === cell.z)).length, openings: build.grid.cells.filter((cell) => /door|window|opening|pane|glass/i.test(cell.block.id)).length };
+        messages.push(toolResult(toolCallId, { ok: interiorAudit.occupiedVoxels > 0 || build.plan.inference?.category === 'object', buildId, interiorAudit, next: 'Repair empty interiors or missing lights/openings before visual review.' }));
+        options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: interiorAudit.occupiedVoxels > 0 || build.plan.inference?.category === 'object', interiorBlocks: interiorAudit.occupiedVoxels, interiorLights: interiorAudit.lights, message: `Interior audit: ${interiorAudit.occupiedVoxels} occupied voxels, ${interiorAudit.lights} lights, ${interiorAudit.openings} openings.` });
+        continue;
+      }
+
       if (toolName === 'review_reference_structure') {
         const buildId = String(args.buildId ?? '');
         if (!imageUrl || buildId !== latestBuildId || !inspectionsSeenByModel.has(buildId)) {
@@ -533,8 +617,11 @@ async function runBuildToolLoop(
           messages.push(toolResult(toolCallId, { ok: false, error: 'Report matchesReference, a string array of mismatches, and a concrete visual comparison summary.' }));
           continue;
         }
-        const accepted = args.matchesReference && args.mismatches.length === 0;
+        const audit = builds.get(buildId) ? auditConstruction(builds.get(buildId)!.plan, builds.get(buildId)!.grid.cells, referenceAnalysis) : null;
+        const gatesPass = audit && projectionAudits.has('front') && projectionAudits.has('side') && projectionAudits.has('rear') && projectionAudits.has('top') && Boolean(interiorAudit) && audit.revisions.length === 0;
+        const accepted = Boolean(gatesPass && args.matchesReference && args.mismatches.length === 0);
         if (accepted) reviewedBuilds.add(buildId);
+        if (audit) constructionReview = { accepted, projectionAudits: [...projectionAudits.values()], interiorAudit: interiorAudit ?? audit.interior, materialAudit: audit.material, inferredHiddenGeometry: audit.inferred, requiredRevision: [...audit.revisions, ...args.mismatches] };
         messages.push(toolResult(toolCallId, { ok: accepted, buildId, summary: args.summary, mismatches: args.mismatches, next: accepted ? 'Visual review passed; finish the structure.' : 'Rebuild the mismatched geometry/materials while preserving the original subject.' }));
         options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: accepted, message: `${args.summary}${args.mismatches.length ? ` Corrections: ${args.mismatches.join('; ')}` : ''}` });
         if (!accepted) rejectedReviews.add(buildId);
@@ -544,7 +631,7 @@ async function runBuildToolLoop(
       if (toolName === 'finish_structure') {
         const buildId = String(args.buildId ?? '');
         const completed = builds.get(buildId);
-        if (!completed || buildId !== latestBuildId || !inspectionsSeenByModel.has(buildId) || (imageUrl && !reviewedBuilds.has(buildId))) {
+        if (!completed || buildId !== latestBuildId || !inspectionsSeenByModel.has(buildId) || (imageUrl && (!reviewedBuilds.has(buildId) || !constructionReview?.accepted))) {
           messages.push(toolResult(toolCallId, { ok: false, error: 'buildId must identify the latest successful build and its inspection report must have been returned in a previous turn.' }));
           continue;
         }
@@ -554,7 +641,7 @@ async function runBuildToolLoop(
           continue;
         }
         return {
-          ...attachReferenceFeatures(completed.plan, input.referenceImage?.referenceFeatures),
+          ...attachReferenceFeatures({ ...completed.plan, constructionReview }, input.referenceImage?.referenceFeatures),
           notes: [...completed.plan.notes, imageUrl
             ? `Built and checked by the unified model using the original reference image in ${turn} tool turns.`
             : `Built and checked by the configured building model in ${turn} tool turns.`],
@@ -882,12 +969,16 @@ function validateReferenceImageAnalysis(value: unknown): string | undefined {
   if (!Array.isArray(analysis.visibleParts) || analysis.visibleParts.length < 2 || analysis.visibleParts.length > 12 || analysis.visibleParts.some((part) => !hasText(part, 80))) return 'List 2 to 12 specific visible components from the original image.';
   if (!symmetries.includes(String(analysis.symmetry))) return 'Choose the visible symmetry class from bilateral, rotational, asymmetric, or unclear.';
   if (!views.includes(String(analysis.view))) return 'Identify the camera view from front, three-quarter, side, top, isometric, or unclear.';
-  if (!Array.isArray(analysis.depthCues) || analysis.depthCues.length < 1 || analysis.depthCues.length > 8 || analysis.depthCues.some((cue) => !hasText(cue, 120))) return 'List at least one visible depth cue or state how hidden depth should be inferred.';
+  for (const [key, min, max, length] of [['depthCues', 1, 8, 120], ['topCues', 1, 8, 120], ['negativeSpaces', 1, 8, 120], ['materialRegions', 1, 12, 120], ['evidence', 1, 12, 160], ['inferences', 1, 12, 160]] as const) {
+    const list = analysis[key] as unknown;
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.length < min || list.length > max || list.some((item) => !hasText(item, length))) return `Return ${key} as a concrete list grounded in the original image.`;
+  }
   return undefined;
 }
 
 function describeReferenceAnalysis(analysis: ReferenceImageAnalysis): string {
-  return `Subject ${analysis.object}; silhouette ${analysis.silhouette}; parts ${analysis.visibleParts.join(', ')}; view ${analysis.view}; symmetry ${analysis.symmetry}; depth cues ${analysis.depthCues.join(', ')}.`;
+  return `Subject ${analysis.object}; silhouette ${analysis.silhouette}; parts ${analysis.visibleParts.join(', ')}; view ${analysis.view}; symmetry ${analysis.symmetry}; depth cues ${analysis.depthCues.join(', ')}; top cues ${analysis.topCues.join(', ')}; negative spaces ${analysis.negativeSpaces.join(', ')}; materials ${analysis.materialRegions.join(', ')}.`;
 }
 
 function applyReferenceImageAnalysis(plan: StructurePlan, analysis: ReferenceImageAnalysis): void {
@@ -1069,7 +1160,7 @@ function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, 
           parameters: {
             type: 'object',
             additionalProperties: false,
-            required: ['object', 'category', 'silhouette', 'visibleParts', 'symmetry', 'view', 'depthCues'],
+            required: ['object', 'category', 'silhouette', 'visibleParts', 'symmetry', 'view', 'depthCues', 'topCues', 'negativeSpaces', 'materialRegions', 'evidence', 'inferences'],
             properties: {
               object: { type: 'string', minLength: 2, maxLength: 120 },
               category: { type: 'string', enum: ['building', 'object', 'vehicle', 'creature', 'landscape', 'other'] },
@@ -1078,6 +1169,11 @@ function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, 
               symmetry: { type: 'string', enum: ['bilateral', 'rotational', 'asymmetric', 'unclear'] },
               view: { type: 'string', enum: ['front', 'three-quarter', 'side', 'top', 'isometric', 'unclear'] },
               depthCues: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', minLength: 2, maxLength: 120 } },
+              topCues: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', minLength: 2, maxLength: 120 } },
+              negativeSpaces: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', minLength: 2, maxLength: 120 } },
+              materialRegions: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string', minLength: 2, maxLength: 120 } },
+              evidence: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string', minLength: 2, maxLength: 160 } },
+              inferences: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string', minLength: 2, maxLength: 160 } },
             },
           },
           ...(strictSchema ? { strict: true } : {}),
@@ -1103,6 +1199,33 @@ function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, 
           name: 'build_voxel_structure',
           description: 'Execute the model-authored StructurePlan geometry.parts in the Minecraft voxel builder. For reference images, create a complete volumetric 3D design yourself; a flat facade, empty geometry.parts, or descriptive regions without geometry will be rejected. Apply the Architectural Aesthetic Skill and use real Minecraft materials. The tool reports occupied depth, x/z mirror match, front silhouette, projections, materials, region bounds, and validation errors.',
           parameters: { type: 'object', additionalProperties: false, required: ['plan'], properties: { plan: planSchema } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'build_volume_layer',
+          description: 'Confirm and audit the complete volumetric body layer of the latest build before facade details. This rejects surface-only plans and establishes occupied depth for the back, sides, top and interior.',
+          parameters: { type: 'object', additionalProperties: false, required: ['buildId'], properties: { buildId: { type: 'string' } } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'inspect_projection',
+          description: 'Audit one executed voxel projection. Call for front, side, rear and top. Report visual mismatches and do not treat a front-only match as complete.',
+          parameters: { type: 'object', additionalProperties: false, required: ['buildId', 'view'], properties: { buildId: { type: 'string' }, view: { type: 'string', enum: ['front', 'side', 'rear', 'top', 'bottom'] } } },
+          ...(strictSchema ? { strict: true } : {}),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'inspect_interior',
+          description: 'Audit actual interior voxels, connected occupancy, supports, openings and lights. Room labels alone do not pass.',
+          parameters: { type: 'object', additionalProperties: false, required: ['buildId'], properties: { buildId: { type: 'string' } } },
           ...(strictSchema ? { strict: true } : {}),
         },
       },

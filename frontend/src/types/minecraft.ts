@@ -83,6 +83,13 @@ export interface ReferenceReport {
   frontScore?: number;
   sideScore?: number;
   roofScore?: number;
+  constructionReview?: {
+    accepted: boolean;
+    projectionAudits: Array<{ view: string; silhouette: number; missing: number; extra: number; depth: number; issues: string[] }>;
+    interiorAudit?: { occupiedVoxels: number; volume: number; lights: number; connectedComponents: number; supports: number; openings: number };
+    inferredHiddenGeometry?: string[];
+    requiredRevision?: string[];
+  };
 }
 
 export interface BlockMeta {

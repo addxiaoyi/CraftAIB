@@ -97,6 +97,36 @@ export type ReferenceFeatures = {
   colorMask: number[];
   colorPalette: Array<{ r: number; g: number; b: number }>;
   depthProfile: number[];
+  evidence?: string[];
+  inferences?: string[];
+};
+
+export type ProjectionAudit = {
+  view: 'front' | 'side' | 'rear' | 'top' | 'bottom';
+  silhouette: number;
+  missing: number;
+  extra: number;
+  depth: number;
+  materials: number;
+  issues: string[];
+};
+
+export type InteriorAudit = {
+  occupiedVoxels: number;
+  volume: number;
+  lights: number;
+  connectedComponents: number;
+  supports: number;
+  openings: number;
+};
+
+export type ConstructionReview = {
+  accepted: boolean;
+  projectionAudits: ProjectionAudit[];
+  interiorAudit: InteriorAudit;
+  materialAudit: { ok: boolean; issues: string[] };
+  inferredHiddenGeometry: string[];
+  requiredRevision: string[];
 };
 
 export type StructurePlan = {
@@ -117,6 +147,7 @@ export type StructurePlan = {
   inference?: { source: 'prompt' | 'reference-heuristic' | 'vision-model'; detectedType?: string; detectedStyle?: string; confidence?: number; reasoning?: string; category?: 'object' | 'building' | 'vehicle' | 'creature' | 'landscape' | 'other' };
   referenceFeatures?: ReferenceFeatures;
   referenceValidation?: ReferenceMatch | null;
+  constructionReview?: ConstructionReview;
 };
 
 export type ReferenceMatch = {
