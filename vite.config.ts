@@ -17,7 +17,7 @@ export default defineConfig({
     port: Number(process.env.CRAFTAIB_UI_PORT || 4185),
     strictPort: true,
     proxy: {
-      '/api': { target: process.env.CRAFTAIB_API_TARGET || 'http://127.0.0.1:4184', changeOrigin: false },
+      '/api': { target: process.env.CRAFTAIB_API_TARGET || `http://127.0.0.1:${process.env.CRAFTAIB_API_PORT || 4184}`, changeOrigin: false },
     },
   },
   build: {

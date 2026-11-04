@@ -4,11 +4,28 @@
   :root {
     --bg-canvas: #07090e;
     --bg-surface: #0c0f17;
-    --bg-surface-elevated: #111622;
     --border-subtle: rgba(255, 255, 255, 0.06);
-    --border-muted: rgba(255, 255, 255, 0.12);
     --accent-emerald: #10b981;
     --accent-emerald-glow: rgba(16, 185, 129, 0.25);
+
+    /* Radius scale — one ladder, no ad-hoc values */
+    --radius-xs: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* Elevation ladder — shadows imply a single light source from above */
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --elev-3: 0 8px 24px -6px rgba(0, 0, 0, 0.55), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --elev-4: 0 18px 48px -12px rgba(0, 0, 0, 0.72), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+
+    /* Layout skeleton — one header height, one panel ladder, one canvas dock width */
+    --app-header-h: 52px;
+    --workspace-panel-w: 420px;
+    --workspace-panel-w-wide: 450px;
+    --workspace-dock-w: 288px;
+
+    /* Focus ring — must clear the dark shell (>=3:1 against #07090e) */
+    --focus-ring: #7dd3fc;
   }
 
   * {
@@ -17,7 +34,7 @@
 
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #07090e;
+    background-color: var(--bg-canvas);
     color: #e4e4e7;
     overflow: hidden;
     letter-spacing: -0.015em;
@@ -29,6 +46,31 @@
     font-family: 'JetBrains Mono', monospace;
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Keyboard focus: one visible ring on every interactive surface.
+   The browser default paints a near-black 1px outline on this dark shell
+   (measured 1.05:1 contrast), so the ring is defined explicitly here.
+
+   `:is()` is load-bearing. It adopts the specificity of its strongest argument
+   (`a[href]`, 0,1,1), so this rule weighs (0,2,1) and outranks the component
+   resets that used to erase it: `.studio-input:focus` (0,2,0) and
+   `input[type="range"]` (0,1,1) both declared `outline: none`. Written with
+   `:where()` the rule weighed (0,1,0) and lost to every one of them, which is
+   how text fields and sliders ended up with no focus indicator at all. */
+:is(button, a[href], [role="menuitem"], [role="tab"], summary, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  /* Instant ring. These controls often declare transition: all, which would
+     fade outline-color in from near-black and leave the first frames blank. */
+  transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+}
+
+/* Mouse focus needs no ring — but only because the rule above still paints one
+   for keyboard focus, at (0,3,1) specificity so it cannot be re-enabled by a
+   component-level `outline: 2px` reset. */
+:is(button, a[href], [tabindex], input, select, textarea):focus:not(:focus-visible) {
+  outline: none;
 }
 
 /* Minimalist precision scrollbars */
@@ -66,19 +108,36 @@
   backdrop-filter: blur(28px) saturate(190%);
   -webkit-backdrop-filter: blur(28px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px -4px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
 }
 
 .studio-glass-subtle {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
 }
 
 .studio-panel {
-  background: #0c0f17;
+  background: var(--bg-surface);
   border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
+}
+
+/* Navigation drawer: a floating panel with a directional shadow,
+   deliberately lighter than the full-screen scrim behind it. */
+.studio-drawer {
+  background: rgba(12, 14, 21, 0.98);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: none;
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  box-shadow: var(--elev-4);
 }
 
 .studio-input {
@@ -89,7 +148,10 @@
 }
 .studio-input:focus {
   border-color: rgba(255, 255, 255, 0.32);
-  outline: none;
+  /* No `outline: none` here on purpose. At (0,2,0) this reset beat the old
+     zero-specificity focus rule and left every text field with no ring at all.
+     The global :focus-visible rule owns the ring now; this shadow adds depth
+     and must never be mistaken for a focus indicator. */
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 6px 16px rgba(0, 0, 0, 0.5);
 }
 
@@ -124,7 +186,7 @@
   border-color: rgba(16, 185, 129, 0.55);
   color: #6ee7b7;
   transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15), 0 6px 20px rgba(16, 185, 129, 0.25);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15), 0 6px 20px var(--accent-emerald-glow);
 }
 .btn-luxury-emerald:active {
   transform: translateY(0);
@@ -155,7 +217,9 @@ input[type="range"] {
   background: rgba(255, 255, 255, 0.1);
   height: 4px;
   border-radius: 9999px;
-  outline: none;
+  /* No `outline: none` here: at (0,1,1) it used to beat the focus rule and left
+     the slider with no keyboard indicator. The global :focus-visible rule
+     outranks this selector, so the ring survives. */
   transition: background 0.2s ease;
 }
 input[type="range"]:hover {
@@ -179,7 +243,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 input[type="range"]::-webkit-slider-thumb:active {
   transform: scale(1);
-  background: #10b981;
+  background: var(--accent-emerald);
 }
 
 /* Subtle Shimmer for AI Generation */
@@ -216,4 +280,26 @@ input[type="range"]::-webkit-slider-thumb:active {
 }
 .animate-fade-in {
   animation: fadeInSlide 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes drawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-drawer-in {
+  animation: drawerIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-drawer-in {
+    animation: none;
+  }
 }

@@ -18,9 +18,7 @@ try {
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
   assert.equal(await page.locator('[data-ai-error-code="MODEL_NOT_CONFIGURED"]').count(), 1);
-  await page.locator('[data-mobile-menu-toggle="true"]').click();
   await page.locator('[data-workspace-id="projections"]').filter({ visible: true }).click();
-  await page.locator('[data-mobile-menu-toggle="true"]').click();
   await page.locator('[data-workspace-id="ai_builder"]').filter({ visible: true }).click();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ frontend: 'minecraft-architect-studio', localGeneration: true, workspaces: 10, errors }, null, 2));

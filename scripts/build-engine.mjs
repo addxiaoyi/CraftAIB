@@ -21,6 +21,7 @@ const runTsc = (project, noEmit = false) => {
 // Craftmatic's optional CLI/rendering sources require its own vendor dependency install.
 // The shared adapter/runtime build must remain usable from the root npm install.
 if (process.env.CRAFTAIB_BUILD_VENDOR === '1') runTsc(resolve(root, 'vendor', 'craftmatic', 'tsconfig.json'));
+else await import('./build-craftmatic-runtime.mjs');
 if (check) {
   // TypeScript package boundaries consume generated declaration files from the previous package.
   // Emit once to make --check reproducible from a fresh checkout, then run the actual checks.

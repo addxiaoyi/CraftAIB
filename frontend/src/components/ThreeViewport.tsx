@@ -5,7 +5,12 @@ import { StructureData, VoxelBlock } from '../types/minecraft';
 import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 
-const MINECRAFT_TEXTURE_BASE = 'https://assets.mcasset.cloud/1.21.4/assets/minecraft/textures/block/';
+// Newest Minecraft release the asset CDN serves for the blocks this viewer renders.
+// Bumping it here is the only place a texture version may be written; the base URL and the
+// stone fallback both derive from it. 26.3 is a strict superset of 1.21.4 (`bush`, which
+// arrived after 1.21.4, 404s there and resolves here).
+const MINECRAFT_TEXTURE_VERSION = '26.3';
+const MINECRAFT_TEXTURE_BASE = `https://assets.mcasset.cloud/${MINECRAFT_TEXTURE_VERSION}/assets/minecraft/textures/block/`;
 const MAX_PREVIEW_BLOCKS = 500_000;
 const RENDER_CHUNK_SIZE = 16;
 const textureCache = new Map<string, Promise<THREE.Texture | null>>();
@@ -13,6 +18,8 @@ const textureCache = new Map<string, Promise<THREE.Texture | null>>();
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
+
+const FALLBACK_TEXTURE_URL = `${MINECRAFT_TEXTURE_BASE}stone.png`;
 
 function textureUrlForBlock(blockId: string): string {
   const name = blockId.replace(/^minecraft:/, '');
@@ -22,6 +29,8 @@ function textureUrlForBlock(blockId: string): string {
     grass_block: 'grass_block_side',
     dirt_path: 'dirt_path_side',
     glass_pane: 'glass_pane_top',
+    water: 'water_still',
+    flowing_water: 'water_flow',
     white_stained_glass_pane: 'white_stained_glass',
     orange_stained_glass_pane: 'orange_stained_glass',
     magenta_stained_glass_pane: 'magenta_stained_glass',
@@ -105,6 +114,12 @@ function loadBlockTexture(url: string): Promise<THREE.Texture | null> {
       return texture;
     })
     .catch(() => null);
+
+  if (url !== FALLBACK_TEXTURE_URL) {
+    const fallbackRequest = request.then((texture) => texture ?? loadBlockTexture(FALLBACK_TEXTURE_URL));
+    textureCache.set(url, fallbackRequest);
+    return fallbackRequest;
+  }
 
   textureCache.set(url, request);
   return request;

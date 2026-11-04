@@ -53,6 +53,8 @@ export async function generateBuilding(
   const status = forceLocal ? null : await modelStatus(signal);
   const hasReferenceImage = Boolean(referenceImage);
   const useModel = Boolean(status?.text);
+  // BuilderGPT only takes over text prompts with no fixed dimensions; images always need the vision plan path.
+  const mode = useModel && !hasReferenceImage && !options.width && !options.height && !options.length ? 'builder' as const : 'plan' as const;
   const input = { prompt, seed: options.seed, constraints, referenceImage };
 
   if (hasReferenceImage && !useModel && !forceLocal) {
@@ -60,7 +62,7 @@ export async function generateBuilding(
   }
 
   if (!useModel) {
-    const localPrompt = [constraints.style, constraints.type, constraints.floors ? `${constraints.floors} floors` : "", constraints.width && constraints.height && constraints.length ? `${constraints.width} x ${constraints.height} x ${constraints.length} blocks` : "", constraints.detailLevel ? `detail level ${constraints.detailLevel} of 5` : "", constraints.includeInterior ? "furnished walkable interior with rooms and stairs" : "exterior only", prompt].filter(Boolean).join(", ");
+    const localPrompt = [constraints.style, constraints.type, constraints.floors ? `${constraints.floors} floors` : "", constraints.width && constraints.height && constraints.length ? `${constraints.width} x ${constraints.height} x ${constraints.length} blocks` : "", constraints.detailLevel ? `detail level ${constraints.detailLevel} of 5` : "", constraints.includeInterior ? "interior where the subject calls for one" : "exterior only", prompt].filter(Boolean).join(", ");
     const planned = await runEngineTask<{ plan: NamedStructurePlan; grid: any; regions: Array<{ name: string; position: { x: number; y: number; z: number }; size: { x: number; y: number; z: number } }>; source: 'local'; generationLog?: GenerationLogEntry[] }>(
       'ai.local-structure-plan',
       { ...input, prompt: localPrompt },
@@ -72,7 +74,7 @@ export async function generateBuilding(
   }
 
   const planned = await runEngineTask<{ plan: NamedStructurePlan; grid: any; regions: Array<{ name: string; position: { x: number; y: number; z: number }; size: { x: number; y: number; z: number } }>; source: 'ai'; generationLog?: GenerationLogEntry[] }>(
-    'ai.structure-plan', input, undefined, signal, onProgress,
+    'ai.structure-plan', { ...input, mode }, undefined, signal, onProgress,
   );
   return { structure: gridToStructure(planned.grid, { name: planned.plan.name, regions: planned.regions, plan: planned.plan }), source: 'ai', generationLog: planned.generationLog ?? [] };
 }
@@ -83,14 +85,33 @@ async function modelStatus(signal: AbortSignal) {
   return response.json() as Promise<{ text: boolean; vision: boolean }>;
 }
 
+const REFERENCE_MAX_EDGE = 1280;
+
 async function imagePayload(dataUrl: string) {
   const image = new Image();
   image.src = dataUrl;
   await image.decode();
-  return {
+  const original = {
     width: image.naturalWidth,
     height: image.naturalHeight,
     dataUrl,
     sourceName: 'reference-image',
   };
+  const longest = Math.max(image.naturalWidth, image.naturalHeight);
+  if (longest <= REFERENCE_MAX_EDGE) return original;
+
+  // Large photos make vision requests slow enough to hit gateway timeouts, and the
+  // silhouette/color evidence only needs a bounded raster. Keep the aspect ratio.
+  const scale = REFERENCE_MAX_EDGE / longest;
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return original;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(image, 0, 0, width, height);
+  const webp = canvas.toDataURL('image/webp', 0.92);
+  return { width, height, dataUrl: webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/png'), sourceName: 'reference-image' };
 }

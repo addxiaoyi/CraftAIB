@@ -1,6 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
 import { ThreeViewport } from '../ThreeViewport';
+import { LodestoneViewport } from '../LodestoneViewport';
+import { resolvePreviewBlockId } from '../../utils/blockAliases';
+import { SegmentedTabs } from '../layout/SegmentedTabs';
+import { useFileExport } from '../../hooks/useFileExport';
 import { exportLitematic, exportSchematic, exportBlockGridJson } from '../../utils/exporters';
 import { compareReferenceProfiles, compareReferenceSilhouette, generateBuilding, type GenerationLogEntry } from '../../integrations/building';
 import {
@@ -24,6 +28,8 @@ import {
 function formatScore(value?: number): string {
   return value == null ? '-' : `${Math.round(value * 100)}%`;
 }
+
+const TEXTURED_PREVIEW_BLOCK_LIMIT = 250_000;
 
 interface AiBuilderViewProps {
   structure: StructureData;
@@ -136,6 +142,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   placements = [],
 }) => {
   const [prompt, setPrompt] = useState<string>(initialAiMeta?.prompt ?? '');
+  const fileExport = useFileExport();
+  const saveLitematic = () => void fileExport.save(() => exportLitematic(structure, placements));
+  const saveSchematic = () => void fileExport.save(() => exportSchematic(structure, placements));
   const [referenceImage, setReferenceImage] = useState<string | null>(initialAiMeta?.referenceImage ?? null);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -164,8 +173,11 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
   const [minY, setMinY] = useState<number>(0);
   const [maxY, setMaxY] = useState<number>(structure.size.y);
-  const [wireframe, setWireframe] = useState<boolean>(false);
-  const [viewportBackground, setViewportBackground] = useState<string>(() => localStorage.getItem('craftaib.viewport-background') || '#090a0f');
+  const [solidPreview, setSolidPreview] = useState<boolean>(false);
+  const [viewportBackground, setViewportBackground] = useState<string>(() => {
+    try { return localStorage.getItem('craftaib.viewport-background') || '#090a0f'; }
+    catch (error) { console.warn('CraftAIB could not restore the viewport background.', error); return '#090a0f'; }
+  });
 
   useEffect(() => {
     setPrompt(initialAiMeta?.prompt ?? '');
@@ -178,10 +190,32 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     onAiMetaChange?.({ prompt, referenceImage: referenceImage ?? undefined, source: generationSource ?? undefined, referenceReport });
   }, [prompt, referenceImage, generationSource, referenceReport, onAiMetaChange]);
 
+  useEffect(() => {
+    setMinY(0);
+    setMaxY(structure.size.y);
+  }, [structure.size.y]);
+
   const changeViewportBackground = (color: string) => {
     setViewportBackground(color);
-    localStorage.setItem('craftaib.viewport-background', color);
+    try { localStorage.setItem('craftaib.viewport-background', color); }
+    catch (error) {
+      console.warn('CraftAIB could not save the viewport background.', error);
+      setErrorMessage(lang === 'zh' ? '背景已切换，但浏览器存储不可用，无法记住此设置。' : 'The background changed, but browser storage is unavailable to save this preference.');
+    }
   };
+
+  const previewStructure = useMemo(() => {
+    const blocks = structure.blocks
+      .filter((block) => block.y >= minY && block.y <= maxY)
+      .map((block) => {
+        const blockId = resolvePreviewBlockId(block.blockId);
+        return blockId === block.blockId ? block : { ...block, blockId };
+      });
+    return { ...structure, blocks };
+  }, [structure, minY, maxY]);
+  const previewBlockCount = previewStructure.blocks.length;
+  const solidFallback = previewBlockCount > TEXTURED_PREVIEW_BLOCK_LIMIT;
+  const rendererMode: 'textured' | 'solid' = solidPreview || solidFallback ? 'solid' : 'textured';
 
   const base = {
     en: {
@@ -211,6 +245,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       tabViewport: '3D Spatial Viewport',
       quickTags: 'Prompt Modifiers',
       layerSlice: 'Layer Height Slice',
+      renderTextured: 'Textured',
+      renderSolid: 'Solid',
     },
     zh: {
       headline: '生成式建筑计算引擎',
@@ -239,6 +275,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       tabViewport: '3D 空间视口',
       quickTags: '构件修饰词',
       layerSlice: '高度切片',
+      renderTextured: '材质',
+      renderSolid: '实体',
     },
   }[lang];
   const t = lang === 'zh' ? {
@@ -301,22 +339,28 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     setLoadingStep(forceLocal ? 'Creating a local preview…' : 'Checking model service…');
 
     try {
-      const referenceOwnsEnvelope = Boolean(referenceImage) && !hasCustomDimensions;
       const styleId = style === 'AI_AUTO' ? '' : style.toLowerCase().includes('gothic') ? 'gothic'
         : style.toLowerCase().includes('medieval') ? 'medieval'
         : style.toLowerCase().includes('modern') || style.toLowerCase().includes('brutalist') ? 'modern'
         : style.toLowerCase().includes('oriental') ? 'colonial'
         : style.toLowerCase().includes('nether') ? 'underwater' : 'fantasy';
+      const requestedSize = hasCustomDimensions ? { width: dimX, height: dimY, length: dimZ } : {};
       const result = await generateBuilding({
-        prompt: [prompt, styleId ? `Secondary style preference: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme, hasCustomDetail || !referenceImage ? 'Detail level: ' + detailLevel + '/5' : '', includeInterior ? 'Complete the subject interior appropriately: buildings have usable rooms; objects retain their physical cavity, assembly and light source without inventing habitable rooms.' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
+        prompt: [
+          prompt,
+          styleId ? `Secondary style preference: ${styleId}` : '',
+          paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme,
+          hasCustomDetail ? `Detail preference: about ${detailLevel}/5.` : '',
+          includeInterior
+            ? 'Prefer a coherent usable interior where the subject calls for one; for objects keep their real cavity.'
+            : 'Exterior only; leave interiors out.',
+        ].filter(Boolean).join(' '),
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: referenceImage ? undefined : Math.max(1, Math.min(64, Math.round(dimY / 6))),
-        width: referenceOwnsEnvelope ? undefined : dimX,
-        height: referenceOwnsEnvelope ? undefined : dimY,
-        length: referenceOwnsEnvelope ? undefined : dimZ,
-        detailLevel,
+        floors: forceLocal && hasCustomDimensions ? Math.max(1, Math.min(64, Math.round(dimY / 6))) : undefined,
+        ...requestedSize,
+        detailLevel: hasCustomDetail ? detailLevel : undefined,
         includeInterior,
         seed: 42,
       }, controller.signal, (value, stage, log) => {
@@ -374,40 +418,26 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const handleCancelGeneration = () => abortController.current?.abort();
 
   return (
-    <div className="flex-1 h-full overflow-hidden flex flex-col bg-[#07090e]">
+    <div className="flex-1 h-full overflow-hidden flex flex-col bg-[var(--bg-canvas)]">
       {/* Mobile Adaptive Top Segmented Tab Switcher (< lg) */}
       <div className="lg:hidden flex items-center justify-between p-2 border-b border-white/[0.07] bg-[#0c0f17]/95 backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.08] p-0.5 rounded-lg w-full">
-          <button
-            onClick={() => setMobileTab('controls')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'controls'
-                ? 'bg-white/10 text-white shadow-sm font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>{t.tabControls}</span>
-          </button>
-          <button
-            onClick={() => setMobileTab('viewport')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'viewport'
-                ? 'bg-white/10 text-white shadow-sm font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{t.tabViewport}</span>
-          </button>
-        </div>
+        <SegmentedTabs
+          items={[
+            { id: 'controls', label: t.tabControls, icon: Sliders },
+            { id: 'viewport', label: t.tabViewport, icon: Eye },
+          ]}
+          value={mobileTab}
+          onChange={(id) => setMobileTab(id as 'controls' | 'viewport')}
+          ariaLabel={lang === 'zh' ? '移动端视图切换' : 'Mobile view switcher'}
+          className="w-full"
+        />
       </div>
 
       {/* Main Studio Frame: Split side-by-side on lg+ */}
       <div className="flex-1 h-full overflow-hidden flex flex-col lg:flex-row relative">
         {/* Left Column: Brief & Generator Console */}
         <aside
-          className={`w-full lg:w-[420px] xl:w-[450px] shrink-0 h-full border-r border-white/[0.07] bg-[#0c0f17] flex flex-col overflow-y-auto ${
+          className={`w-full lg:w-[var(--workspace-panel-w)] xl:w-[var(--workspace-panel-w-wide)] shrink-0 h-full border-r border-white/[0.07] bg-[var(--bg-surface)] flex flex-col overflow-y-auto ${
             mobileTab === 'viewport' ? 'hidden lg:flex' : 'flex'
           }`}
         >
@@ -571,7 +601,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   <span>{t.settingsTitle}</span>
                 </div>
                 <div className="flex items-center gap-2 text-zinc-400 font-mono text-[11px]">
-                  <span className="tabular-nums">{dimX}×{dimY}×{dimZ}</span>
+                  <span className="tabular-nums">{hasCustomDimensions ? `${dimX}×${dimY}×${dimZ}` : (lang === 'zh' ? 'AI 自动尺寸' : 'AI-chosen size')}</span>
                   {isSettingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </div>
               </button>
@@ -585,6 +615,18 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       <span className="text-zinc-500">X × Y × Z</span>
                     </div>
                     <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        data-size-auto="true"
+                        onClick={() => setHasCustomDimensions(false)}
+                        className={`p-1.5 rounded-md border text-center transition-all ${
+                          !hasCustomDimensions
+                            ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-semibold'
+                            : 'border-white/[0.06] bg-white/[0.02] text-zinc-400 hover:text-white hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <div className="font-mono text-[11px]">{lang === 'zh' ? '自动' : 'Auto'}</div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5">{lang === 'zh' ? '由 AI 决定' : 'AI decides'}</div>
+                      </button>
                       {[
                         { label: '16×24×16', x: 16, y: 24, z: 16, sub: lang === 'zh' ? '紧凑型' : 'Compact' },
                         { label: '24×32×24', x: 24, y: 32, z: 24, sub: lang === 'zh' ? '标准级' : 'Standard' },
@@ -593,10 +635,11 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         { label: '256×256×256', x: 256, y: 256, z: 256, sub: lang === 'zh' ? '巨型' : 'Colossal' },
                         { label: '512×512×512', x: 512, y: 512, z: 512, sub: lang === 'zh' ? '超大型' : 'Super-scale' },
                       ].map((preset) => {
-                        const isCurrent = dimX === preset.x && dimY === preset.y && dimZ === preset.z;
+                        const isCurrent = hasCustomDimensions && dimX === preset.x && dimY === preset.y && dimZ === preset.z;
                         return (
                           <button
                             key={preset.label}
+                            data-size-preset={`${preset.x}x${preset.y}x${preset.z}`}
                             onClick={() => {
                               setHasCustomDimensions(true);
                               setDimX(preset.x);
@@ -610,7 +653,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                             }`}
                           >
                             <div className="font-mono text-[11px] tabular-nums">{preset.label}</div>
-                            <div className="text-[9px] text-zinc-500 mt-0.5">{preset.sub}</div>
+                            <div className="text-[11px] text-zinc-500 mt-0.5">{preset.sub}</div>
                           </button>
                         );
                       })}
@@ -663,7 +706,9 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-zinc-500">{lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。高复杂度会要求完整室内。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks. High detail requires a complete interior.`}</p>
+                  <p className="text-[10px] text-zinc-500">{hasCustomDimensions
+                    ? (lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks.`)
+                    : (lang === 'zh' ? '尺寸由 AI 依据描述和参考图决定；选择预设或拖动滑杆才会锁定体量。最多放置 12,000,000 方块。' : 'The AI chooses the size from your description and reference image; pick a preset or move a slider to lock the envelope. Max 12,000,000 placed blocks.')}</p>
                   {referenceImage && (
                     <p data-reference-mode="primary" role="status" className="text-[10px] text-emerald-300">
                       {hasCustomDimensions
@@ -738,9 +783,20 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-mono text-zinc-400 block">{t.complexityLabel}</label>
-                      <span className="text-emerald-300 font-mono">{detailLevel}/5</span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          data-detail-auto="true"
+                          onClick={() => setHasCustomDetail(false)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-all ${
+                            hasCustomDetail ? 'text-zinc-500 hover:text-zinc-200' : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                          }`}
+                        >
+                          {lang === 'zh' ? '自动' : 'Auto'}
+                        </button>
+                        <span className="text-emerald-300 font-mono">{hasCustomDetail ? `${detailLevel}/5` : (lang === 'zh' ? 'AI 自动' : 'AI auto')}</span>
+                      </div>
                     </div>
-                    <label className="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" checked={includeInterior} onChange={(e) => setIncludeInterior(e.target.checked)} />{lang === 'zh' ? '生成完整室内（房间、楼梯、灯具、家具）' : 'Generate full interior (rooms, stairs, lighting, furniture)'}</label>
+                    <label className="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" checked={includeInterior} onChange={(e) => setIncludeInterior(e.target.checked)} />{lang === 'zh' ? '包含室内空间（按建筑类型自然生成）' : 'Include interior space (generated to suit the subject)'}</label>
                     <input
                       type="range"
                       min={1}
@@ -760,13 +816,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       {[1, 2, 3, 4, 5].map((level) => (
                         <button
                           key={level}
+                          data-detail-level={level}
                           onClick={() => {
                             setHasCustomDetail(true);
                             setDetailLevel(level);
                             setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
                           }}
                           className={`py-1 rounded-md text-[11px] font-mono transition-all ${
-                            detailLevel === level
+                            hasCustomDetail && detailLevel === level
                               ? 'bg-white text-zinc-950 font-semibold shadow-sm'
                               : 'bg-white/[0.03] text-zinc-400 hover:text-white border border-white/[0.06]'
                           }`}
@@ -903,10 +960,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
             {/* Quick Export & Full CAD Jump */}
             <div className="pt-2 border-t border-white/[0.07] space-y-2">
+              {fileExport.exportError && <p data-export-error role="alert" className="text-xs text-red-400">{fileExport.exportError}</p>}
+              {fileExport.isExporting && <p role="status" className="text-xs text-zinc-400">{lang === 'zh' ? '正在导出…' : 'Exporting...'}</p>}
               <div className="grid grid-cols-2 gap-1.5">
                 <button
                   data-ai-export="litematic"
-                  onClick={() => void exportLitematic(structure, placements)}
+                  onClick={saveLitematic}
+                  disabled={fileExport.isExporting}
                   className="py-2 px-2.5 rounded-lg btn-secondary text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-400" />
@@ -914,7 +974,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 </button>
                 <button
                   data-ai-export="schematic"
-                  onClick={() => void exportSchematic(structure, placements)}
+                  onClick={saveSchematic}
+                  disabled={fileExport.isExporting}
                   className="py-2 px-2.5 rounded-lg btn-secondary text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-zinc-400" />
@@ -935,22 +996,41 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
         {/* Center / Right Column: Immersive 3D Spatial Viewport */}
         <main
-          className={`flex-1 h-full flex flex-col relative overflow-hidden bg-[#07090e] ${
+          className={`flex-1 h-full flex flex-col relative overflow-hidden bg-[var(--bg-canvas)] ${
             mobileTab === 'controls' ? 'hidden lg:flex' : 'flex'
           }`}
         >
           {/* Viewport Canvas with interactive Orbit */}
-          <div className="flex-1 relative">
-            <ThreeViewport
-              structure={structure}
+          <div data-ai-renderer={rendererMode} data-ai-preview-blocks={previewBlockCount} className="flex-1 relative">
+            {rendererMode === 'textured' ? (
+              <LodestoneViewport
+                structure={previewStructure}
+                backgroundColor={viewportBackground}
+                className="w-full h-full"
+              />
+            ) : (
+              <ThreeViewport
+                structure={previewStructure}
                 backgroundColor={viewportBackground}
                 onBackgroundColorChange={changeViewportBackground}
-              minY={minY}
-              maxY={maxY}
-              wireframe={wireframe}
-              showRegions={false}
-              className="w-full h-full"
-            />
+                minY={minY}
+                maxY={maxY}
+                showRegions={false}
+                className="w-full h-full"
+              />
+            )}
+
+            {solidFallback && (
+              <div
+                data-ai-preview-fallback="true"
+                role="status"
+                className="pointer-events-none absolute bottom-16 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-2.5 py-1 text-[10px] text-amber-200"
+              >
+                {lang === 'zh'
+                  ? `实体预览：${previewBlockCount.toLocaleString()} 个方块（材质预览上限 25 万）`
+                  : `Solid preview: ${previewBlockCount.toLocaleString()} blocks (textured preview caps at 250k)`}
+              </div>
+            )}
 
             {/* Floating Minimal Bottom Slicing Drawer */}
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 studio-glass px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-2xl flex items-center gap-3 sm:gap-4 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-24px)] overflow-x-auto">
@@ -958,6 +1038,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 <span className="text-[10px] sm:text-[11px] text-zinc-400 whitespace-nowrap">{t.layerSlice}</span>
                 <input
                   type="range"
+                  data-ai-slice="true"
                   min={0}
                   max={structure.size.y}
                   value={maxY}
@@ -972,12 +1053,18 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               <div className="w-[1px] h-3.5 bg-white/10 shrink-0" />
 
               <button
-                onClick={() => setWireframe(!wireframe)}
-                className={`px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-mono transition-colors shrink-0 cursor-pointer ${
-                  wireframe ? 'bg-white/20 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
+                data-ai-render-toggle="true"
+                aria-pressed={rendererMode === 'solid'}
+                disabled={solidFallback}
+                title={solidFallback ? (lang === 'zh' ? '方块数超过材质预览上限，已自动切换到实体预览' : 'Above the textured preview limit; solid preview is forced') : undefined}
+                onClick={() => setSolidPreview(!solidPreview)}
+                className={`px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-mono transition-colors shrink-0 ${
+                  solidFallback ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                } ${rendererMode === 'solid' ? 'bg-white/20 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
-                {wireframe ? 'Wireframe: ON' : 'Wireframe: OFF'}
+                <span className={rendererMode === 'textured' ? 'text-white' : 'text-zinc-500'}>{t.renderTextured}</span>
+                <span className="text-zinc-600"> / </span>
+                <span className={rendererMode === 'solid' ? 'text-white' : 'text-zinc-500'}>{t.renderSolid}</span>
               </button>
             </div>
           </div>

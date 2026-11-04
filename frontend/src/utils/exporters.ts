@@ -2,6 +2,8 @@ import { StructureData, MaterialItem } from '../types/minecraft';
 import { runEngineTask, structureToGrid } from '../integrations/engine';
 import { BLOCK_REGISTRY, BLOCK_SUBSTITUTIONS } from './blockRegistry';
 import { mergePlacements } from '../integrations/placement';
+import { structureRegions } from '../integrations/regions';
+import { stringifyProjectJson } from '../integrations/project';
 import type { LitematicaPlacementState } from '../types/minecraft';
 
 export function calculateMaterialsBOM(
@@ -71,9 +73,10 @@ export function exportMaterialsCsv(bom: MaterialItem[], structureName: string): 
 
 export async function exportLitematic(structure: StructureData, placements: LitematicaPlacementState[] = []): Promise<void> {
   const exportStructure = mergePlacements(structure, placements);
-  const bytes = placements.length ? await runEngineTask<Uint8Array>('export', structureToGrid(exportStructure), { format: 'litematic', name: structure.name, author: structure.author, description: structure.description }) : structure.plan
-    ? await runEngineTask<Uint8Array>('ai.export-plan-litematic', structure.plan)
-    : await runEngineTask<Uint8Array>('export', structureToGrid(exportStructure), { format: 'litematic', name: structure.name, author: structure.author, description: structure.description });
+  const bytes = await runEngineTask<Uint8Array>('export', structureToGrid(exportStructure), {
+    format: 'litematic', name: structure.name, author: structure.author, description: structure.description,
+    originalOrigin: exportStructure.origin, regions: structureRegions(exportStructure),
+  });
   downloadBlob(new Blob([bytes as BlobPart], { type: 'application/gzip' }), `${sanitizeFileName(structure.name)}.litematic`);
 }
 
@@ -84,7 +87,7 @@ export async function exportSchematic(structure: StructureData, placements: Lite
 }
 
 export function exportBlockGridJson(structure: StructureData): void {
-  const jsonStr = JSON.stringify(structureToGrid(structure), null, 2);
+  const jsonStr = stringifyProjectJson(structureToGrid(structure), 2);
   downloadBlob(
     new Blob([jsonStr], { type: 'application/json' }),
     `${sanitizeFileName(structure.name)}_blockgrid.json`

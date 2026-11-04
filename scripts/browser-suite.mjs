@@ -2,8 +2,10 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
+import { assertBrowserBuild } from './lib/browser-build.mjs';
 
 const root = resolve('.');
+await assertBrowserBuild(root);
 const temp = await mkdtemp(join(tmpdir(), 'craftaib-browser-'));
 const env = { ...process.env, PORT: '0', CRAFTAIB_PUBLIC_DIR: resolve('dist') };
 for (const key of Object.keys(env)) if (/^CRAFTAIB_(MODEL|TEXT|VISION|OIDC|ADMIN|ALLOWED)/.test(key)) env[key] = '';
@@ -18,7 +20,7 @@ try {
     server.once('error', (error) => { clearTimeout(timer); reject(error); });
     server.once('exit', (code) => { clearTimeout(timer); reject(new Error(`Fixture server exited (${code}).`)); });
   });
-  const tests = ['architect-ui-smoke.mjs', 'ai-generation-browser-smoke.mjs', 'ui-button-smoke.mjs', 'ui-file-action-smoke.mjs', 'viewer-region-browser-smoke.mjs', 'resource-pack-browser-smoke.mjs', 'responsive-browser-smoke.mjs', 'viewer-performance-smoke.mjs'];
+  const tests = ['architect-ui-smoke.mjs', 'ai-generation-browser-smoke.mjs', 'ui-button-smoke.mjs', 'ui-file-action-smoke.mjs', 'export-edit-browser-smoke.mjs', 'project-state-browser-smoke.mjs', 'viewer-region-browser-smoke.mjs', 'resource-pack-browser-smoke.mjs', 'responsive-browser-smoke.mjs', 'viewer-performance-smoke.mjs'];
   for (const test of tests) {
     console.log(`Browser suite: ${test}`);
     await new Promise((resolveTest, reject) => {

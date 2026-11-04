@@ -7,3 +7,4 @@ export * from './editing.js';
 export * from './merge.js';
 export * from './scene.js';
 export * from './checkpoint.js';
+export * from './json.js';

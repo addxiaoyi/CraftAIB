@@ -51,6 +51,7 @@ export interface StructureData {
     y: number;
     z: number;
   };
+  origin?: { x: number; y: number; z: number };
   regions: VoxelRegion[];
   blocks: VoxelBlock[];
   createdAt?: string;

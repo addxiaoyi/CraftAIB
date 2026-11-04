@@ -7,32 +7,27 @@ import { fromCraftmaticSchematic, generateBrowserStructure, gridToViewerData, vi
 
 const grid = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'stone' } }], { width: 1, height: 1, length: 1 });
 const towerPlan = planBuilding({ prompt: 'a gothic tower', seed: 5 });
-towerPlan.dimensions = { width: 11, height: 18, length: 11 };
-towerPlan.floors = 4;
-towerPlan.regions = [
-  { name: 'tower body', role: 'main tower shaft', x: 0, y: 0, z: 0, width: 11, height: 13, length: 11 },
-  { name: 'spire', role: 'stepped spire roof', x: 2, y: 13, z: 2, width: 7, height: 5, length: 7 },
-];
-towerPlan.rooms = [{ id: 'hall', type: 'hall', floor: 0, x: 1, y: 1, z: 1, width: 9, height: 3, length: 9 }];
-towerPlan.components = [
-  { id: 'entrance', type: 'door', x: 5, y: 1, z: 0, options: { facing: 'south' } },
-  { id: 'windows', type: 'pointed_arch_window', x: 5, y: 1, z: 0, options: { count: 2 } },
-  { id: 'buttress', type: 'corner_buttress', x: 0, y: 0, z: 0, options: { size: 2 } },
-  { id: 'spire', type: 'stepped_gothic_spire', x: 2, y: 13, z: 2, options: { size: 7, floors: 4 } },
-  { id: 'beacon', type: 'redstone_beacon', x: 5, y: 16, z: 5, options: { size: 3 } },
-];
 const towerGrid = structurePlanToGrid(towerPlan);
 const towerBlocks = new Map(towerGrid.cells.map((cell) => [`${cell.x},${cell.y},${cell.z}`, cell.block]));
-assert.equal(towerBlocks.get('5,1,0').id, 'minecraft:dark_oak_door');
-assert.equal(towerBlocks.get('5,1,0').properties.half, 'lower');
-assert.equal(towerBlocks.get('5,2,0').properties.half, 'upper');
-assert.equal(towerBlocks.get('5,1,0').properties.facing, 'south');
-assert.ok(towerGrid.cells.some((cell) => cell.block.id === 'minecraft:redstone_block'));
-assert.ok(towerGrid.cells.some((cell) => cell.block.id === 'minecraft:beacon'));
-assert.ok(towerGrid.cells.some((cell) => cell.y >= 14 && cell.block.id === towerPlan.palette.roof), 'spire component should build above the tower shaft');
-assert.ok(towerGrid.cells.filter((cell) => cell.y === towerPlan.dimensions.height - 1).length < towerPlan.dimensions.width * towerPlan.dimensions.length / 2, 'spire peak should not be a solid flat cap');
+const towerWidth = towerPlan.dimensions.width;
+const towerHeight = towerPlan.dimensions.height;
+const towerLength = towerPlan.dimensions.length;
+assert.ok(towerPlan.geometry.parts.length > 10, 'a tower should carry typed geometry');
+assert.equal(towerBlocks.get('7,1,0').id, 'minecraft:dark_oak_door');
+assert.equal(towerBlocks.get('7,1,0').properties.half, 'lower');
+assert.equal(towerBlocks.get('7,2,0').properties.half, 'upper');
+assert.equal(towerBlocks.get('7,1,0').properties.facing, 'south');
+assert.ok(towerGrid.cells.some((cell) => cell.block.id === 'minecraft:stone_brick_stairs'), 'tower should contain a stairs flight');
+assert.ok(towerGrid.cells.some((cell) => cell.block.id === towerPlan.palette.window), 'tower should open windows');
+assert.equal(towerGrid.cells.filter((cell) => cell.y === towerHeight - 2 && cell.block.id === towerPlan.palette.roof).length, towerWidth * towerLength, 'deck should be one solid course under the crown');
+assert.ok(towerGrid.cells.filter((cell) => cell.y === towerHeight - 1 && cell.block.id === towerPlan.palette.roof).length < towerWidth * towerLength / 2, 'crown should be a merlon ring, not a solid cap');
 assert.ok(towerGrid.cells.some((cell) => cell.y === 3 && cell.x === 0 && cell.block.id === towerPlan.palette.wall), 'tower wall should not have the old periodic full-floor gap');
-assert.ok(towerGrid.cells.some((cell) => cell.block.id === towerPlan.palette.window), 'window component should place glazing');
+const previewHouse = planBuilding({ prompt: 'small stone house', seed: 7 });
+const previewRoof = structurePlanToGrid(previewHouse).cells.filter((cell) => cell.block.id === previewHouse.palette.roof);
+const roofCourses = [...new Set(previewRoof.map((cell) => cell.y))].sort((a, b) => a - b).map((y) => previewRoof.filter((cell) => cell.y === y).length);
+assert.ok(roofCourses.length >= 2 && roofCourses.every((count, index) => index === 0 || count <= roofCourses[index - 1]), 'a gable roof must narrow course by course toward the ridge');
+const massedPlan = planBuilding({ prompt: 'a hall width 64', seed: 8 });
+assert.ok(massedPlan.dimensions.length > massedPlan.dimensions.width, 'a large brief without constraints should take its footprint from the type proportions');
 const housePlan = planBuilding({ prompt: 'a small house with a gabled roof', seed: 6 });
 housePlan.dimensions = { width: 11, height: 12, length: 9 };
 housePlan.floors = 2;
@@ -45,10 +40,12 @@ housePlan.components = [
   { id: 'door', type: 'door', x: 5, y: 1, z: 0, options: { facing: 'south' } },
   { id: 'roof', type: 'gable', x: 0, y: 8, z: 0, options: { overhang: 1 } },
 ];
+housePlan.geometry = undefined;
 const houseGrid = structurePlanToGrid(housePlan);
 assert.ok(houseGrid.cells.some((cell) => cell.y === 8 && cell.block.id === housePlan.palette.roof), 'gable roof should begin at eaves height');
 assert.ok(houseGrid.cells.some((cell) => cell.y === 11 && cell.block.id === housePlan.palette.roof), 'gable roof should rise to a ridge');
 assert.ok(houseGrid.cells.filter((cell) => cell.y === 11).length < housePlan.dimensions.width * housePlan.dimensions.length / 2, 'gable roof should not be a flat full-volume cap');
+assert.ok(houseGrid.cells.some((cell) => cell.block.id === 'minecraft:dark_oak_door'), 'legacy raster should still place the entrance door');
 const referencePixels = new Uint8Array(16 * 16 * 4);
 for (let y = 2; y < 14; y += 1) {
   const left = y < 5 ? 5 : 3;

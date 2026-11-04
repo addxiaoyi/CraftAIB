@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { LitematicaPlacementState, PlacementMirror, PlacementRotation, StructureData, VoxelBlock, VoxelRegion } from '../../types/minecraft';
 import { downloadPlacements, normalizePlacement } from '../../integrations/placement';
+import { transformStructure } from '../../integrations/transforms';
+import { parseProjectJson, stringifyProjectJson } from '../../integrations/project';
 import { ThreeViewport } from '../ThreeViewport';
 import { LodestoneViewport } from '../LodestoneViewport';
 import { BLOCK_REGISTRY } from '../../utils/blockRegistry';
@@ -37,6 +39,14 @@ interface Viewer3dViewProps {
   onPlacementsChange: (placements: LitematicaPlacementState[]) => void;
 }
 
+function restoreEditHistory(structure: StructureData, snapshots: StructureData[] = []): StructureData[] {
+  const history = snapshots.filter((snapshot) => snapshot.id === structure.id);
+  const latest = history.at(-1);
+  if (!latest) return [structure];
+  if (latest === structure || stringifyProjectJson(latest) === stringifyProjectJson(structure)) return [...history.slice(0, -1), structure];
+  return [...history, structure];
+}
+
 export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   structure,
   onStructureChange,
@@ -46,10 +56,11 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   placements,
   onPlacementsChange,
 }) => {
-  const [history, setHistory] = useState<StructureData[]>(initialHistory?.length ? initialHistory : [structure]);
-  const [historyIndex, setHistoryIndex] = useState<number>(Math.max(0, (initialHistory?.length ?? 1) - 1));
+  const [history, setHistory] = useState<StructureData[]>(() => restoreEditHistory(structure, initialHistory));
+  const [historyIndex, setHistoryIndex] = useState<number>(() => history.length - 1);
+  const currentSnapshot = useRef(structure);
 
-  useEffect(() => { onHistoryChange?.(history); }, [history, onHistoryChange]);
+  useEffect(() => { onHistoryChange?.(history.slice(0, historyIndex + 1)); }, [history, historyIndex, onHistoryChange]);
 
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [activePlacementIndex, setActivePlacementIndex] = useState(0);
@@ -66,6 +77,18 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [rendererMode, setRendererMode] = useState<'native' | 'lodestone'>('native');
   const [resourcePackFile, setResourcePackFile] = useState<File | null>(null);
   const resourcePackInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (currentSnapshot.current === structure) return;
+    currentSnapshot.current = structure;
+    const restored = restoreEditHistory(structure, initialHistory);
+    setHistory(restored);
+    setHistoryIndex(restored.length - 1);
+    setActiveRegionId(null);
+    setSelectedBlock(null);
+    setMinY(0);
+    setMaxY(structure.size.y);
+  }, [structure, initialHistory]);
 
   // Responsive panel defaults: open on desktop, closed by default on small screens
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(() => {
@@ -139,6 +162,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
       newHistory.push(newStruct);
       setHistory(newHistory);
       setHistoryIndex(newHistory.length - 1);
+      currentSnapshot.current = newStruct;
       onStructureChange(newStruct);
     },
     [history, historyIndex, onStructureChange]
@@ -148,6 +172,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     if (historyIndex > 0) {
       const nextIdx = historyIndex - 1;
       setHistoryIndex(nextIdx);
+      currentSnapshot.current = history[nextIdx];
       onStructureChange(history[nextIdx]);
     }
   };
@@ -156,99 +181,14 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     if (historyIndex < history.length - 1) {
       const nextIdx = historyIndex + 1;
       setHistoryIndex(nextIdx);
+      currentSnapshot.current = history[nextIdx];
       onStructureChange(history[nextIdx]);
     }
   };
 
-  const handleRotate90 = () => {
-    const origSize = structure.size;
-    const newSize = { x: origSize.z, y: origSize.y, z: origSize.x };
-
-    const rotatedBlocks: VoxelBlock[] = structure.blocks.map((b) => ({
-      x: origSize.z - 1 - b.z,
-      y: b.y,
-      z: b.x,
-      blockId: b.blockId,
-      state: b.state,
-    }));
-
-    const rotatedRegions: VoxelRegion[] = (structure.regions || []).map((r) => {
-      const [minX, minYVal, minZ] = r.bounds.min;
-      const [maxX, maxYVal, maxZ] = r.bounds.max;
-      return {
-        ...r,
-        bounds: {
-          min: [origSize.z - maxZ, minYVal, minX],
-          max: [origSize.z - minZ, maxYVal, maxX],
-        },
-      };
-    });
-
-    commitChange({
-      ...structure,
-      size: newSize,
-      blocks: rotatedBlocks,
-      regions: rotatedRegions,
-    });
-  };
-
-  const handleMirrorX = () => {
-    const maxXCoord = structure.size.x - 1;
-    const mirroredBlocks: VoxelBlock[] = structure.blocks.map((b) => ({
-      x: maxXCoord - b.x,
-      y: b.y,
-      z: b.z,
-      blockId: b.blockId,
-      state: b.state,
-    }));
-
-    const mirroredRegions: VoxelRegion[] = (structure.regions || []).map((r) => {
-      const [minX, minYVal, minZ] = r.bounds.min;
-      const [maxX, maxYVal, maxZ] = r.bounds.max;
-      return {
-        ...r,
-        bounds: {
-          min: [structure.size.x - maxX, minYVal, minZ],
-          max: [structure.size.x - minX, maxYVal, maxZ],
-        },
-      };
-    });
-
-    commitChange({
-      ...structure,
-      blocks: mirroredBlocks,
-      regions: mirroredRegions,
-    });
-  };
-
-  const handleMirrorZ = () => {
-    const maxZCoord = structure.size.z - 1;
-    const mirroredBlocks: VoxelBlock[] = structure.blocks.map((b) => ({
-      x: b.x,
-      y: b.y,
-      z: maxZCoord - b.z,
-      blockId: b.blockId,
-      state: b.state,
-    }));
-
-    const mirroredRegions: VoxelRegion[] = (structure.regions || []).map((r) => {
-      const [minX, minYVal, minZ] = r.bounds.min;
-      const [maxX, maxYVal, maxZ] = r.bounds.max;
-      return {
-        ...r,
-        bounds: {
-          min: [minX, minYVal, structure.size.z - maxZ],
-          max: [maxX, maxYVal, structure.size.z - minZ],
-        },
-      };
-    });
-
-    commitChange({
-      ...structure,
-      blocks: mirroredBlocks,
-      regions: mirroredRegions,
-    });
-  };
+  const handleRotate90 = () => commitChange(transformStructure(structure, 'rotate90'));
+  const handleMirrorX = () => commitChange(transformStructure(structure, 'mirrorX'));
+  const handleMirrorZ = () => commitChange(transformStructure(structure, 'mirrorZ'));
 
   const toggleRegionVisibility = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -299,11 +239,11 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const selectedBlockMeta = selectedBlock ? BLOCK_REGISTRY[selectedBlock.blockId] : null;
   const entities = structure.metadata?.entities ?? [];
   const blockEntities = structure.metadata?.blockEntities ?? [];
-  const filteredEntities = entities.filter((item) => JSON.stringify(item).toLowerCase().includes(nbtQuery.toLowerCase()));
-  const filteredBlockEntities = blockEntities.filter((item) => JSON.stringify(item).toLowerCase().includes(nbtQuery.toLowerCase()));
+  const filteredEntities = entities.filter((item) => stringifyProjectJson(item).toLowerCase().includes(nbtQuery.toLowerCase()));
+  const filteredBlockEntities = blockEntities.filter((item) => stringifyProjectJson(item).toLowerCase().includes(nbtQuery.toLowerCase()));
   const updateNbt = (key: 'entities' | 'blockEntities', raw: string) => {
     try {
-      const value = JSON.parse(raw);
+      const value = parseProjectJson(raw);
       if (!Array.isArray(value)) throw new Error('NBT value must be an array.');
       setNbtError(null);
       commitChange({ ...structure, metadata: { ...(structure.metadata ?? {}), [key]: value } });
@@ -311,7 +251,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   };
   const updateNbtItem = (key: 'entities' | 'blockEntities', index: number, raw: string) => {
     try {
-      const item = JSON.parse(raw);
+      const item = parseProjectJson(raw);
       validateNbtEntry(item, key);
       const values = [...(structure.metadata?.[key] as unknown[] ?? [])];
       values[index] = item;
@@ -514,7 +454,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
 
       {/* Left Dock: Region Hierarchy Tree (Adaptive width & smooth transition) */}
       <div
-        className={`fixed lg:absolute top-0 bottom-0 left-0 z-30 w-[85vw] max-w-[280px] sm:w-72 bg-[#0c0e15]/95 backdrop-blur-2xl border-r border-white/[0.07] flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-2xl ${
+        className={`fixed lg:absolute top-0 bottom-0 left-0 z-[25] w-[85vw] max-w-[280px] sm:w-[var(--workspace-dock-w)] bg-[#0c0e15]/95 backdrop-blur-2xl border-r border-white/[0.07] flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-2xl ${
           isLeftPanelOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -609,10 +549,10 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
       {/* Left Dock Toggle Trigger */}
       <button
         onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
-        className="absolute top-3 left-3 z-30 p-1.5 rounded-md studio-glass text-zinc-300 hover:text-white transition-all shadow-xl"
+        className="absolute top-3 left-3 z-[26] p-1.5 rounded-md studio-glass text-zinc-300 hover:text-white transition-all shadow-xl"
         style={{
           transform: isLeftPanelOpen && typeof window !== 'undefined' && window.innerWidth >= 1024
-            ? 'translateX(284px)'
+            ? 'translateX(calc(var(--workspace-dock-w) - 4px))'
             : 'translateX(0)',
         }}
         title={t.openPartitions}
@@ -622,7 +562,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
 
       {/* Right Dock: Selection Inspector & Geometric Transformations */}
       <div
-        className={`fixed lg:absolute top-0 bottom-0 right-0 z-30 w-[85vw] max-w-[320px] sm:w-80 bg-[#0c0e15]/95 backdrop-blur-2xl border-l border-white/[0.07] flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-2xl ${
+        className={`fixed lg:absolute top-0 bottom-0 right-0 z-[25] w-[85vw] max-w-[320px] sm:w-80 bg-[#0c0e15]/95 backdrop-blur-2xl border-l border-white/[0.07] flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-2xl ${
           isRightPanelOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
@@ -725,7 +665,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
             {(['entities', 'blockEntities'] as const).map((key) => {
               const values = key === 'entities' ? filteredEntities : filteredBlockEntities;
               const source = key === 'entities' ? entities : blockEntities;
-              return <details key={key}><summary className="cursor-pointer text-xs text-zinc-300">{key === 'entities' ? 'Entities' : 'BlockEntities'} ({values.length})</summary><div className="mt-1 space-y-1">{values.map((item) => { const sourceIndex = source.indexOf(item); return <div key={`${key}-${sourceIndex}`} className="flex gap-1"><textarea aria-label={`${key} ${sourceIndex}`} defaultValue={JSON.stringify(item, null, 2)} onBlur={(event) => updateNbtItem(key, sourceIndex, event.target.value)} className="w-full min-h-16 rounded border border-white/10 bg-black/20 p-2 text-[10px] text-zinc-400 font-mono" /><button type="button" onClick={() => deleteNbtItem(key, sourceIndex)} className="self-start px-1.5 py-1 text-[10px] text-red-300 border border-red-500/20 rounded">×</button></div>; })}<button type="button" onClick={() => addNbtItem(key)} className="px-2 py-1 text-[10px] border border-white/10 rounded text-zinc-300">+ Add</button></div></details>;
+              return <details key={key}><summary className="cursor-pointer text-xs text-zinc-300">{key === 'entities' ? 'Entities' : 'BlockEntities'} ({values.length})</summary><div className="mt-1 space-y-1">{values.map((item) => { const sourceIndex = source.indexOf(item); return <div key={`${key}-${sourceIndex}`} className="flex gap-1"><textarea aria-label={`${key} ${sourceIndex}`} defaultValue={stringifyProjectJson(item, 2)} onBlur={(event) => updateNbtItem(key, sourceIndex, event.target.value)} className="w-full min-h-16 rounded border border-white/10 bg-black/20 p-2 text-[10px] text-zinc-400 font-mono" /><button type="button" onClick={() => deleteNbtItem(key, sourceIndex)} className="self-start px-1.5 py-1 text-[10px] text-red-300 border border-red-500/20 rounded">×</button></div>; })}<button type="button" onClick={() => addNbtItem(key)} className="px-2 py-1 text-[10px] border border-white/10 rounded text-zinc-300">+ Add</button></div></details>;
             })}
             {nbtError && <p role="alert" className="text-[10px] text-red-300">{nbtError}</p>}
           </div>
@@ -810,7 +750,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
       <button
         data-viewer-inspector-toggle="true"
         onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-        className="absolute top-3 right-3 z-30 p-1.5 rounded-md studio-glass text-zinc-300 hover:text-white transition-all shadow-xl"
+        className="absolute top-3 right-3 z-[26] p-1.5 rounded-md studio-glass text-zinc-300 hover:text-white transition-all shadow-xl"
         style={{
           transform: isRightPanelOpen && typeof window !== 'undefined' && window.innerWidth >= 1280
             ? 'translateX(-328px)'

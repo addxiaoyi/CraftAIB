@@ -1,4 +1,5 @@
 import type { StructureData, VoxelBlock, VoxelRegion } from '../types/minecraft';
+import { parseProjectJson, validateProject, validateStructure } from './project';
 
 type BlockState = { id: string; properties?: Record<string, string> };
 export type BlockGrid = {
@@ -79,7 +80,10 @@ export function runEngineTask<T>(
       finish();
       resolve(data.output as T);
     };
-    worker.postMessage({ id, type, input, options });
+    worker.onmessageerror = () => fail(new Error(`Could not decode the engine response: ${type}`));
+    try { worker.postMessage({ id, type, input, options }); } catch (error) {
+      fail(error instanceof Error ? error : new Error(`Could not send the engine task: ${type}`));
+    }
   });
 }
 
@@ -99,7 +103,7 @@ export function structureToGrid(structure: StructureData): BlockGrid {
     cells,
     palette: [...palette.values()],
     coordinateSystem: 'xyz',
-    origin: { x: 0, y: 0, z: 0 },
+    origin: structure.origin ?? { x: 0, y: 0, z: 0 },
     ...(structure.metadata ? { metadata: structure.metadata } : {}),
   };
 }
@@ -120,9 +124,9 @@ export function gridToStructure(
     const pos = region.position ?? { x: region.x ?? 0, y: region.y ?? 0, z: region.z ?? 0 };
     const min = [clamp(pos.x, 0, grid.width - 1), clamp(pos.y, 0, grid.height - 1), clamp(pos.z, 0, grid.length - 1)] as [number, number, number];
     const max = [
-      clamp(min[0] + Math.max(1, size.x), min[0] + 1, grid.width),
-      clamp(min[1] + Math.max(1, size.y), min[1] + 1, grid.height),
-      clamp(min[2] + Math.max(1, size.z), min[2] + 1, grid.length),
+      clamp(pos.x + Math.max(1, size.x), min[0] + 1, grid.width),
+      clamp(pos.y + Math.max(1, size.y), min[1] + 1, grid.height),
+      clamp(pos.z + Math.max(1, size.z), min[2] + 1, grid.length),
     ] as [number, number, number];
     return { id: `region-${index}`, name: region.name, bounds: { min, max }, locked: false, visible: true, color: colors[index % colors.length] };
   });
@@ -138,6 +142,7 @@ export function gridToStructure(
     description: metadata.description || '',
     version: '1.20.4',
     size: { x: grid.width, y: grid.height, z: grid.length },
+    origin: { ...grid.origin },
     regions,
     blocks,
     createdAt: new Date().toISOString(),
@@ -152,11 +157,15 @@ export async function decodeStructureFile(file: File): Promise<StructureData> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const [grid, info] = await Promise.all([
       runEngineTask<BlockGrid>('litematic.parse', bytes),
-      runEngineTask<any>('litematic.inspect', bytes),
+      runEngineTask<LitematicaSummary>('litematic.inspect', bytes),
     ]);
-    const regions = (info.regions ?? []).map((region: any) => ({
+    const regions = info.regions.map((region) => ({
       name: region.name,
-      position: { x: region.position.x - grid.origin.x, y: region.position.y - grid.origin.y, z: region.position.z - grid.origin.z },
+      position: {
+        x: region.position.x + Math.min(0, region.size.x + 1) - grid.origin.x,
+        y: region.position.y + Math.min(0, region.size.y + 1) - grid.origin.y,
+        z: region.position.z + Math.min(0, region.size.z + 1) - grid.origin.z,
+      },
       dimensions: region.dimensions,
     }));
     return gridToStructure(grid, { name: info.metadata?.name || file.name, author: info.metadata?.author, regions });
@@ -166,18 +175,23 @@ export async function decodeStructureFile(file: File): Promise<StructureData> {
     return gridToStructure(grid, { name: file.name.replace(/\.(schem|schematic)$/i, '') });
   }
   if (ext !== 'json') throw new Error('Choose a .litematic, .schem, or BlockGrid .json file.');
-  const value = JSON.parse(await file.text());
-  if (isBlockGrid(value)) return gridToStructure(value, { name: file.name.replace(/\.json$/i, '') });
-  if (isStructureData(value)) return value;
-  throw new Error('This JSON file is not a CraftAIB BlockGrid or structure project.');
+  const value = parseProjectJson(await file.text());
+  if (isBlockGrid(value)) {
+    await runEngineTask('grid.validate', value);
+    return gridToStructure(value, { name: file.name.replace(/\.json$/i, '') });
+  }
+  if (value && typeof value === 'object' && 'structure' in value) return validateProject(value).structure;
+  return validateStructure(value);
 }
 
-function isBlockGrid(value: any): value is BlockGrid {
-  return value?.version === 1 && value?.coordinateSystem === 'xyz' && Array.isArray(value?.cells) && Number.isInteger(value?.width);
-}
+type Vec3 = { x: number; y: number; z: number };
+type LitematicaSummary = {
+  metadata: { name: string; author: string };
+  regions: Array<{ name: string; position: Vec3; size: Vec3; dimensions: Vec3 }>;
+};
 
-function isStructureData(value: any): value is StructureData {
-  return value?.size && Array.isArray(value?.blocks) && Array.isArray(value?.regions);
+function isBlockGrid(value: unknown): value is BlockGrid {
+  return Boolean(value && typeof value === 'object' && 'coordinateSystem' in value && value.coordinateSystem === 'xyz');
 }
 
 function normalizeBlockId(id: string) { return id.includes(':') ? id : `minecraft:${id}`; }

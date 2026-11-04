@@ -1,20 +1,19 @@
 # CraftAIB
 
-CraftAIB is a unified Minecraft image, voxel, map-art, schematic, and scene engine. **Voxelartcraft remains the primary image-to-voxel experience**, while Craftmatic and Cartographer are connected through explicit TypeScript adapters and a shared scene model.
+CraftAIB is a unified Minecraft image, voxel, map-art, schematic, and scene workbench.
+The active application is the React frontend in `frontend/`, backed by a shared TypeScript
+engine, browser Worker, Node CLI and same-origin AI server. Voxelartcraft, Craftmatic and
+Cartographer capabilities are connected through explicit adapters.
 
-## Current implementation
+## Project goal
 
-The first engine foundation is now present:
+Turn a prompt, reference image, image, or structure file into an editable Minecraft structure,
+then inspect, transform, count materials, save and export it without losing block states,
+regions, coordinates or supported metadata. The ten workspaces share one current structure.
 
-- `docs/capability-matrix.md` — source-level inventory of the three pinned repositories, runtime boundaries, migration strategy, tests, and license flags.
-- `packages/core` — `ImageSource`, `PixelMap`, `BlockState`, `BlockGrid`, `SceneGraph`, task events, validation, scene conversion, and material counting.
-- `packages/voxelartcraft-adapter` — normalizes Voxelartcraft's runtime `blocks/palette/materials` arrays into `BlockGrid`.
-- `packages/cartographer-adapter` — normalizes Map Art cells and exposes a single-layer pixel bridge.
-- `packages/craftmatic-adapter` — normalizes schematic-like data into `BlockGrid` and `SceneGraph`.
-- `packages/engine-worker` — shared browser Worker task protocol with progress, result, error, and cancellation-ready events.
-- `packages/engine-cli` — initial Node CLI for validating grids and producing material reports.
-
-The current step is intentionally an engine foundation, not a claim that every upstream feature has already been reimplemented behind one API.
+See [`docs/project-goals.md`](docs/project-goals.md) for the acceptance scope,
+[`docs/engine-status.md`](docs/engine-status.md) for regression coverage, and
+[`docs/architecture.md`](docs/architecture.md) for the runtime boundaries.
 
 ## Pinned upstream baselines
 
@@ -39,14 +38,15 @@ The canonical grid uses zero-based `xyz` coordinates, a required `minecraft:air`
 Requirements: Node.js 24 or newer, pnpm 11, and Git. The server uses Node's built-in proxy support for configured upstream endpoints.
 
 ```powershell
-pnpm install --offline --ignore-scripts
+git submodule update --init --recursive
+pnpm install --frozen-lockfile --ignore-scripts
 node scripts/build-engine.mjs
 node scripts/engine-smoke.mjs
 pnpm matrix
 npm run build:browser-worker
 ```
 
-The engine test also rebuilds the browser Worker with the native Windows esbuild binary through `scripts/build-browser-worker.ps1`; this avoids the Windows Node child-process `spawn EPERM` path. The direct build script is used for the new engine packages because upstream native postinstall scripts (`esbuild`, `sharp`, `workerd`) may be blocked by pnpm approval policy. Upstream builds remain available separately:
+The engine build also compiles the three Craftmatic runtime entries used by the adapters. It uses host-native esbuild on Windows and Linux, so a fresh checkout does not depend on ignored vendor build artifacts. The complete upstream builds remain available separately:
 
 ```powershell
 pnpm build:craftmatic
@@ -62,7 +62,7 @@ npm start
 
 For hot reload, use `npm run dev`; it starts the API server and Vite frontend together. The imported frontend from `minecraft-architect-studio` lives under `frontend/` and keeps the 10-workspace information architecture, while structure parsing, Worker rendering, real projection encoding, materials, and AI planning are wired to the CraftAIB engine.
 
-See `docs/license-distribution-audit.md` for the current distribution audit and `docs/staged-change-map.md` for the four review stages.
+See `docs/license-distribution-audit.md` for the current distribution audit and `docs/staged-change-map.md` for the review stages.
 
 ## License boundary
 
@@ -74,6 +74,7 @@ CraftAIB now models the important distinction in Litematica between the compress
 
 - `parseLitematicaDocumentBytes` keeps metadata, named regions, negative region sizes, block-state properties, and entity/block-tick counts.
 - `parseLitematicaPlacements` and `serializeLitematicaPlacements` handle placement position, rotation, mirror, enabled/locked state, coordinate locks, and sub-region settings.
+- `serializeNativeLitematicaPlacement` writes the native Litematica 1.20.1 placement format; the parser accepts native origin arrays and wrapped sub-regions as well as the internal format.
 - `structurePlanToRegionGrids` converts an AI `StructurePlan` into non-overlapping named regions such as `main`, `roof`, `courtyard`, and `tower`.
 - `serializeLitematicaRegions` writes those regions with tight long-array block-state packing and Litematica-compatible metadata.
 
@@ -93,10 +94,10 @@ The 3D Viewer includes an opt-in `Lodestone models` renderer backed by Lodestone
 
 In `Lodestone models` mode, use `Resource pack` to upload a standard Minecraft resource-pack ZIP. Its blockstates, models and block textures are merged over the bundled vanilla pack. Hold `Alt` while moving over the model to select the underlying Minecraft block and update the existing Inspector.
 
-To use a real reference-image vision model, set `CRAFTAIB_VISION_API_URL`, `CRAFTAIB_VISION_API_KEY`, and optionally `CRAFTAIB_VISION_MODEL`. The adapter sends an OpenAI-compatible multimodal request and validates the returned StructurePlan before any blocks are generated.
+To use a real reference-image model, configure the shared `CRAFTAIB_MODEL_API_URL`, `CRAFTAIB_MODEL_API_KEY`, and `CRAFTAIB_MODEL` variables below. The adapter sends a compatible multimodal request and validates the returned StructurePlan before any blocks are generated.
 # AI building server
 
-Run `npm start`; its prestart step builds the shared engine and browser Worker. The server serves the workspace and exposes `GET /api/ai/status` and `POST /api/ai/structure-plan` on the same origin. Copy `.env.example` to `.env` and configure the text and/or vision API URL and model; the API key is optional for trusted local endpoints. Credentials are never sent to the browser or saved in project files. Without a configured model, the workspace creates a clearly labeled local preview; AI request failures require an explicit choice to retry or use that preview.
+Run `npm start`; its prestart step builds the shared engine and browser Worker. The server serves the workspace and exposes `GET /api/ai/status` and `POST /api/ai/structure-plan` on the same origin. Copy `.env.example` to `.env` and configure the shared model endpoint; the API key is optional for trusted local endpoints. Credentials are never sent to the browser or saved in project files. Without a configured model, the workspace creates a clearly labeled local preview; AI request failures require an explicit choice to retry or use that preview.
 
 
 See [`docs/frontend-api-contract.md`](docs/frontend-api-contract.md) for request/response schemas, limits, error codes, and the endpoints the frontend expects. No server-side project, materials, or export endpoints are needed.
@@ -113,18 +114,26 @@ CRAFTAIB_MODEL_TIMEOUT_MS=300000
 CRAFTAIB_MODEL_MAX_RETRIES=2
 ```
 
-The endpoint must support image input and chat-completions tool calls. The construction loop requires `analyze_reference_image`, `build_voxel_structure`, `inspect_voxel_structure`, `review_reference_structure`, and `finish_structure` or a revision. A reference image remains attached on every turn; the model receives executed orthographic voxel previews before it can finalize. No model-generated JavaScript is executed.
+The endpoint must support image input and chat-completions tool calls. The construction loop requires `analyze_reference_image`, `build_voxel_structure`, `inspect_voxel_structure`, `review_reference_structure`, and `finish_structure` or a revision. A reference image remains attached on every turn; the model receives executed orthographic voxel previews before it can finalize. The reference-image plan path does not execute model-generated JavaScript. Unconstrained text prompts may use the separately bounded BuilderGPT script path; see `docs/builder-gpt-parity.md`.
 
 The local server is available at `http://127.0.0.1:4183`. Check `GET /api/ai/status` before generating. `npm run test:vision-live` performs a real, bounded generation against the configured server and writes plans, event logs, orthographic review PNGs, Litematic/Schematic files and exact block-state round-trip reports under `outputs/vision-live`.
 
 ## Verification
 
 ```powershell
-npm run test:all       # engine, WaxMapArt, server and UI type checks
+npm run test:all       # engine, server, data integrity, tooling and UI type checks
 npm run build:ui
 npm run test:browser   # isolated browser fixture server; no model requests
 npm run verify
+npm run acceptance:client  # deterministic client package; does not launch Minecraft
+npm run test:model-live    # real configured model, at most two calls, 185 seconds total
 ```
+
+Server-side BuilderGPT replies execute in a fresh QuickJS WASM context with a 2-second execution
+deadline and 64 MiB guest memory cap. Only the three block-recording helpers are exposed.
+The synchronous engine helper without an evaluator is reserved for trusted local scripts.
+See `docs/acceptance-2026-11-04.md` for Windows/Linux evidence, the client package and the recorded
+provider authentication failure. Minecraft-client results and real generation quality remain pending.
 
 ## GitHub Codespaces
 

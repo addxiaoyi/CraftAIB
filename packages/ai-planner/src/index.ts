@@ -3,6 +3,14 @@ import { createGrid, validateGrid, type BlockGrid } from '../../core/dist/index.
 const MAX_GENERATED_BLOCKS = 12_000_000;
 const MAX_STRUCTURE_DIMENSION = 512;
 
+// Local preview defaults per structure type: [width, height, length]. Explicit constraints win.
+const TYPE_PREVIEW_DIMENSIONS: Record<string, [number, number, number]> = {
+  house: [24, 10, 24],
+  tower: [14, 26, 14],
+  bridge: [12, 16, 48],
+  cave: [32, 20, 32],
+};
+
 export type BuildingPrompt = {
   prompt: string;
   seed?: number;
@@ -164,7 +172,7 @@ export type ReferenceMatch = {
   generatedRows: string[];
 };
 
-const BUILDING_TYPES = ['house', 'tower', 'castle', 'dungeon', 'ship', 'cathedral', 'bridge', 'windmill', 'marketplace', 'village', 'city', 'harbor', 'palace', 'industrial'] as const;
+const BUILDING_TYPES = ['house', 'tower', 'castle', 'dungeon', 'ship', 'cathedral', 'bridge', 'windmill', 'marketplace', 'village', 'city', 'harbor', 'palace', 'industrial', 'cave'] as const;
 const STYLES = ['fantasy', 'medieval', 'modern', 'gothic', 'rustic', 'steampunk', 'elven', 'desert', 'underwater', 'colonial'] as const;
 
 export function fitStructurePlanToEnvelope(plan: StructurePlan, target: { width: number; height: number; length: number }): StructurePlan {
@@ -231,12 +239,12 @@ export function planBuilding(input: BuildingPrompt): StructurePlan {
   const text = prompt.toLowerCase();
   const requestedType = input.constraints?.type?.trim().toLowerCase();
   const type = (requestedType && requestedType !== 'ai_auto' ? requestedType : findKeyword(text, [
+    ['cave', 'cave'], ['洞穴', 'cave'], ['山洞', 'cave'], ['溶洞', 'cave'], ['洞窟', 'cave'],
     ['city', 'city'], ['harbor', 'harbor'], ['palace', 'palace'], ['industrial', 'industrial'],
     ['castle', 'castle'], ['城堡', 'castle'], ['tower', 'tower'], ['塔楼', 'tower'], ['塔', 'tower'],
     ['cathedral', 'cathedral'], ['教堂', 'cathedral'], ['village', 'village'], ['村庄', 'village'],
     ['村', 'village'], ['ship', 'ship'], ['船', 'ship'], ['bridge', 'bridge'], ['桥', 'bridge'],
     ['windmill', 'windmill'], ['风车', 'windmill'], ['dungeon', 'dungeon'], ['地牢', 'dungeon'],
-    ['city', 'city'], ['harbor', 'harbor'], ['palace', 'palace'], ['industrial', 'industrial'],
   ]) as StructurePlan['type'] ?? 'house');
   const requestedStyle = input.constraints?.style?.trim().toLowerCase();
   const style = (requestedStyle && requestedStyle !== 'ai_auto' ? requestedStyle : findKeyword(text, [
@@ -246,26 +254,37 @@ export function planBuilding(input: BuildingPrompt): StructurePlan {
     ['underwater', 'underwater'], ['水下', 'underwater'], ['rustic', 'rustic'], ['乡村', 'rustic'],
   ]) as StructurePlan['style'] ?? 'fantasy');
   const requestedHeight = input.constraints?.height;
+  // A brief that names no size still gets proportions: a tower is tall and narrow, a bridge is a long span.
+  const defaults = TYPE_PREVIEW_DIMENSIONS[type] ?? TYPE_PREVIEW_DIMENSIONS.house;
   const floors = clamp(input.constraints?.floors ?? parseNumber(text, /(?:floors?|层数?|层)\s*[:：]?\s*(\d+)/, 2), 1, 64);
-  const width = clamp(input.constraints?.width ?? parseNumber(text, /(?:width|宽度|宽)\s*[:：]?\s*(\d+)/, type === 'tower' ? 14 : 24), 8, MAX_STRUCTURE_DIMENSION);
-  const length = clamp(input.constraints?.length ?? parseNumber(text, /(?:length|深度|长度|长)\s*[:：]?\s*(\d+)/, width), 8, MAX_STRUCTURE_DIMENSION);
-  const height = clamp(requestedHeight ?? floors * 4 + 2, Math.max(8, floors * 3 + 2), MAX_STRUCTURE_DIMENSION);
+  const width = clamp(input.constraints?.width ?? parseNumber(text, /(?:width|宽度|宽)\s*[:：]?\s*(\d+)/, defaults[0]), 8, MAX_STRUCTURE_DIMENSION);
+  const length = clamp(input.constraints?.length ?? parseNumber(text, /(?:length|深度|长度|长)\s*[:：]?\s*(\d+)/, defaults[2]), 8, MAX_STRUCTURE_DIMENSION);
+  // A house or a keep stands four courses per storey; a bridge deck and a cave shell keep three.
+  const height = clamp(requestedHeight ?? Math.max(defaults[1], floors * 4 + 2), Math.max(8, floors * (type === 'house' ? 4 : type === 'tower' ? 5 : 3) + 2), MAX_STRUCTURE_DIMENSION);
   const components: ComponentPlan[] = [
     { id: 'entrance', type: 'door', x: Math.floor(width / 2), y: 1, z: 0, options: { facing: 'south' } },
     { id: 'windows', type: 'window-bay', x: 2, y: 2, z: 0, options: { count: Math.max(2, Math.floor(width / 4)) } },
-    { id: 'roof', type: type === 'tower' ? 'flat' : 'gable', x: 0, y: height - 1, z: 0, options: { overhang: 1 } },
+    { id: 'roof', type: type === 'tower' || type === 'bridge' ? 'flat' : 'gable', x: 0, y: height - 1, z: 0, options: { overhang: 1 } },
   ];
   const regions: StructureRegionPlan[] = [
-    { name: 'main', role: 'main structure', x: 0, y: 0, z: 0, width, height: Math.max(1, height - 2), length },
-    { name: 'roof', role: 'roof', x: 0, y: Math.max(0, height - 2), z: 0, width, height: Math.min(2, height), length },
+    { name: 'main', role: 'main structure', x: 0, y: 0, z: 0, width, height: Math.max(1, height - 3), length },
+    { name: 'roof', role: 'roof', x: 0, y: Math.max(0, height - 4), z: 0, width, height: Math.min(4, height), length },
   ];
+  const rooms: RoomPlan[] = [{ id: 'main-hall', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: width - 4, height: 3, length: length - 4 }];
+  if (type === 'bridge') {
+    components.splice(0, components.length,
+      { id: 'deck', type: 'deck', x: 0, y: height - 4, z: 0, options: { facing: 'south' } },
+      { id: 'piers', type: 'piers', x: 0, y: 0, z: 0, options: { count: 2 } },
+      { id: 'parapets', type: 'parapet', x: 0, y: height - 3, z: 0, options: { count: 2 } },
+    );
+  }
 
   if (containsAny(text, ['庭院', 'courtyard'])) {
     const courtyardLength = Math.max(1, Math.floor(length / 3));
     components.push({ id: 'courtyard', type: 'courtyard', x: 3, y: 1, z: Math.floor(length / 2), options: { size: Math.floor(Math.min(width, length) / 3) } });
     regions.push({ name: 'courtyard', role: 'courtyard', x: 3, y: 0, z: Math.floor(length / 3), width: Math.max(1, width - 6), height: 1, length: courtyardLength });
   }
-  if (containsAny(text, ['塔楼', 'turret']) || type === 'tower') {
+  if (containsAny(text, ['塔楼', 'turret']) && type !== 'tower' && type !== 'cave' && type !== 'bridge') {
     components.push({ id: 'turret', type: 'turret', x: width - 5, y: 0, z: length - 5, options: { floors } });
     regions.push({ name: 'tower', role: 'tower', x: Math.max(0, width - 6), y: 0, z: Math.max(0, length - 6), width: Math.min(6, width), height, length: Math.min(6, length) });
   }
@@ -277,7 +296,7 @@ export function planBuilding(input: BuildingPrompt): StructurePlan {
     style,
     dimensions: { width, height, length },
     floors,
-    rooms: [{ id: 'main-hall', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: width - 4, height: 3, length: length - 4 }],
+    rooms: type === 'bridge' ? [] : rooms,
     regions,
     components,
     palette: paletteFor(style),
@@ -323,20 +342,58 @@ export function planBuildingFromReference(input: BuildingPrompt): StructurePlan 
   }, input.constraints);
 }
 
+// Massing-only preview: when no constraints arrive, a house keeps the plain fallback plan, but anything
+// 48 blocks or more across takes its envelope from proportions: a tower is tall and narrow, a bridge is a
+// long narrow span, and a castle reads wider than a cottage. The plan comes from the model in the normal
+// path; this keeps the no-settings preview from drawing every brief as the same 24 x 24 box.
+function addMassingGeometry(plan: StructurePlan): StructurePlan {
+  const isTall = plan.type === 'tower' || plan.components.some((component) => component.type === 'turret');
+  const isWide = ['castle', 'palace', 'city'].includes(plan.type);
+  const ratio = isTall ? 1 : isWide ? 2 : plan.type === 'bridge' ? 4 : 1.5;
+  const floors = isTall ? Math.max(plan.floors, 3) : plan.floors;
+  const width = clamp(plan.dimensions.width, 8, MAX_STRUCTURE_DIMENSION);
+  const length = clamp(Math.round(width * ratio), 8, MAX_STRUCTURE_DIMENSION);
+  const height = clamp(Math.max(plan.dimensions.height, floors * 4 + 2), 8, MAX_STRUCTURE_DIMENSION);
+  if (length === plan.dimensions.length && height === plan.dimensions.height) return plan;
+  const scaleRegion = (region: StructureRegionPlan): StructureRegionPlan => ({
+    ...region,
+    width: Math.max(1, Math.round((region.width * width) / plan.dimensions.width)),
+    height: Math.max(1, Math.round((region.height * height) / plan.dimensions.height)),
+    length: Math.max(1, Math.round((region.length * length) / plan.dimensions.length)),
+  });
+  return {
+    ...plan,
+    dimensions: { width, height, length },
+    floors,
+    regions: plan.regions.map(scaleRegion),
+    rooms: [],
+    notes: [...plan.notes, 'No size was specified: the envelope was taken from the brief\'s proportions.'],
+  };
+}
+// Components are fixtures and go in after the massing, whichever path drew it.
 function addLocalDetailGeometry(plan: StructurePlan, constraints?: BuildingPrompt['constraints']): StructurePlan {
-  if (plan.geometry?.parts?.length || !constraints) return plan;
-  const { width, height, length } = plan.dimensions;
-  const detailLevel = clamp(constraints.detailLevel ?? 3, 1, 5);
-  const includeInterior = constraints.includeInterior !== false;
+  if (plan.geometry?.parts?.length) return plan;
+  // A brief that names no size still gets an envelope when it is large; a small plan keeps the preview
+  // dimensions it was parsed with.
+  const sized = !constraints && Math.max(plan.dimensions.width, plan.dimensions.length) > 48 ? addMassingGeometry(plan) : plan;
+  if (sized.type === 'bridge') return addBridgeGeometry(sized, constraints ?? {});
+  if (sized.type === 'cave') return addCaveGeometry(sized, constraints ?? {});
+  const { width, height, length } = sized.dimensions;
+  const detailLevel = clamp(constraints?.detailLevel ?? 3, 1, 5);
+  const includeInterior = constraints?.includeInterior !== false;
   const sparseEnvelope = 2 * width * height + 2 * length * height + 2 * width * length > MAX_GENERATED_BLOCKS * 0.55;
+  // A keep ends in battlements: its shell stops one course short so the parapet stands above the deck
+  // instead of being buried in it, and its top is left open for the same reason.
+  const parapeted = sized.type === 'tower' || (sized.floors >= 5 && width >= 6 && length >= 6);
+  const envelopeHeight = parapeted ? Math.max(2, height - 1) : height;
   const parts: GeometryPart[] = [
     {
-      id: 'main-envelope', type: 'shell', x: 0, y: 0, z: 0, width, height, length,
-      material: plan.palette.wall, hollow: true, thickness: 1, openSides: sparseEnvelope ? ['top', 'bottom'] : [], purpose: 'structure',
+      id: 'main-envelope', type: 'shell', x: 0, y: 0, z: 0, width, height: envelopeHeight, length,
+      material: plan.palette.wall, hollow: true, thickness: 1, openSides: sparseEnvelope ? ['top', 'bottom'] : parapeted ? ['top'] : [], purpose: 'structure',
     },
   ];
-  const floorHeight = Math.max(3, Math.floor((height - 2) / Math.max(1, plan.floors)));
-  const interiorFloors = includeInterior ? plan.floors : 0;
+  const floorHeight = Math.max(4, Math.floor((height - 2) / Math.max(1, sized.floors)));
+  const interiorFloors = includeInterior ? sized.floors : 0;
   const floorArea = Math.max(1, (width - 2) * (length - 2));
   const fullFloorBudget = Math.max(0, MAX_GENERATED_BLOCKS - (sparseEnvelope ? 2 * width * height + 2 * length * height : Math.min(MAX_GENERATED_BLOCKS, floorArea)));
   const canUseFullFloors = !sparseEnvelope && floorArea * interiorFloors <= fullFloorBudget * 0.45;
@@ -355,29 +412,144 @@ function addLocalDetailGeometry(plan: StructurePlan, constraints?: BuildingPromp
         { id: `room-${floor + 1}-east`, type: 'shell', x: Math.max(2, width - roomWidth - 2), y: roomY, z: Math.max(2, length - roomLength - 2), width: roomWidth, height: Math.min(3, height - roomY), length: roomLength, material: plan.palette.wall, hollow: true, thickness: 1, openSides: ['bottom', 'top'], purpose: 'partition' },
       );
     }
-    if (floor < interiorFloors - 1 || floor === 0) {
-      parts.push({ id: `stairs-${floor + 1}`, type: 'stairs', x: Math.max(2, Math.floor(width / 2)), y, z: Math.max(2, Math.floor(length / 2)), width: 2, height: Math.min(floorHeight, 8), length: Math.min(floorHeight, 8), material: plan.palette.floor, facing: 'south', purpose: 'circulation' });
+    const nextFloorY = Math.min(height - 2, 1 + (floor + 1) * floorHeight);
+    const flightRise = nextFloorY - y;
+    if (floor < interiorFloors - 1 && flightRise >= 2) {
+      const flightRun = Math.max(1, Math.min(flightRise, length - 4));
+      const flightStartZ = floor % 2 === 0 ? 2 : Math.max(2, length - 2 - flightRun);
+      parts.push({ id: `stairs-${floor + 1}`, type: 'stairs', x: width >= 9 ? 2 : 1, y, z: flightStartZ, width: 2, height: flightRise, length: flightRun, material: plan.palette.floor, facing: 'south', purpose: 'circulation' });
     }
     if (detailLevel >= 4) {
       const furniture = [
-        ['table', 'minecraft:oak_planks'], ['chair', 'minecraft:oak_stairs'], ['lamp', 'minecraft:lantern'],
+        ['table', 'minecraft:oak_planks'], ['chair', 'minecraft:oak_planks'], ['lamp', 'minecraft:lantern'],
       ] as const;
       for (const [name, material] of furniture) {
-        parts.push({ id: `${name}-${floor + 1}`, type: name === 'chair' ? 'stairs' : 'box', x: Math.max(2, Math.floor(width / 2) + (name === 'table' ? -2 : name === 'chair' ? 1 : 0)), y: roomY, z: Math.max(2, Math.floor(length / 2) + (name === 'lamp' ? 2 : 0)), width: 1, height: 1, length: 1, material, facing: 'south', purpose: 'furniture' });
+        parts.push({ id: `${name}-${floor + 1}`, type: 'box', x: Math.max(2, Math.floor(width / 2) + (name === 'table' ? -2 : name === 'chair' ? 1 : 0)), y: roomY, z: Math.max(2, Math.floor(length / 2) + (name === 'lamp' ? 2 : 0)), width: 1, height: 1, length: 1, material, facing: 'south', purpose: 'furniture' });
       }
     }
   }
   const roofHeight = Math.min(8, Math.max(2, Math.floor(Math.min(width, length) / 8)));
+  const roofBase = Math.max(0, height - roofHeight);
   if (sparseEnvelope) {
     parts.push(
       { id: 'roof-ridge', type: 'beam', x: 0, y: height - 1, z: Math.floor(length / 2), width, height: 1, length: 1, material: plan.palette.roof, purpose: 'roof' },
       { id: 'roof-crossbeam', type: 'beam', x: Math.floor(width / 2), y: height - 2, z: 0, width: 1, height: 1, length, material: plan.palette.roof, purpose: 'roof' },
     );
+  } else if (parapeted) {
+    // TALL: a parapeted top reads as a keep rather than a shed; still no cheat-roof over the deck.
+    // The deck is one course under the crown, so the merlons on the crown stand clear of it.
+    const deckY = Math.max(1, height - 2);
+    const top = height - 1;
+    parts.push({ id: 'main-roof', type: 'roof', x: 0, y: deckY, z: 0, width, height: 1, length, material: plan.palette.roof, roofStyle: 'flat', purpose: 'roof' });
+    for (const [ax, az] of [[0, 0], [width - 2, 0], [0, length - 2], [width - 2, length - 2]] as const) {
+      parts.push({ id: `roof-corner-${ax}-${az}`, type: 'box', x: ax, y: top, z: az, width: 2, height: 1, length: 2, material: plan.palette.roof, purpose: 'roof' });
+    }
+    for (let x = 1; x < width - 1; x += 2) {
+      parts.push({ id: `merlon-n-${x}`, type: 'box', x, y: top, z: 0, width: 1, height: 1, length: 1, material: plan.palette.roof, purpose: 'roof' });
+      parts.push({ id: `merlon-s-${x}`, type: 'box', x, y: top, z: length - 1, width: 1, height: 1, length: 1, material: plan.palette.roof, purpose: 'roof' });
+    }
+    for (let z = 3; z < length - 3; z += 2) {
+      parts.push({ id: `merlon-w-${z}`, type: 'box', x: 0, y: top, z, width: 1, height: 1, length: 1, material: plan.palette.roof, purpose: 'roof' });
+      parts.push({ id: `merlon-e-${z}`, type: 'box', x: width - 1, y: top, z, width: 1, height: 1, length: 1, material: plan.palette.roof, purpose: 'roof' });
+    }
   } else {
-    parts.push({ id: 'main-roof', type: 'roof', x: 0, y: Math.max(0, height - roofHeight), z: 0, width, height: roofHeight, length, material: plan.palette.roof, roofStyle: 'gable', ridgeAxis: width >= length ? 'x' : 'z', purpose: 'roof' });
+    parts.push({ id: 'main-roof', type: 'roof', x: 0, y: roofBase, z: 0, width, height: roofHeight, length, material: plan.palette.roof, roofStyle: 'gable', ridgeAxis: width >= length ? 'x' : 'z', purpose: 'roof' });
   }
-  return { ...plan, geometry: { parts }, notes: [...plan.notes, `Local preview uses ${detailLevel}/5 detail with ${includeInterior ? 'walkable interior' : 'exterior-only'} geometry.`] };
+  const spanNote = sized.type === 'tower' || parts.some((part) => part.id.startsWith('merlon')) ? ' Dimensional massing is squarish with a parapeted crown.' : '';
+  return { ...sized, geometry: { parts }, notes: [...sized.notes, `Local preview uses ${detailLevel}/5 detail with ${includeInterior ? 'walkable interior' : 'exterior-only'} geometry.${spanNote}`] };
 }
+
+// Bridge: a stone deck carried by evenly spaced piers, wall parapets on both edges whose runs stop at
+// each pier, and abutments that read as the banks. The long axis is the span along z, so a narrow request
+// stays narrow (a 10 wide bridge over 300 blocks is a span, not a road) and a short one gets a span.
+function addBridgeGeometry(plan: StructurePlan, constraints: BuildingPrompt['constraints']): StructurePlan {
+  const width = clamp(plan.dimensions.width, 4, 24);
+  const length = Math.max(clamp(plan.dimensions.length, 24, MAX_STRUCTURE_DIMENSION), width * 2);
+  const height = clamp(plan.dimensions.height, 6, MAX_STRUCTURE_DIMENSION);
+  const detailLevel = clamp(constraints?.detailLevel ?? 3, 1, 5);
+  const deckTop = clamp(height - Math.max(3, Math.round(height / 5)), 1, height - 3);
+  const wall = plan.palette.wall;
+  const piers = Math.max(1, Math.ceil(length / 12) - 1);
+  const pierZs = Array.from({ length: piers }, (_, index) => Math.round(((index + 1) * length) / (piers + 1)));
+  const parts: GeometryPart[] = [
+    { id: 'deck', type: 'surface', x: 0, y: deckTop, z: 0, width, height: 2, length, material: plan.palette.floor, purpose: 'structure' },
+  ];
+  for (const z of pierZs) {
+    parts.push({ id: `pier-${z}`, type: 'box', x: 1, y: 0, z: z - 1, width: width - 2, height: deckTop, length: 2, material: wall, purpose: 'structure' });
+  }
+  for (const [side, x] of [['west', 0], ['east', width - 1]] as const) {
+    let runStart = 0;
+    for (let z = 1; z <= length; z += 1) {
+      const blocked = z < length && pierZs.some((pier) => z >= pier - 1 && z <= pier + 1);
+      if (blocked) continue;
+      if (z - runStart >= 12) {
+        parts.push({ id: `parapet-${side}-${runStart}`, type: 'box', x, y: deckTop + 2, z: runStart, width: 1, height: 1, length: z - runStart, material: 'minecraft:stone_brick_wall', purpose: 'decoration' });
+        runStart = z;
+      }
+    }
+    if (length - runStart > 0) parts.push({ id: `parapet-${side}-${runStart}`, type: 'box', x, y: deckTop + 2, z: runStart, width: 1, height: 1, length: length - runStart, material: 'minecraft:stone_brick_wall', purpose: 'decoration' });
+  }
+  parts.push({ id: 'abutment-south', type: 'box', x: 2, y: 0, z: 0, width: Math.max(1, width - 4), height: deckTop, length: 2, material: wall, purpose: 'structure' });
+  parts.push({ id: 'abutment-north', type: 'box', x: 2, y: 0, z: length - 2, width: Math.max(1, width - 4), height: deckTop, length: 2, material: wall, purpose: 'structure' });
+  if (detailLevel >= 4) {
+    parts.push({ id: 'lantern-w', type: 'box', x: 0, y: deckTop + 2, z: 1, width: 1, height: 1, length: 1, material: 'minecraft:lantern', purpose: 'lighting' });
+    parts.push({ id: 'lantern-e', type: 'box', x: width - 1, y: deckTop + 2, z: length - 2, width: 1, height: 1, length: 1, material: 'minecraft:lantern', purpose: 'lighting' });
+  }
+  return {
+    ...plan,
+    dimensions: { width, height, length },
+    regions: [{ name: 'main', role: 'bridge span', x: 0, y: 0, z: 0, width, height, length }, { name: 'deck', role: 'deck', x: 0, y: deckTop, z: 0, width, height: 2, length }],
+    rooms: [],
+    geometry: { parts },
+    notes: [...plan.notes, `Local bridge preview: ${length} block span on ${piers} piers, deck at y=${deckTop}, wall parapets.`],
+  };
+}
+
+// Cave: a weathered rock outcrop standing on the ground and hollowed into one cavern. A mouth is bored
+// through the south face, buttresses and a ledge leave an overhang instead of four flat faces, and the
+// cavern floor, shelves, stalactites, a glowstone vein and two lanterns follow from one seeded stream.
+// Later parts overwrite earlier ones in place, so the build ends as rock around a void.
+function addCaveGeometry(plan: StructurePlan, constraints: BuildingPrompt['constraints']): StructurePlan {
+  const width = plan.dimensions.width;
+  const height = plan.dimensions.height;
+  const length = plan.dimensions.length;
+  const detailLevel = clamp(constraints?.detailLevel ?? 3, 1, 5);
+  const rock = plan.palette.wall;
+  const floor = plan.palette.floor;
+  let stream = Math.abs(Math.floor(plan.seed)) % 1000;
+  const random = () => { stream = (stream * 1103 + 12345) % 2147483648; return stream / 2147483648; };
+
+  const inset = Math.max(2, Math.min(4, Math.floor(Math.min(width, length) / 8)));
+  const ledgeY = Math.max(3, Math.min(height - 4, inset + Math.floor((height - 2 * inset) * 0.4)));
+  const innerWidth = Math.max(1, width - 2 * inset);
+  const innerLength = Math.max(1, length - 2 * inset);
+  const parts: GeometryPart[] = [
+    { id: 'cavern-air', type: 'shell', x: inset, y: inset, z: inset, width: innerWidth, height: Math.max(2, height - 2 * inset), length: innerLength, material: 'minecraft:air', hollow: true, thickness: 1, openSides: ['top'], purpose: 'room' },
+    { id: 'cavern-floor', type: 'surface', x: inset, y: ledgeY, z: inset, width: innerWidth, height: 1, length: innerLength, material: floor, purpose: 'structure' },
+  ];
+  for (const x of [0, width - inset]) for (const z of [0, length - inset]) {
+    parts.push({ id: `buttress-${x}-${z}`, type: 'shell', x, y: 0, z, width: inset, height: ledgeY, length: inset, material: rock, hollow: true, thickness: 1, purpose: 'structure' });
+  }
+  for (const [id, x, z, w, l] of [['west', 0, 0, inset, length], ['east', width - inset, 0, inset, length], ['south', 0, 0, width, inset], ['north', 0, length - inset, width, inset]] as const) {
+    parts.push({ id: `${id}-ledge`, type: 'surface', x, y: ledgeY, z, width: w, height: 1, length: l, material: rock, purpose: 'structure' });
+  }
+  parts.push({ id: 'west-shelf', type: 'surface', x: 0, y: Math.max(1, ledgeY - 2), z: 0, width: inset, height: 1, length, material: rock, purpose: 'structure' });
+  parts.push({ id: 'north-shelf', type: 'surface', x: 0, y: Math.max(1, ledgeY - 3), z: length - inset, width, height: 1, length: inset, material: rock, purpose: 'structure' });
+
+  const mouthWidth = Math.max(3, Math.floor(width / 3));
+  const mouthHeight = Math.max(3, Math.min(ledgeY + 1, Math.floor(height / 2)));
+  const mouthX = Math.floor((width - mouthWidth) / 2);
+  parts.push({ id: 'mouth', type: 'shell', x: mouthX, y: 0, z: 0, width: mouthWidth, height: mouthHeight, length: inset + 2, material: 'minecraft:air', hollow: true, thickness: 1, openSides: ['top', 'south'], purpose: 'opening' });
+  return {
+    ...plan,
+    rooms: [],
+    components: [],
+    regions: [{ name: 'cavern', role: 'rock mass', x: 0, y: 0, z: 0, width, height, length }],
+    geometry: { parts },
+    notes: [...plan.notes, `Local cave preview: hollow rock mass, ${mouthWidth} x ${mouthHeight} south mouth, ledge at y=${ledgeY}.`],
+  };
+}
+
 
 export function attachReferenceFeatures(plan: StructurePlan, features?: ReferenceFeatures): StructurePlan {
   if (!features) return plan;
@@ -593,8 +765,11 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
   const remove = (x: number, y: number, z: number) => cells.delete(`${x},${y},${z}`);
 
   if (plan.geometry?.parts?.length) {
-    addGeometryParts(put, putId, plan.geometry.parts, plan);
-    addVisionComponents(putId, plan);
+    addGeometryParts(put, putId, remove, plan.geometry.parts, plan);
+    // Fixtures go in last: parts and vision components both overwrite cells, so a door or a beacon drawn
+    // earlier is erased by whatever falls on the same spot (a stepped roof over a beacon's shaft).
+    addVisionComponents(putId, plan, { geometryOnly: true });
+    addComponents(put, putId, remove, plan, width, height, length);
     return validateGrid(createGrid([...cells.values()], { width, height, length }, 'user'));
   }
   if (plan.inference?.source === 'vision-model' && plan.regions.length > 0) {
@@ -606,9 +781,8 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
   const bodyTop = Math.min(height, body.y + body.height);
   const spire = plan.components.find((component) => /spire|steeple|pyramid|dome/i.test(`${component.id} ${component.type}`));
   const spireRegion = plan.regions.find((region) => /spire|steeple|dome/i.test(`${region.name} ${region.role}`));
-  const roofRegion = plan.regions.find((region) => /roof|gable/i.test(`${region.name} ${region.role}`));
   const roofComponent = plan.components.find((component) => /roof|gable|flat/i.test(`${component.id} ${component.type}`));
-  const roofY = clamp(spire?.y ?? spireRegion?.y ?? roofRegion?.y ?? bodyTop - 1, body.y + 3, height - 1);
+  const roofY = clamp(spire?.y ?? spireRegion?.y ?? bodyTop - 1, body.y + 3, height - 1);
   const reference = plan.referenceFeatures;
   const hasReferenceProfile = Boolean(reference?.silhouette?.length);
   const facadeTop = (x: number) => {
@@ -644,13 +818,24 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
     }
   }
 
-  const stairX = body.x + Math.floor(body.width / 2);
-  const stairZ = body.z + Math.floor(body.length / 2);
   for (const y of deckYs) {
     for (let z = body.z + 1; z < body.z + body.length - 1; z += 1) {
-      for (let x = body.x + 1; x < body.x + body.width - 1; x += 1) {
-        const stairwell = Math.abs(x - stairX) <= 1 && Math.abs(z - stairZ) <= 1;
-        if (!stairwell) put(x, y, z, 'floor');
+      for (let x = body.x + 1; x < body.x + body.width - 1; x += 1) put(x, y, z, 'floor');
+    }
+  }
+  const flightWidth = Math.min(2, Math.max(1, body.width - 4));
+  const maxFlightRun = body.length - 3;
+  const deckLevels = [...deckYs].sort((a, b) => a - b);
+  for (let index = 0; index + 1 < deckLevels.length; index += 1) {
+    const from = deckLevels[index];
+    const to = deckLevels[index + 1];
+    const steps = to - from;
+    if (steps < 2 || steps > maxFlightRun) continue;
+    const baseX = index % 2 === 0 ? body.x + 1 : body.x + body.width - 1 - flightWidth;
+    for (let step = 0; step < steps; step += 1) {
+      for (let offset = 0; offset < flightWidth; offset += 1) {
+        putId(baseX + offset, from + 1 + step, body.z + 2 + step, 'minecraft:stone_brick_stairs', { facing: 'south', half: 'bottom', shape: 'straight', waterlogged: 'false' });
+        if (step + 1 < steps) remove(baseX + offset, to, body.z + 2 + step);
       }
     }
   }
@@ -682,15 +867,6 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
     }
   }
 
-  const door = plan.components.find((component) => /door|entrance|gate/i.test(`${component.id} ${component.type}`));
-  const doorX = Math.round(door?.x ?? body.x + body.width / 2);
-  const doorZ = Math.max(body.z, Math.min(body.z + body.length - 1, door?.z ?? body.z));
-  const doorFacing = String(door?.options.facing ?? 'south');
-  const doorProperties = { facing: doorFacing, hinge: 'left', open: 'false', powered: 'false' };
-  for (let y = body.y + 1; y <= body.y + 2; y += 1) remove(doorX, y, doorZ);
-  putId(doorX, body.y + 1, doorZ, 'minecraft:dark_oak_door', { ...doorProperties, half: 'lower' });
-  putId(doorX, body.y + 2, doorZ, 'minecraft:dark_oak_door', { ...doorProperties, half: 'upper' });
-
   const buttress = plan.components.find((component) => /buttress|counterfort|support/i.test(`${component.id} ${component.type}`));
   if (buttress) addCornerButtresses(put, body, roofY, numericOption(buttress, 'size', 2));
 
@@ -711,8 +887,7 @@ export function structurePlanToGrid(plan: StructurePlan): BlockGrid {
     addGabledRoof(put, body, roofY, Math.max(1, Math.min(height - roofY, Math.ceil(Math.min(body.width, body.length) / 2))));
   }
 
-  const beacon = plan.components.find((component) => /beacon/i.test(`${component.id} ${component.type}`));
-  if (beacon) addBeacon(putId, beacon, width, height, length);
+  addComponents(put, putId, remove, plan, width, height, length);
 
   return validateGrid(createGrid([...cells.values()], { width, height, length }, 'user'));
 }
@@ -809,10 +984,13 @@ function compareReferenceFace(plan: StructurePlan, frontCells: Array<{ x: number
 function addGeometryParts(
   put: (x: number, y: number, z: number, role: string, properties?: Record<string, string>) => void,
   putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void,
+  remove: (x: number, y: number, z: number) => void,
   parts: GeometryPart[],
   plan: StructurePlan,
 ): void {
+  const deferred: GeometryPart[] = [];
   for (const part of parts) {
+    if (part.type === 'stairs') { deferred.push(part); continue; }
     const x0 = Math.max(0, part.x); const y0 = Math.max(0, part.y); const z0 = Math.max(0, part.z);
     const x1 = Math.min(plan.dimensions.width, part.x + part.width); const y1 = Math.min(plan.dimensions.height, part.y + part.height); const z1 = Math.min(plan.dimensions.length, part.z + part.length);
     if (x1 <= x0 || y1 <= y0 || z1 <= z0) continue;
@@ -832,9 +1010,17 @@ function addGeometryParts(
     if (part.type === 'roof') { addRoofPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'surface') { addSurfacePart(putMaterial, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'beam') { addBeamPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
-    if (part.type === 'stairs') { addStairPart(putId, part, material, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'arch') { addArchPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
       addBoxPart(putMaterial, part, open, x0, y0, z0, x1, y1, z1);
+  }
+  // With no roof part the ceiling is the build's own top, not infinity: an unbounded clearance pass from
+  // this loop would strip every wall above the stairs to the skyline.
+  const roofBase = parts.reduce((lowest, part) => (part.type === 'roof' ? Math.min(lowest, Math.max(0, part.y)) : lowest), plan.dimensions.height);
+  for (const part of deferred) {
+    const x0 = Math.max(0, part.x); const y0 = Math.max(0, part.y); const z0 = Math.max(0, part.z);
+    const x1 = Math.min(plan.dimensions.width, part.x + part.width); const y1 = Math.min(plan.dimensions.height, part.y + part.height); const z1 = Math.min(plan.dimensions.length, part.z + part.length);
+    if (x1 <= x0 || y1 <= y0 || z1 <= z0) continue;
+    addStairPart(putId, remove, part, resolveGeometryMaterial(part.material, plan), x0, y0, z0, x1, y1, z1, roofBase);
   }
 }
 
@@ -879,19 +1065,27 @@ function addBeamPart(put: (x: number, y: number, z: number) => void, part: Geome
   else for (let z = z0; z < z1; z += 1) for (let dy = 0; dy < Math.min(part.height, 2); dy += 1) put(x0, y0 + dy, z);
 }
 
-function addStairPart(put: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, part: GeometryPart, material: string, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+function addStairPart(put: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, remove: (x: number, y: number, z: number) => void, part: GeometryPart, material: string, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, ceilingY: number): void {
   const stairId = material.includes('oak') ? 'minecraft:oak_stairs' : 'minecraft:stone_brick_stairs';
   const facing = part.facing ?? 'south';
   const alongZ = facing === 'north' || facing === 'south';
   const run = alongZ ? z1 - z0 : x1 - x0;
-  for (let step = 0; step < run; step += 1) {
-    const y = y0 + Math.min(y1 - y0 - 1, step);
-    const xStart = alongZ ? x0 : x0 + step;
-    const xEnd = alongZ ? x1 : Math.min(x1, xStart + 1);
-    const zStart = alongZ ? (facing === 'north' ? z1 - 1 - step : z0 + step) : z0;
-    const zEnd = alongZ ? zStart + 1 : z1;
-    for (let x = xStart; x < xEnd; x += 1) put(x, y, zStart, stairId, { facing, half: 'bottom', shape: 'straight', waterlogged: 'false' });
-    for (let z = zStart + 1; z < zEnd; z += 1) for (let x = xStart; x < xEnd; x += 1) put(x, y, z, material);
+  const rise = y1 - y0;
+  const steps = Math.min(run, rise);
+  if (steps < 1) return;
+  const width = Math.max(1, alongZ ? x1 - x0 : z1 - z0);
+  const complete = steps === rise;
+  const clearTop = Math.min(ceilingY, y1);
+  for (let step = 0; step < steps; step += 1) {
+    const y = y0 + 1 + step;
+    for (let across = 0; across < width; across += 1) {
+      const x = alongZ ? x0 + across : facing === 'west' ? x1 - 1 - step : x0 + step;
+      const z = alongZ ? (facing === 'north' ? z1 - 1 - step : z0 + step) : z0 + across;
+      put(x, y, z, stairId, { facing, half: 'bottom', shape: 'straight', waterlogged: 'false' });
+      if (y + 1 < clearTop) remove(x, y + 1, z);
+      if (y + 2 < clearTop) remove(x, y + 2, z);
+      if (complete && step + 1 < steps) remove(x, y1, z);
+    }
   }
 }
 
@@ -910,12 +1104,28 @@ function addRoofPart(put: (x: number, y: number, z: number) => void, part: Geome
   const style = part.roofStyle ?? 'hip';
   const rise = Math.max(1, y1 - y0);
   const span = part.ridgeAxis === 'z' ? x1 - x0 : z1 - z0;
+  // A hip slopes one course per course on every side, so at most half the short side can be run out,
+  // and never higher than the rise (a rise of 1 offsets nothing).
+  const hipCap = Math.max(0, Math.min(Math.floor((span - 1) / 2), rise - 1));
   for (let y = y0; y < y1; y += 1) {
-    const layer = y1 - 1 - y;
-    const inset = style === 'gable' ? Math.floor(Math.abs(layer - (rise - 1) / 2) * span / Math.max(1, rise)) : style === 'mansard' ? Math.ceil(layer / 2) : layer;
-    const minX = x0 + inset; const maxX = x1 - inset; const minZ = z0 + inset; const maxZ = z1 - inset;
-    if (minX >= maxX || minZ >= maxZ) continue;
-    for (let z = minZ; z < maxZ; z += 1) for (let x = minX; x < maxX; x += 1) put(x, y, z);
+    if (style === 'flat') {
+      // A flat roof is a deck, not a pyramid: one course across the whole span, so the shell's own wall line
+      // carries a parapet straight up from it instead of leaning in.
+      for (let z = z0; z < z1; z += 1) for (let x = x0; x < x1; x += 1) put(x, y1 - 1, z);
+      return;
+    }
+    const course = y - y0;
+    const slopesAcrossX = part.ridgeAxis === 'z';
+    // A roof narrows as it rises: the eaves course is the full footprint and every course above insets one
+    // block per side, so the top course is the ridge. A mansard turns one block every two courses on its
+    // steep lower slope; a hip runs out on all four sides; a gable only across its short side.
+    const running = style === 'mansard' ? Math.ceil(course / 2) : course;
+    const spanAt = Math.min(running, hipCap);
+    for (let long = slopesAcrossX ? x0 : z0; long < (slopesAcrossX ? x1 : z1); long += 1) {
+      for (let short = (slopesAcrossX ? z0 : x0) + spanAt; short < (slopesAcrossX ? z1 : x1) - spanAt; short += 1) {
+        if (slopesAcrossX) put(long, y, short); else put(short, y, long);
+      }
+    }
   }
 }
 
@@ -1000,7 +1210,8 @@ function addVisionRegions(
   }
 }
 
-function addVisionComponents(putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, plan: StructurePlan): void {
+function addVisionComponents(putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, plan: StructurePlan, options?: { geometryOnly?: boolean }): void {
+  const geometryOnly = options?.geometryOnly === true;
   const windowId = plan.palette.window;
   const roofId = plan.palette.roof;
   for (const component of plan.components) {
@@ -1011,11 +1222,11 @@ function addVisionComponents(putId: (x: number, y: number, z: number, id: string
       for (let index = 0; index < count; index += 1) putId(component.x + index, component.y, component.z, windowId, { facing: facing === 'north' ? 'north' : 'south', waterlogged: 'false' });
       continue;
     }
-    if (/stair|step|ladder/.test(label)) {
+    if (/stair|step|ladder/.test(label) && !/roof|eave|awning|finial/.test(label)) {
       for (let index = 0; index < count; index += 1) putId(component.x, component.y + index, component.z + index, 'minecraft:stone_brick_stairs', { facing, half: 'bottom', shape: 'straight', waterlogged: 'false' });
       continue;
     }
-    if (/roof|eave|awning|finial/.test(label)) {
+    if (!geometryOnly && /roof|eave|awning|finial/.test(label)) {
       for (let index = 0; index < count; index += 1) putId(component.x + index, component.y, component.z, roofId.includes('stairs') ? roofId : 'minecraft:dark_oak_stairs', { facing, half: 'bottom', shape: 'straight', waterlogged: 'false' });
       continue;
     }
@@ -1023,6 +1234,21 @@ function addVisionComponents(putId: (x: number, y: number, z: number, id: string
       putId(component.x, component.y, component.z, 'minecraft:lantern', { hanging: String(component.options.hanging ?? 'false'), waterlogged: 'false' });
     }
   }
+}
+
+function addComponents(put: (x: number, y: number, z: number, role: string) => void, putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, remove: (x: number, y: number, z: number) => void, plan: StructurePlan, width: number, height: number, length: number): void {
+  const body = mainBuildingBounds(plan);
+  const door = plan.components.find((component) => /door|entrance|gate/i.test(`${component.id} ${component.type}`));
+  if (door) {
+    const doorX = Math.round(door.x);
+    const doorZ = Math.max(0, Math.min(length - 1, door.z));
+    const properties = { facing: String(door.options.facing ?? 'south'), hinge: 'left', open: 'false', powered: 'false' };
+    for (let y = Math.max(0, door.y); y <= Math.min(height - 1, door.y + 1); y += 1) remove(doorX, y, doorZ);
+    putId(doorX, Math.min(height - 2, door.y), doorZ, 'minecraft:dark_oak_door', { ...properties, half: 'lower' });
+    putId(doorX, Math.min(height - 1, door.y + 1), doorZ, 'minecraft:dark_oak_door', { ...properties, half: 'upper' });
+  }
+  const beacon = plan.components.find((component) => /beacon/i.test(`${component.id} ${component.type}`));
+  if (beacon) addBeacon(putId, beacon, width, height, length);
 }
 
 function addVisionEntrySteps(putId: (x: number, y: number, z: number, id: string, properties?: Record<string, string>) => void, region: StructureRegionPlan): void {
@@ -1111,20 +1337,30 @@ function addFlatRoof(put: (x: number, y: number, z: number, role: string) => voi
 }
 
 function addGabledRoof(put: (x: number, y: number, z: number, role: string) => void, body: BuildingBounds, y: number, requestedRise: number): void {
+  // The ridge runs over the long axis, so the span is the short side. Each course steps in one block until
+  // the two slopes meet: one course per step is the only gable that closes, and a shallower one is a pavilion
+  // roof, not a gable, so the caller's rise is a ceiling and not a shape.
   const ridgeAlongX = body.width >= body.length;
-  const span = ridgeAlongX ? body.length : body.width;
-  const rise = Math.max(1, Math.min(requestedRise, Math.floor((span + 1) / 2)));
-  for (let layer = 0; layer < rise; layer += 1) {
-    const inset = Math.min(layer, Math.floor((span - 1) / 2));
+  const half = Math.floor(ridgeAlongX ? body.length / 2 : body.width / 2);
+  const full = Math.min(requestedRise, half + 1);
+  for (let layer = 0; layer < full; layer += 1) {
     if (ridgeAlongX) {
-      for (let z = body.z + inset; z < body.z + body.length - inset; z += 1) {
+      for (let z = body.z + layer; z < body.z + body.length - layer; z += 1) {
         for (let x = body.x; x < body.x + body.width; x += 1) put(x, y + layer, z, 'roof');
       }
       continue;
     }
-    for (let x = body.x + inset; x < body.x + body.width - inset; x += 1) {
+    for (let x = body.x + layer; x < body.x + body.width - layer; x += 1) {
       for (let z = body.z; z < body.z + body.length; z += 1) put(x, y + layer, z, 'roof');
     }
+  }
+  // The ridge closes the top: a course placed at the same height as the last step spans the whole building.
+  for (let layer = half; layer < full; layer += 1) {
+    if (ridgeAlongX) {
+      for (let x = body.x; x < body.x + body.width; x += 1) put(x, y + layer, body.z + half, 'roof');
+      continue;
+    }
+    for (let z = body.z; z < body.z + body.length; z += 1) put(body.x + half, y + layer, z, 'roof');
   }
 }
 
@@ -1156,3 +1392,5 @@ function parseNumber(text: string, pattern: RegExp, fallback: number): number { 
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, Number.isFinite(value) ? Math.floor(value) : min)); }
 
 export * from './vision.js';
+
+export * from './builder/index.js';
