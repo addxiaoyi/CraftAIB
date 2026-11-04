@@ -15,6 +15,8 @@ See [`docs/project-goals.md`](docs/project-goals.md) for the acceptance scope,
 [`docs/engine-status.md`](docs/engine-status.md) for regression coverage, and
 [`docs/architecture.md`](docs/architecture.md) for the runtime boundaries.
 
+Switching devices: read the [2026-11-05 handoff](docs/handoff-2026-11-05.md) for the branch, setup commands and remaining acceptance work.
+
 ## Pinned upstream baselines
 
 ```text
