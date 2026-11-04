@@ -48,6 +48,7 @@
     "test:builder-textures": "node scripts/builder-texture-regression.mjs",
     "setup:browser": "playwright-core install chromium --only-shell",
     "test:browser": "node scripts/browser-suite.mjs",
+    "test:renderer-loading": "node scripts/renderer-loading-smoke.mjs",
     "verify": "npm run test:all && npm run build:ui && npm run test:browser"
   },
   "devDependencies": {

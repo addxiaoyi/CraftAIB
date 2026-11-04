@@ -1,10 +1,26 @@
 import type { CraftAibProject, WorkspaceId } from '../types/minecraft';
 import { isWorkspaceId } from '../layout/workspaces';
 import { createDefaultStructure } from '../utils/sampleStructure';
-import { parseProjectJson, stringifyProjectJson, validateAiMetadata, validateHistory, validateInventory, validatePlacements, validateStructure } from './project';
+import { parseProjectJson, stringifyProjectJson, validateAiMetadata, validateHistory, validateInventory, validatePlacements, validateProject, validateStructure } from './project';
 
 export type SavedWorkbench = Pick<CraftAibProject, 'activeWorkspace' | 'language' | 'autoSave' | 'structure' | 'ai' | 'history' | 'placements' | 'materialInventory'>;
 export type RestoredWorkbench = SavedWorkbench & { warnings: string[] };
+const RELOAD_SNAPSHOT_KEY = 'craftaib.reload-snapshot';
+
+export function saveReloadSnapshot(storage: Pick<Storage, 'setItem'>, snapshot: SavedWorkbench): void {
+  storage.setItem(RELOAD_SNAPSHOT_KEY, stringifyProjectJson({ ...snapshot, version: 1 }));
+}
+
+export function takeReloadSnapshot(storage: Pick<Storage, 'getItem' | 'removeItem'>): SavedWorkbench | null {
+  const saved = storage.getItem(RELOAD_SNAPSHOT_KEY);
+  if (saved === null) return null;
+  storage.removeItem(RELOAD_SNAPSHOT_KEY);
+  const snapshot = validateProject(parseProjectJson(saved));
+  if (!isWorkspaceId(snapshot.activeWorkspace) || !['zh', 'en'].includes(snapshot.language) || typeof snapshot.autoSave !== 'boolean') {
+    throw new Error('Incomplete workbench reload snapshot.');
+  }
+  return snapshot;
+}
 
 export function restoreWorkbench(storage: Pick<Storage, 'getItem'>): RestoredWorkbench {
   const warnings: string[] = [];

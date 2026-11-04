@@ -185,9 +185,11 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
   const rendererSizeKeyRef = useRef<string | null>(null);
   const [rendererEpoch, setRendererEpoch] = useState(0);
   const [status, setStatus] = useState('Loading Minecraft resource pack...');
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pickedBlock, setPickedBlock] = useState<StructureData['blocks'][number] | null>(null);
   const [meshStats, setMeshStats] = useState<{ chunkCount: number; faces: number; estimatedBytes: number } | null>(null);
   const statsTimerRef = useRef<number | undefined>(undefined);
+  const retryResourcePack = () => setRendererEpoch((value) => value + 1);
 
   const scheduleMeshStats = (blocks: StructureData['blocks']) => {
     window.clearTimeout(statsTimerRef.current);
@@ -223,6 +225,8 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
     let frameId = 0;
     let stop: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
+    setPhase('loading');
+    setStatus('Loading Minecraft resource pack...');
 
     const start = async () => {
       try {
@@ -263,12 +267,17 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         draw();
         scheduleMeshStats(structureRef.current.blocks);
         setStatus('Minecraft resource pack ready');
+        setPhase('ready');
         return () => {
           observer?.disconnect();
           cancelAnimationFrame(frameId);
         };
       } catch (error) {
-        if (!disposed) setStatus(error instanceof Error ? `Resource pack failed: ${error.message}` : 'Resource pack failed');
+        if (!disposed) {
+          console.error('LodestoneViewport resource pack failed', error);
+          setPhase('error');
+          setStatus('Resource pack could not load. Check the pack and retry.');
+        }
       }
     };
     void start().then((cleanup) => {
@@ -350,6 +359,8 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
     <div className="absolute bottom-3 right-3 flex gap-1 rounded bg-black/55 p-1 text-[10px] text-zinc-300">
       {(['iso', 'front', 'side', 'top'] as const).map((view) => <button key={view} data-lodestone-view={view} onClick={() => setView(view)} className="rounded px-1.5 py-0.5 hover:bg-white/20">{view}</button>)}
     </div>
-    <div data-lodestone-status={pickedBlock ? 'block-picked' : 'ready'} className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300">{pickedBlock ? `${pickedBlock.blockId} @ ${pickedBlock.x}, ${pickedBlock.y}, ${pickedBlock.z}` : `${status}${meshStats == null ? '' : ` · ${meshStats.chunkCount} chunks · ${meshStats.faces.toLocaleString()} faces`}`}</div>
+    <div data-lodestone-status={phase === 'ready' && pickedBlock ? 'block-picked' : phase} role={phase === 'error' ? 'alert' : 'status'} className={phase === 'error' ? 'absolute left-1/2 top-1/2 z-20 flex w-max max-w-[calc(100%-32px)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 rounded bg-black/80 p-4 text-center text-xs text-zinc-300' : 'pointer-events-none absolute bottom-3 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300'}>{phase === 'ready' && pickedBlock ? `${pickedBlock.blockId} @ ${pickedBlock.x}, ${pickedBlock.y}, ${pickedBlock.z}` : `${status}${meshStats == null ? '' : ` · ${meshStats.chunkCount} chunks · ${meshStats.faces.toLocaleString()} faces`}`}
+      {phase === 'error' && <button type="button" data-resource-pack-retry="true" onClick={retryResourcePack} className="ml-2 rounded border border-white/20 px-2 py-1 text-white hover:bg-white/10">Retry resource pack</button>}
+    </div>
   </div>;
 };

@@ -4,7 +4,7 @@ This is the current acceptance index. `architecture.md` describes the active Rea
 boundaries; `capability-matrix.md` retains upstream provenance and historical milestones.
 
 Verified on Windows with Node.js 26.9.0 and Linux with Node.js 24.22.2 on 2026-11-04:
-`npm run verify` exited 0, including 10 browser suites and 8 tooling tests. Detailed evidence
+`npm run verify` exited 0, including 11 browser suites and 8 tooling tests. Detailed evidence
 and remaining acceptance boundaries are recorded in `project-goals.md` and `acceptance-2026-11-04.md`.
 
 ## Implemented paths
@@ -37,6 +37,7 @@ and remaining acceptance boundaries are recorded in `project-goals.md` and `acce
 | Resolve Builder block models and bundled atlas references | `npm run test:textures` (offline) |
 | Import/export native placement origin arrays and wrapped subregions | `litematica-smoke.mjs`, `npm run acceptance:client` |
 | Bound model-authored code and keep it outside the Node host | `builder-sandbox-smoke.mjs`, `server-smoke.mjs` |
+| Load only the selected preview, keep Settings free of Three, recover failed chunks without losing work | `renderer-loading-smoke.mjs`, `project-state-regression.mjs` |
 
 ## Commands
 

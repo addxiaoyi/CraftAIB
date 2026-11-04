@@ -24,5 +24,17 @@ export default defineConfig({
     outDir: '../dist',
     emptyOutDir: true,
     sourcemap: false,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          // Both previews share Three. Keep its stable runtime out of viewport code.
+          includeDependenciesRecursively: false,
+          groups: [
+            { name: 'three-core', test: /[\\/]three[\\/]build[\\/]three\.core\.js$/ },
+            { name: 'three-webgl', test: /[\\/]three[\\/]build[\\/]three\.module\.js$/ },
+          ],
+        },
+      },
+    },
   },
 });

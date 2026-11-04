@@ -8,7 +8,8 @@ import { AppHeader, HeaderToast } from './components/layout/AppHeader';
 import { WorkspaceDrawer } from './components/layout/WorkspaceDrawer';
 import { isWorkspaceId } from './layout/workspaces';
 import { parseProjectJson, stringifyProjectJson, validateProject } from './integrations/project';
-import { persistWorkbench, restoreWorkbench, type SavedWorkbench } from './integrations/storage';
+import { persistWorkbench, restoreWorkbench, saveReloadSnapshot, takeReloadSnapshot, type SavedWorkbench } from './integrations/storage';
+import { ViewportReloadContext } from './components/ViewportReloadContext';
 
 // Workspace Views
 const AiBuilderView = lazy(() => import('./components/workspaces/AiBuilderView').then((module) => ({ default: module.AiBuilderView })));
@@ -23,7 +24,17 @@ const LegoLdrawView = lazy(() => import('./components/workspaces/LegoLdrawView')
 const SettingsView = lazy(() => import('./components/workspaces/SettingsView').then((module) => ({ default: module.SettingsView })));
 
 export default function App() {
-  const [restored] = useState(() => restoreWorkbench({ getItem: (key) => window.localStorage.getItem(key) }));
+  const [restored] = useState(() => {
+    const saved = restoreWorkbench({ getItem: (key) => window.localStorage.getItem(key) });
+    try {
+      const snapshot = takeReloadSnapshot(window.sessionStorage);
+      if (snapshot) return { ...snapshot, warnings: [] };
+    } catch (error) {
+      console.error('Workbench reload snapshot could not be restored', error);
+      saved.warnings.push('Workbench reload snapshot could not be restored.');
+    }
+    return saved;
+  });
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>(restored.activeWorkspace);
   const [lang, setLang] = useState<'zh' | 'en'>(restored.language);
   const [autoSave, setAutoSave] = useState<boolean>(restored.autoSave);
@@ -47,6 +58,10 @@ export default function App() {
   const projectInputRef = useRef<HTMLInputElement>(null);
 
   const [structure, setStructure] = useState<StructureData>(restored.structure);
+  const reloadViewport = () => {
+    saveReloadSnapshot(window.sessionStorage, { activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, materialInventory, placements });
+    window.location.reload();
+  };
 
   useEffect(() => {
     const warnings = persistWorkbench({
@@ -165,6 +180,7 @@ export default function App() {
       )}
 
       <main id="craftaib-main" tabIndex={-1} data-active-workspace={activeWorkspace} className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#090a0f] focus:outline-none">
+        <ViewportReloadContext.Provider value={reloadViewport}>
         <Suspense fallback={<div className="flex-1 grid place-items-center text-xs text-zinc-400">Loading workspace...</div>}>
         {activeWorkspace === 'ai_builder' && (
           <AiBuilderView
@@ -281,6 +297,7 @@ export default function App() {
           />
         )}
         </Suspense>
+        </ViewportReloadContext.Provider>
       </main>
 
       <HeaderToast message={toastMessage} />

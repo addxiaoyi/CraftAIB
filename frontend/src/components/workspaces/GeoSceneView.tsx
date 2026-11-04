@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { StructureData, VoxelBlock } from '../../types/minecraft';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport } from '../LazyViewport';
 import { PageWorkspace } from '../layout/PageWorkspace';
 import { gridToStructure, runEngineTask } from '../../integrations/engine';
 import { useEngineCommit } from '../../hooks/useEngineCommit';
@@ -314,7 +314,7 @@ export const GeoSceneView: React.FC<GeoSceneViewProps> = ({
           </div>
 
           <div className="flex-1 relative">
-            <ThreeViewport structure={terrainStructure} />
+            <ThreeViewport structure={terrainStructure} lang={lang} />
           </div>
         </div>
       </div>

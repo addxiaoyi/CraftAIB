@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { LitematicaPlacementState, StructureData } from '../../types/minecraft';
 import { normalizePlacement } from '../../integrations/placement';
 import { exportLitematic, exportSchematic, exportBlockGridJson, exportLDraw } from '../../utils/exporters';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport } from '../LazyViewport';
 import { PageWorkspace } from '../layout/PageWorkspace';
 import { useFileExport } from '../../hooks/useFileExport';
 import {
@@ -284,6 +284,7 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
         {/* 3D Visualizer Column */}
         <div className="lg:col-span-7 h-[460px] lg:h-[580px] rounded-lg overflow-hidden border border-white/[0.07] relative">
           <ThreeViewport
+            lang={lang}
             structure={active}
             showRegions={true}
             className="w-full h-full"

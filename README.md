@@ -124,6 +124,7 @@ The local server is available at `http://127.0.0.1:4183`. Check `GET /api/ai/sta
 npm run test:all       # engine, server, data integrity, tooling and UI type checks
 npm run build:ui
 npm run test:browser   # isolated browser fixture server; no model requests
+npm run test:renderer-loading # cold loading, renderer switching and failure recovery
 npm run verify
 npm run acceptance:client  # deterministic client package; does not launch Minecraft
 npm run test:model-live    # real configured model, at most two calls, 185 seconds total

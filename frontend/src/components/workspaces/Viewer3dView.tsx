@@ -3,8 +3,7 @@ import { LitematicaPlacementState, PlacementMirror, PlacementRotation, Structure
 import { downloadPlacements, normalizePlacement } from '../../integrations/placement';
 import { transformStructure } from '../../integrations/transforms';
 import { parseProjectJson, stringifyProjectJson } from '../../integrations/project';
-import { ThreeViewport } from '../ThreeViewport';
-import { LodestoneViewport } from '../LodestoneViewport';
+import { ThreeViewport, LodestoneViewport } from '../LazyViewport';
 import { BLOCK_REGISTRY } from '../../utils/blockRegistry';
 import {
   Eye,
@@ -283,7 +282,8 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     <div className="flex-1 h-full relative overflow-hidden flex bg-[#090a0f]">
       {/* 3D CAD Dominant Viewport */}
       <div className="flex-1 h-full relative">
-        {rendererMode === 'lodestone' ? <LodestoneViewport structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} onSelectFace={setSelectedFace} className="h-full w-full" /> : <ThreeViewport
+        {rendererMode === 'lodestone' ? <LodestoneViewport lang={lang} structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} onSelectFace={setSelectedFace} className="h-full w-full" /> : <ThreeViewport
+            lang={lang}
             structure={structure}
             activeRegionId={activeRegionId}
             onSelectBlock={(b) => {

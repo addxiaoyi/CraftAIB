@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
-import { ThreeViewport } from '../ThreeViewport';
-import { LodestoneViewport } from '../LodestoneViewport';
+import { ThreeViewport, LodestoneViewport } from '../LazyViewport';
 import { resolvePreviewBlockId } from '../../utils/blockAliases';
 import { SegmentedTabs } from '../layout/SegmentedTabs';
 import { useFileExport } from '../../hooks/useFileExport';
@@ -1004,12 +1003,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
           <div data-ai-renderer={rendererMode} data-ai-preview-blocks={previewBlockCount} className="flex-1 relative">
             {rendererMode === 'textured' ? (
               <LodestoneViewport
+                lang={lang}
                 structure={previewStructure}
                 backgroundColor={viewportBackground}
                 className="w-full h-full"
               />
             ) : (
               <ThreeViewport
+                lang={lang}
                 structure={previewStructure}
                 backgroundColor={viewportBackground}
                 onBackgroundColorChange={changeViewportBackground}

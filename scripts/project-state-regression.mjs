@@ -56,6 +56,13 @@ assert.throws(() => api.parseProjectJson('{"$craftaibBytes":[256]}'), /byte meta
 
 const saved = new Map();
 const storage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: (key) => saved.delete(key) };
+const reloadSnapshot = { ...project, autoSave: false, ai: { prompt: 'unsaved prompt' }, history: [structure] };
+api.saveReloadSnapshot(storage, reloadSnapshot);
+assert.deepEqual(api.takeReloadSnapshot(storage), reloadSnapshot);
+assert.equal(api.takeReloadSnapshot(storage), null);
+saved.set('craftaib.reload-snapshot', api.stringifyProjectJson({ version: 1, structure }));
+assert.throws(() => api.takeReloadSnapshot(storage), /Incomplete/);
+assert.throws(() => api.saveReloadSnapshot({ setItem() { throw new Error('Quota exceeded'); } }, reloadSnapshot), /Quota exceeded/);
 assert.deepEqual(api.persistWorkbench(storage, { ...project, ai: { prompt: '' }, history: [structure] }), []);
 assert.deepEqual(api.restoreWorkbench(storage).structure, structure);
 assert.equal(api.restoreWorkbench(storage).warnings.length, 0);

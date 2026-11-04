@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { StructureData, VoxelBlock } from '../../types/minecraft';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport } from '../LazyViewport';
 import { PageWorkspace } from '../layout/PageWorkspace';
 import { gridToStructure, runEngineTask } from '../../integrations/engine';
 import { useEngineCommit } from '../../hooks/useEngineCommit';
@@ -304,7 +304,7 @@ export const LegoLdrawView: React.FC<LegoLdrawProps> = ({
           </div>
 
           <div className="flex-1 relative">
-            <ThreeViewport structure={parsedStructure} />
+            <ThreeViewport structure={parsedStructure} lang={lang} />
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { StructureData, VoxelBlock } from '../../types/minecraft';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport } from '../LazyViewport';
 import { PageWorkspace } from '../layout/PageWorkspace';
 import { gridToStructure, runEngineTask, structureToGrid } from '../../integrations/engine';
 import { useEngineCommit } from '../../hooks/useEngineCommit';
@@ -344,7 +344,7 @@ export const VoxelLabView: React.FC<VoxelLabViewProps> = ({
           </div>
 
           <div className="flex-1 relative">
-            <ThreeViewport structure={generatedStructure} />
+            <ThreeViewport structure={generatedStructure} lang={lang} />
           </div>
         </div>
       </div>
