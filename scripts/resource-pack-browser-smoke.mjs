@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { launchTestBrowser, previewUrl } from './lib/browser.mjs';
 import { countPixels, customPack, inspectPackPixels, json, packZip, texturePng } from './resource-pack-pixels.mjs';
 
-const output = resolve('outputs/viewer-check');
+const output = resolve(process.env.CRAFTAIB_RESOURCE_PACK_REPORT_DIR || 'outputs/viewer-check');
 await mkdir(output, { recursive: true });
 const browser = await launchTestBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

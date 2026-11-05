@@ -7,6 +7,9 @@ Verified on Windows with Node.js 26.9.0 and Linux with Node.js 24.22.2 on 2026-1
 `npm run verify` exited 0, including 11 browser suites and 8 tooling tests. Detailed evidence
 and remaining acceptance boundaries are recorded in `project-goals.md` and `acceptance-2026-11-04.md`.
 
+The 2026-11-05 full Windows/Linux rerun also includes two static compression tests, unchanged
+texture pixel checks, and a fresh Linux clone/install/start check; see `material-loading-2026-11-05.md`.
+
 ## Implemented paths
 
 - Shared BlockGrid/SceneGraph, exact block-state palettes, validation, material counts, edits,

@@ -6,6 +6,7 @@ import { launchTestBrowser } from './lib/browser.mjs';
 import { withBrowserServer } from './lib/browser-server.mjs';
 
 const baseline = process.argv.includes('--baseline');
+const measureOnly = process.argv.includes('--measure-only');
 const output = resolve(process.env.CRAFTAIB_LOADING_REPORT || 'outputs/renderer-loading/after.json');
 await mkdir(dirname(output), { recursive: true });
 const sampleCount = Number(process.env.CRAFTAIB_LOADING_SAMPLES || 1);
@@ -54,6 +55,11 @@ async function measure(browser, base) {
     await waitForTextured(page);
     const texturedReadyMs = Math.round(await page.evaluate(() => performance.now()));
     const initial = scriptsAt(requests);
+    const resources = await page.evaluate(() => performance.getEntriesByType('resource').filter((entry) => /\/(assets\/|lodestone-default-pack\/)/.test(new URL(entry.name).pathname)).map((entry) => ({
+      path: new URL(entry.name).pathname,
+      startMs: Math.round(entry.startTime), durationMs: Math.round(entry.duration),
+      transferBytes: entry.transferSize, encodedBytes: entry.encodedBodySize, decodedBytes: entry.decodedBodySize,
+    })));
     if (!baseline) assert.ok(!initial.scripts.some((name) => /\/ThreeViewport-/.test(name)), 'Solid preview must wait until selected.');
 
     const switchStarted = await page.evaluate(() => performance.now());
@@ -73,7 +79,7 @@ async function measure(browser, base) {
     await page.locator('[data-workspace-id="settings"]').filter({ visible: true }).first().click();
     await page.locator('[data-active-workspace="settings"] select').first().waitFor();
     assert.deepEqual(errors, []);
-    return { controlsReadyMs, texturedReadyMs, solidReadyMs, controls, initial, switched, errors };
+    return { controlsReadyMs, texturedReadyMs, solidReadyMs, controls, initial, switched, resources, errors };
   } finally {
     await context.close();
   }
@@ -179,10 +185,10 @@ async function run(base) {
       samples.push(await measure(browser, base));
       console.log(`Renderer loading sample ${index + 1}/${sampleCount} complete.`);
     }
-    const recovery = baseline ? null : await verifyRecovery(browser, base);
-    const workspaces = baseline ? null : await verifyWorkspaceLoading(browser, base);
+    const recovery = baseline || measureOnly ? null : await verifyRecovery(browser, base);
+    const workspaces = baseline || measureOnly ? null : await verifyWorkspaceLoading(browser, base);
     const resourcePack = [];
-    if (!baseline) {
+    if (!baseline && !measureOnly) {
       for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
         resourcePack.push(await verifyPackRecovery(browser, base, viewport));
       }
@@ -192,7 +198,7 @@ async function run(base) {
     const report = {
       baseline, platform: process.platform, node: process.version, browser: browser.version(),
       network: { downloadBitsPerSecond: 1_500_000, latencyMs: 40, coldCache: true, thirdPartyTexturesStubbed: true },
-      note: 'Byte counts cover requested production JS assets; gzip is calculated, not served. Timing is a local headless measurement.',
+      note: 'JS byte totals describe decoded files; calculated gzip sizes are estimates. Resource entries record actual browser transfer, encoded and decoded sizes. Timing is a local headless measurement.',
       samples, recovery, workspaces, resourcePack, largestChunks,
     };
     await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);

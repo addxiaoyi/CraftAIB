@@ -17,6 +17,8 @@ See [`docs/project-goals.md`](docs/project-goals.md) for the acceptance scope,
 
 Switching devices: read the [2026-11-05 handoff](docs/handoff-2026-11-05.md) for the branch, setup commands and remaining acceptance work.
 
+Latest loading evidence: [lossless material delivery](docs/material-loading-2026-11-05.md), including Windows/Linux regression results and a fresh clone startup check.
+
 ## Pinned upstream baselines
 
 ```text

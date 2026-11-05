@@ -1,12 +1,12 @@
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, createVerify, timingSafeEqual } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { appendFile, readFile, stat, writeFile } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderVoxelReview } from './lib/voxel-preview.mjs';
 import { evaluateBuilderScript } from './lib/builder-sandbox.mjs';
+import { serveStatic } from './lib/static-files.mjs';
 import { builderFromReply, builderMessages } from '../packages/ai-planner/dist/builder/index.js';
 import { fitStructurePlanToEnvelope, lanternChamber, planBuildingWithModel, structurePlanToGrid, summarizeInteriorVoxelization, validateStructurePlan } from '../packages/ai-planner/dist/index.js';
 
@@ -17,7 +17,6 @@ const planRateLimit = Math.max(1, Number(process.env.CRAFTAIB_PLAN_RATE_LIMIT ||
 const planRateBuckets = new Map();
 const maxPlanningConcurrency = Math.max(1, Number(process.env.CRAFTAIB_PLAN_MAX_CONCURRENCY || 4));
 let planningInFlight = 0;
-const mimeTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.wasm': 'application/wasm' };
 
 try {
   const envFile = await readFile(resolve('.env'), 'utf8');
@@ -264,21 +263,6 @@ function builderProviderFailure(status, providerMessage) {
   if (status === 429) return Object.assign(new Error('The provider rate-limited the BuilderGPT request. Retry shortly.'), { statusCode: 429, code: 'RATE_LIMITED' });
   if (status === 504) return Object.assign(new Error('The provider gateway timed out before the BuilderGPT script finished. On a reasoning model, set the thinking mode to off in Settings; otherwise retry with a smaller build or a longer timeout.'), { statusCode: 504, code: 'MODEL_TIMEOUT' });
   return Object.assign(new Error(`The provider rejected the BuilderGPT request (HTTP ${status})${detail} Check the model name and endpoint compatibility.`), { statusCode: 502, code: 'MODEL_REQUEST_FAILED' });
-}
-
-async function serveStatic(pathname, response) {
-  let relative;
-  try { relative = decodeURIComponent(pathname === '/' ? '/index.html' : pathname).replace(/^[/\\]+/, ''); }
-  catch { return false; }
-  const file = resolve(root, relative);
-  if (file !== root && !file.startsWith(`${root}${sep}`)) return false;
-  try {
-    const info = await stat(file);
-    if (!info.isFile()) return false;
-    response.writeHead(200, { 'content-type': mimeTypes[extname(file).toLowerCase()] || 'application/octet-stream' });
-    createReadStream(file).pipe(response);
-    return true;
-  } catch { return false; }
 }
 
 const server = createServer(async (request, response) => {
@@ -620,7 +604,13 @@ const server = createServer(async (request, response) => {
       planningInFlight -= 1;
     }
   }
-  if (request.method === 'GET' && await serveStatic(url.pathname, response)) return;
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    try { if (await serveStatic(root, url.pathname, request, response)) return; }
+    catch (error) {
+      console.error(`Static asset request failed: ${url.pathname}`, error);
+      return sendJson(response, 500, { ok: false, error: { code: 'ASSET_UNAVAILABLE', message: 'The requested asset could not be read.' } });
+    }
+  }
   sendJson(response, 404, { ok: false, error: { code: 'NOT_FOUND', message: 'Route not found.' } });
 });
 

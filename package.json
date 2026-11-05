@@ -21,7 +21,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:ui": "vite --config vite.config.ts",
     "prebuild:ui": "npm run build:engine && npm run build:browser-worker && npm run stage:browser-worker",
-    "build:ui": "vite build --config vite.config.ts",
+    "build:ui": "vite build --config vite.config.ts && node scripts/compress-static.mjs",
     "typecheck:ui": "tsc -p frontend/tsconfig.json --noEmit",
     "stage:browser-worker": "node scripts/stage-browser-worker.mjs",
     "matrix": "node scripts/show-matrix.mjs",
@@ -32,6 +32,7 @@
     "test:frontend-structure": "node scripts/frontend-structure-regression.mjs",
     "test:project-state": "node scripts/project-state-regression.mjs",
     "test:tooling": "node --test scripts/tooling-smoke.mjs",
+    "test:static-assets": "node --test scripts/static-assets-smoke.mjs",
     "test:server": "node scripts/builder-sandbox-smoke.mjs && node scripts/server-smoke.mjs",
     "test:waxmapart": "node scripts/build-engine.mjs && node scripts/waxmapart-smoke.mjs",
     "build:browser-worker": "node scripts/build-browser-worker.mjs",
@@ -49,7 +50,7 @@
     "setup:browser": "playwright-core install chromium --only-shell",
     "test:browser": "node scripts/browser-suite.mjs",
     "test:renderer-loading": "node scripts/renderer-loading-smoke.mjs",
-    "verify": "npm run test:all && npm run build:ui && npm run test:browser"
+    "verify": "npm run test:all && npm run build:ui && npm run test:static-assets && npm run test:browser"
   },
   "devDependencies": {
     "@mattzh72/lodestone": "0.6.0",
