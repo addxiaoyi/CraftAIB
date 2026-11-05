@@ -53,6 +53,7 @@ assert.ok(Date.now() - started < 2500, 'timeout must cover headers and body');
 
 let reviewCount = 0;
 let buildCount = 0;
+let projectionCount = 0;
 let sawRenderedViews = false;
 let rejected = false;
 const accepted = await planBuildingWithModel({ prompt: 'Match this box.', constraints: { includeInterior: false }, referenceImage: { width: 120, height: 60, dataUrl: 'data:image/png;base64,AA==', referenceFeatures: features } }, {
@@ -69,8 +70,14 @@ const accepted = await planBuildingWithModel({ prompt: 'Match this box.', constr
     else if (required === 'build_voxel_structure') {
       if (rejected) assert.equal(reviewCount, 1, 'negative review must force a revised build');
       buildCount++;
+      projectionCount = 0;
       args = { plan: buildCount === 1 ? plan : { ...plan, geometry: { parts: [...plan.geometry.parts, { id: 'inner-light', type: 'box', x: 12, y: 5, z: 12, width: 1, height: 1, length: 1, material: 'minecraft:sea_lantern' }] } } };
-    } else if (required === 'inspect_voxel_structure') args = { buildId: latestBuild };
+    } else if (required === 'build_volume_layer') args = { buildId: latestBuild };
+    else if (required === 'inspect_projection') {
+      args = { buildId: latestBuild, view: ['front', 'side', 'rear', 'top'][projectionCount % 4] };
+      projectionCount++;
+    } else if (required === 'inspect_interior') args = { buildId: latestBuild };
+    else if (required === 'inspect_voxel_structure') args = { buildId: latestBuild };
     else if (required === 'review_reference_structure') {
       sawRenderedViews ||= body.messages.some((message) => message.role === 'user' && message.content?.some?.((part) => part.image_url?.url?.startsWith('data:image/png;base64,') && part.image_url.url.length > 100));
       assert.equal(sawRenderedViews, true, 'review must receive the executed block images');
@@ -84,4 +91,5 @@ const accepted = await planBuildingWithModel({ prompt: 'Match this box.', constr
 assert.equal(buildCount, 2);
 assert.equal(reviewCount, 2);
 assert.ok(accepted.geometry.parts.some((part) => part.id === 'inner-light'));
+assert.ok((accepted.referenceValidation?.silhouette ?? 0) > 0.8, 'the finalized plan must expose its measured reference silhouette');
 console.log('Reference quality passed: aspect, crop, large grids, PNG depth, body timeout, negative visual review and revision.');

@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { LitematicaPlacementState, StructureData } from '../../types/minecraft';
 import { normalizePlacement } from '../../integrations/placement';
 import { exportLitematic, exportSchematic, exportBlockGridJson, exportLDraw } from '../../utils/exporters';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport } from '../LazyViewport';
+import { PageWorkspace } from '../layout/PageWorkspace';
+import { useFileExport } from '../../hooks/useFileExport';
 import {
   FileCode2,
   Upload,
@@ -30,10 +32,10 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
   onPlacementsChange,
   placements = [],
 }) => {
-  const [importedStructure, setImportedStructure] = useState<StructureData | null>(currentStructure);
   const [sourceFormat, setSourceFormat] = useState<string>('BlockGrid CAD');
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const placementInput = React.useRef<HTMLInputElement>(null);
+  const fileExport = useFileExport();
 
   const handlePlacementUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -104,7 +106,6 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
     setImportStatus('Parsing structure file…');
     try {
       const normalized = await onImportFile(file);
-      setImportedStructure(normalized);
       const name = file.name.toLowerCase();
       setSourceFormat(name.endsWith('.litematic') ? 'Litematica (.litematic)' : name.endsWith('.schem') ? 'Sponge Schematic (.schem)' : 'BlockGrid JSON');
       onLoadStructure(normalized);
@@ -112,18 +113,19 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
       setTimeout(() => setImportStatus(null), 3000);
     } catch (error) {
       setImportStatus(error instanceof Error ? error.message : 'Structure file could not be imported.');
+    } finally {
+      e.target.value = '';
     }
   };
 
-  const active = importedStructure || currentStructure;
+  const active = currentStructure;
+  const saveLitematic = () => void fileExport.save(() => exportLitematic(active, placements));
+  const saveSchematic = () => void fileExport.save(() => exportSchematic(active, placements));
+  const saveGridJson = () => void fileExport.save(() => exportBlockGridJson(active));
+  const saveLdraw = () => void fileExport.save(() => exportLDraw(active));
 
   return (
-    <div className="flex-1 h-full overflow-y-auto p-5 lg:p-7 space-y-6 max-w-7xl mx-auto w-full bg-[#090a0f]">
-      {/* Header */}
-      <div>
-        <h1 className="text-base font-semibold tracking-tight text-white">{t.title}</h1>
-        <p className="text-xs text-zinc-400 mt-1">{t.subtitle}</p>
-      </div>
+    <PageWorkspace title={t.title} subtitle={t.subtitle}>
 
       {/* Upload Dropzone */}
       <div className="border border-dashed border-white/10 hover:border-white/20 bg-[#0e1118] rounded-lg p-6 text-center transition-colors">
@@ -225,9 +227,12 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
           {/* Cross-Format Compiler */}
           <div className="bg-[#0e1118] border border-white/[0.07] rounded-lg p-4 space-y-3">
             <span className="text-xs font-semibold text-white">{t.convertTitle}</span>
+            {fileExport.exportError && <p data-export-error role="alert" className="text-xs text-red-400">{fileExport.exportError}</p>}
+            {fileExport.isExporting && <p role="status" className="text-xs text-zinc-400">{lang === 'zh' ? '正在导出…' : 'Exporting...'}</p>}
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => void exportLitematic(active, placements)}
+                onClick={saveLitematic}
+                disabled={fileExport.isExporting}
                 className="p-2.5 rounded border border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] text-xs font-medium text-zinc-200 flex flex-col items-start gap-1 transition-colors"
               >
                 <div className="flex items-center gap-1.5 text-emerald-400">
@@ -238,7 +243,8 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
               </button>
 
               <button
-                onClick={() => void exportSchematic(active, placements)}
+                onClick={saveSchematic}
+                disabled={fileExport.isExporting}
                 className="p-2.5 rounded border border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] text-xs font-medium text-zinc-200 flex flex-col items-start gap-1 transition-colors"
               >
                 <div className="flex items-center gap-1.5 text-sky-400">
@@ -249,7 +255,8 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
               </button>
 
               <button
-                onClick={() => exportBlockGridJson(active)}
+                onClick={saveGridJson}
+                disabled={fileExport.isExporting}
                 className="p-2.5 rounded border border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] text-xs font-medium text-zinc-200 flex flex-col items-start gap-1 transition-colors"
               >
                 <div className="flex items-center gap-1.5 text-amber-400">
@@ -260,7 +267,8 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
               </button>
 
               <button
-                onClick={() => exportLDraw(active)}
+                onClick={saveLdraw}
+                disabled={fileExport.isExporting}
                 className="p-2.5 rounded border border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] text-xs font-medium text-zinc-200 flex flex-col items-start gap-1 transition-colors"
               >
                 <div className="flex items-center gap-1.5 text-indigo-400">
@@ -276,12 +284,13 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
         {/* 3D Visualizer Column */}
         <div className="lg:col-span-7 h-[460px] lg:h-[580px] rounded-lg overflow-hidden border border-white/[0.07] relative">
           <ThreeViewport
+            lang={lang}
             structure={active}
             showRegions={true}
             className="w-full h-full"
           />
         </div>
       </div>
-    </div>
+    </PageWorkspace>
   );
 };

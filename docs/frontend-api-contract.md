@@ -22,7 +22,7 @@ Return booleans by capability and safe model identifiers only. Never return endp
 
 `POST /api/ai/structure-plan`
 
-Content type: `application/json`. The frontend resizes a reference to at most 512 pixels on its longest edge and sends JPEG data URL to keep the request bounded.
+Content type: `application/json`. The frontend resizes a reference to at most 1280 pixels on its longest edge and sends a WebP data URL to keep the request bounded.
 
 ```json
 {
@@ -44,7 +44,7 @@ Content type: `application/json`. The frontend resizes a reference to at most 51
 }
 ```
 
-`prompt` may be empty only when a valid reference image is included. `referenceImage` is optional. Validate dimensions, MIME type, encoded size, and prompt length before calling the model. The client can abort the HTTP request when the user cancels generation; propagate disconnect/abort to the upstream provider.
+`prompt` may be empty only when a valid reference image is included. `referenceImage` is optional. Every `constraints` field is optional: omit `width`, `height`, `length`, `floors` and `detailLevel` to let the model choose the envelope and the level of detail from the prompt and image. Send them only when the user explicitly locked a value in the UI; an explicit size is enforced (`sizeMode` `exact`), and a reference image uses `envelope` so the plan must fit within it. An explicitly requested `detailLevel` is a preference rather than a contract: the server does not require a fixed room, circulation or furniture count. Validate dimensions, MIME type, encoded size, and prompt length before calling the model. The client can abort the HTTP request when the user cancels generation; propagate disconnect/abort to the upstream provider.
 
 Success: `200`
 

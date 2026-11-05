@@ -9,7 +9,11 @@ await page.goto(previewUrl);
 await page.locator('[data-active-workspace]').waitFor();
 const navigate = async (id) => {
   const visibleButton = page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first();
-  if (!(await visibleButton.count())) await page.locator('[data-mobile-menu-toggle="true"]').click();
+  if (!(await visibleButton.count())) {
+    const toolbox = page.locator('[data-toolbox-toggle="true"]').filter({ visible: true }).first();
+    if (await toolbox.count()) await toolbox.click();
+    else await page.locator('[data-mobile-menu-toggle="true"]').click();
+  }
   await page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first().click();
   await page.waitForFunction((workspace) => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === workspace, id);
 };

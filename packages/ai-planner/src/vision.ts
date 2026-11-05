@@ -1,4 +1,4 @@
-import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type InteriorAudit, type ProjectionAudit, type ReferenceFeatures, type RoomPlan, type StructurePlan, type StructureRegionPlan } from './index.js';
+import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type InteriorAudit, type ProjectionAudit, type ReferenceFeatures, type StructurePlan, type StructureRegionPlan } from './index.js';
 
 export type VisionPlannerOptions = {
   endpoint: string;
@@ -9,6 +9,7 @@ export type VisionPlannerOptions = {
   retryDelayMs?: number;
   maxRepairAttempts?: number;
   strictSchema?: boolean;
+  thinking?: 'auto' | 'low' | 'off';
   requestTimeoutMs?: number;
   signal?: AbortSignal;
   onToolEvent?: (event: ToolExecutionEvent) => void;
@@ -72,20 +73,49 @@ const MAX_BUILD_TOOL_TURNS = 22;
 const MAX_IDENTICAL_BUILD_FAILURES = 3;
 const MAX_STAGNANT_REFERENCE_INSPECTIONS = 3;
 const MIN_REFERENCE_PROGRESS = 0.005;
+const LANTERN_IDENTITY = /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i;
+const BUILDING_IDENTITY_WORDS = /house|home|castle|tower|cathedral|church|chapel|city|town|village|hut|cottage|temple|palace|fort|manor|inn|tavern|hall|ship|bridge|\u5e7f\u573a|\u8857|\u623f|\u5c4b|\u57ce\u5821|\u5854|\u5bfa|\u5bab|\u57ce\u5e02|\u6751\u5e84|\u6865|\u5e99/i;
+const looksLikeLightFixture = (text: string) => LANTERN_IDENTITY.test(text) && !BUILDING_IDENTITY_WORDS.test(text);
+const LANTERN_CHAMBER_NAME = /chamber|interior|lantern.?body|\u706f\u7b3c\u5185\u8154/i;
+const LANTERN_CHAMBER_EXCLUDE = /roof|spire|dome|battlement|apron|crown|tassel/i;
+
+export type LanternChamberBox = { x: number; y: number; z: number; width: number; height: number; length: number };
+
+export function lanternChamber(plan: { regions: ReadonlyArray<LanternChamberBox & { name: string; role: string }> }): LanternChamberBox | null {
+  const usable = plan.regions.filter((region) => region.width >= 3 && region.height >= 3 && region.length >= 3);
+  const named = usable.find((region) => LANTERN_CHAMBER_NAME.test(`${region.name} ${region.role}`));
+  if (named) return named;
+  return usable
+    .filter((region) => !LANTERN_CHAMBER_EXCLUDE.test(`${region.name} ${region.role}`))
+    .sort((left, right) => right.width * right.height * right.length - left.width * left.height * left.length)[0] ?? null;
+}
 
 export function summarizeInteriorVoxelization(
   plan: StructurePlan,
   cells: ReadonlyArray<{ x: number; y: number; z: number; block: { id: string } }>,
   identityHint = `${plan.type} ${plan.name}`,
 ) {
-  const isLightFixture = /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(identityHint);
-  const lightChamber = isLightFixture
-    ? plan.regions.find((region) => region.width >= 3 && region.height >= 3 && region.length >= 3 && /chamber|interior|lantern body/i.test(`${region.name} ${region.role}`))
-      ?? plan.regions.filter((region) => region.width >= 3 && region.height >= 3 && region.length >= 3 && !/roof|spire|dome|battlement|apron|crown|tassel/i.test(`${region.name} ${region.role}`)).sort((a, b) => b.width * b.height * b.length - a.width * a.height * a.length)[0]
-      ?? { x: 0, y: 0, z: 0, ...plan.dimensions }
+  const isLightFixture = looksLikeLightFixture(identityHint);
+  const chamber = isLightFixture ? lanternChamber(plan) : null;
+  const lightChamber: LanternChamberBox | undefined = isLightFixture
+    ? chamber ?? { x: 0, y: 0, z: 0, ...plan.dimensions }
     : undefined;
-  const bounds = lightChamber ? [lightChamber] : plan.rooms.length ? plan.rooms : plan.regions.filter((region) => /room|chamber|interior|hall|residence|atrium|kitchen|bedroom/i.test(`${region.name} ${region.role}`));
-  const area = bounds.reduce((largest, candidate) => (candidate.width - 2) * (candidate.height - 2) * (candidate.length - 2) > (largest.width - 2) * (largest.height - 2) * (largest.length - 2) ? candidate : largest, bounds[0]);
+  const interiorPart = (plan.geometry?.parts ?? [])
+    .filter((part) => part.purpose === 'room' || part.purpose === 'circulation')
+    .sort((left, right) => right.width * right.height * right.length - left.width * left.height * left.length)[0];
+  const roomRegions = plan.regions.filter((region) => /room|chamber|interior|hall|residence|atrium|kitchen|bedroom/i.test(`${region.name} ${region.role}`));
+  const bounds: ReadonlyArray<LanternChamberBox> = lightChamber
+    ? [lightChamber]
+    : plan.rooms.length
+      ? plan.rooms
+      : roomRegions.length
+        ? roomRegions
+        : interiorPart
+          ? [interiorPart]
+          : [];
+  const area = bounds.length
+    ? bounds.reduce((largest, candidate) => (candidate.width - 2) * (candidate.height - 2) * (candidate.length - 2) > (largest.width - 2) * (largest.height - 2) * (largest.length - 2) ? candidate : largest, bounds[0])
+    : undefined;
   const inside = (cell: { x: number; y: number; z: number }, area: { x: number; y: number; z: number; width: number; height: number; length: number }) =>
     cell.x > area.x && cell.x < area.x + area.width - 1
     && cell.y > area.y && cell.y < area.y + area.height - 1
@@ -97,16 +127,16 @@ export function summarizeInteriorVoxelization(
   return { regions: bounds.length, volume: interiorVolume, occupiedBlocks: interiorCells.length, lightBlocks: lights };
 }
 export const ARCHITECTURAL_AESTHETIC_SKILL = `
-ARCHITECTURAL AESTHETIC SKILL
-Goal: make a deliberate, beautiful Minecraft structure that reads clearly from far away and rewards close inspection.
+ARCHITECTURAL GUIDANCE (ADVISORY)
+The user's brief and, when present, the reference image outrank this guidance: follow them first and ignore any principle below that conflicts with what was asked. These are habits that tend to read well, not quotas to satisfy.
 
-1. Read the reference before designing. Identify the primary silhouette, visual center, dominant axis, scale, negative space, major masses, roof or cap, repeated motifs, materials, color hierarchy, camera angle and visible depth cues. Treat the image as evidence for your own 3D design, never as a 2D mask to extrude or copy onto every side. Preserve its visible facts.
-2. Establish hierarchy. Use one main mass, one focal feature and a small number of supporting accents. Do not give every part equal visual weight. Keep a readable silhouette at thumbnail scale.
-3. Control proportion. Use a coherent base, body, transition and crown. Align windows, beams, columns, stairs and trim to a shared module. Avoid accidental tiering, random setbacks, thin floating plates and noisy over-segmentation.
-4. Build depth. Use foundation, wall plane, frame, recess, projection, eave and ornament layers. Openings must be real voids or transparent blocks with lintels, sills and structural edges.
-5. Use materials intentionally. Select a dominant material, a secondary material, a restrained accent and a light source. Keep palette contrast clear; reserve rare colors for focal details. Match the reference color relationships, not just individual color names.
+1. Read the reference before designing (when one exists). Identify the primary silhouette, visual center, dominant axis, scale, negative space, major masses, roof or cap, repeated motifs, materials, color hierarchy, camera angle and visible depth cues. Treat the image as evidence for your own 3D design, never as a 2D mask to extrude or copy onto every side. Preserve its visible facts.
+2. Aim for a readable silhouette and a clear visual hierarchy, but let the subject decide its massing. A cathedral, a bridge, a cave mouth and a lantern do not share proportions, part counts or symmetry; choose what the subject needs.
+3. Control proportion where the subject calls for it. Use a coherent base, body, transition and crown when they exist, and align repeated windows, beams, columns, stairs and trim to a shared module. Avoid accidental tiering, random setbacks, thin floating plates and noisy over-segmentation, while allowing deliberate irregularity when the subject is organic or ruined.
+4. Build depth. Use foundation, wall plane, frame, recess, projection, eave and ornament layers as appropriate. Openings must be real voids or transparent blocks with lintels, sills and structural edges.
+5. Use materials intentionally. Select a dominant material, a secondary material, an accent and a light source; keep palette contrast clear and let rare colors serve the focal details. Match the reference color relationships, not just individual color names.
 6. Add detail with rhythm and variation. Repeat motifs with consistent spacing, then vary corners, entrances, roof edges and focal areas. Detail should explain structure, use real Minecraft blocks and never obscure the main form.
-7. Conceive the complete 3D assembly before placing blocks. Estimate width, height and depth from perspective, exposed side planes, shadows, repeated modules and structural use; when depth is occluded, choose a plausible depth for the object rather than a one-block extrusion. Decide whether the reference is bilateral, rotational or intentionally asymmetric and carry that design logic through the back, both sides, top, underside and interior. Continue materials and motifs around corners; do not paste the same front texture onto unseen faces. For buildings, infer reachable rooms, circulation, storage, lighting and service spaces. For objects, infer a complete solid assembly without inventing unrelated rooms or floors.
+7. Conceive the complete 3D assembly before placing blocks. Estimate width, height and depth from perspective, exposed side planes, shadows, repeated modules and structural use; when depth is occluded, choose a plausible depth for the object rather than a one-block extrusion. Decide whether the reference is bilateral, rotational or intentionally asymmetric and carry that design logic through the back, both sides, top, underside and interior. Continue materials and motifs around corners; do not paste the same front texture onto unseen faces. Infer rooms, circulation, storage, lighting and service spaces only where the subject actually implies them. For objects, infer a complete solid assembly without inventing unrelated rooms or floors.
 8. Check construction quality. No unsupported floating masses, disconnected stairs, impossible overhangs, paper-thin shells, exposed hollow cavities, abrupt material changes or empty placeholder boxes. Prefer a simpler coherent form over detail that breaks structure.
 9. Before finishing, inspect front, side and top projections, occupied depth, x/z mirror-match metrics, block counts, region bounds and material counts. Compare the visible projection with the original image; use side/top projections to judge whether your own volume interpretation is coherent. Revise mismatches. A valid JSON plan is not finished until its executed voxel result is visually coherent.
 10. Construct only through the provided function tools. Never return or execute JavaScript or another build script. Use only block IDs returned by get_minecraft_blocks, integer zero-based coordinates within the declared dimensions, and named parts with explicit structural purposes.
@@ -227,7 +257,7 @@ export async function planBuildingWithModel(input: BuildingPrompt, options: Visi
   const fetcher = options.fetcher ?? fetch;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
-  const request = buildRequest(input, imageUrl, options.model, options.strictSchema !== false);
+  const request = buildRequest(input, imageUrl, options.model, options.strictSchema !== false, options.thinking);
   const requestTimeoutMs = Math.max(1000, Math.floor(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS));
   const retries = Math.max(0, Math.min(5, Math.floor(options.maxRetries ?? DEFAULT_RETRIES)));
   const totalBudgetMs = Math.min(900_000, requestTimeoutMs * (retries + 1) * MAX_BUILD_TOOL_TURNS);
@@ -274,9 +304,11 @@ async function runBuildToolLoop(
   const rejectedReviews = new Set<string>();
   let catalogProvided = false;
   let referenceAnalysis: ReferenceImageAnalysis | undefined;
+  let invalidAnalysisAttempts = 0;
   let latestBuildId = '';
   let lastBuildFailure = '';
   let identicalBuildFailures = 0;
+  let repeatedPassingReuses = 0;
   let bestReferenceScore = Number.NEGATIVE_INFINITY;
   let stagnantReferenceInspections = 0;
   let volumeBuilt = false;
@@ -353,10 +385,10 @@ async function runBuildToolLoop(
           ? compareReferenceFrontMask(inspected.plan, inspected.grid.cells)
           : null;
         if (inspected && reviewedBuilds.has(latestBuildId) && inspectedBuilds.has(latestBuildId) && (!match || passesReferenceMatch(match))) {
-          return {
+          return withReferenceValidation({
             ...attachReferenceFeatures(inspected.plan, input.referenceImage?.referenceFeatures),
             notes: [...inspected.plan.notes, `The model returned no further tool call after inspection in turn ${turn}; the inspected build was finalized.`],
-          };
+          }, input);
         }
         const stage = requiredTool ?? 'finish_structure or a revision';
         throw Object.assign(new Error(`The model passed the tool-call capability probe but did not call the required construction tool '${stage}'. Retry once or check provider tool-call behavior for this model.`), { statusCode: 422, code: 'MODEL_TOOL_CALL_MISSING' });
@@ -374,10 +406,10 @@ async function runBuildToolLoop(
         { ...options, signal },
       );
       const fallbackPlan = prepareModelPlan(parseVisionResponse(await fallbackResponse.text()), imageUrl, input.constraints, input.referenceImage?.referenceFeatures, input.prompt);
-      return {
+      return withReferenceValidation({
         ...attachReferenceFeatures(fallbackPlan, input.referenceImage?.referenceFeatures),
         notes: [...fallbackPlan.notes, 'The configured endpoint did not support tool calls; used validated single-pass compatibility mode.'],
-      };
+      }, input);
     }
     const calls = Array.isArray(assistantMessage.tool_calls) ? assistantMessage.tool_calls : [];
     if (!calls.length) throw new Error('The building model returned no construction-tool call.');
@@ -426,8 +458,29 @@ async function runBuildToolLoop(
           const signature = structurePlanSignature(candidate);
           const duplicate = imageUrl ? [...builds.entries()].find(([, build]) => build.signature === signature) : undefined;
           if (duplicate) {
-            const previousMatch = compareReferenceFrontMask(duplicate[1].plan, duplicate[1].grid.cells);
-            throw new Error(`This geometry is identical to previous build ${duplicate[0]}; it will not improve the result. ${referenceSilhouetteFeedback(previousMatch, duplicate[1].plan.dimensions.height)} Change the camera-facing geometry parts and coordinates before rebuilding.`);
+            const [duplicateId, previous] = duplicate;
+            const previousMatch = compareReferenceFrontMask(previous.plan, previous.grid.cells);
+            if (previousMatch && passesReferenceMatch(previousMatch)) {
+              // The repeated geometry is already a valid reference match. Rebuilding it cannot
+              // improve the result, but failing the request would discard a passing build.
+              repeatedPassingReuses += 1;
+              if (repeatedPassingReuses >= 2) {
+                return finalizeInspectedBuild(previous.plan, input, imageUrl, turn, `Repeated identical geometry twice; the server finalized the earlier passing build ${duplicateId} (silhouette ${Math.round(previousMatch.silhouette * 100)}%).`);
+              }
+              messages.push(toolResult(toolCallId, {
+                ok: true,
+                buildId: duplicateId,
+                reused: true,
+                dimensions: { width: previous.grid.width, height: previous.grid.height, length: previous.grid.length },
+                blocks: previous.grid.cells.length,
+                referenceMatch: previousMatch,
+                interior: summarizeInteriorVoxelization(previous.plan, previous.grid.cells, `${input.prompt} ${previous.plan.type} ${previous.plan.name}`),
+                feedback: `This exact geometry already exists as ${duplicateId} and meets the reference gates (silhouette ${Math.round(previousMatch.silhouette * 100)}%, missing ${Math.round(previousMatch.missing * 100)}%, extra ${Math.round(previousMatch.extra * 100)}%). Do not rebuild it: inspect ${duplicateId}, review it, then call finish_structure.`,
+              }));
+              options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: true, silhouette: previousMatch.silhouette, message: `Identical geometry reused from ${duplicateId}; it already passes the reference silhouette gates.` });
+              continue;
+            }
+            throw new Error(`This geometry is identical to previous build ${duplicateId}; it will not improve the result. ${referenceSilhouetteFeedback(previousMatch, previous.plan.dimensions.height)} Change the camera-facing geometry parts and coordinates before rebuilding.`);
           }
           latestBuildId = `build-${turn}-${builds.size + 1}`;
           builds.set(latestBuildId, { plan: candidate, grid, signature });
@@ -437,6 +490,7 @@ async function runBuildToolLoop(
           constructionReview = undefined;
           lastBuildFailure = '';
           identicalBuildFailures = 0;
+          repeatedPassingReuses = 0;
           if (!imageUrl) {
             options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: true, blocks: grid.cells.length, regions: candidate.regions.length, message: 'Text StructurePlan built into a validated voxel grid.' });
             return {
@@ -478,7 +532,17 @@ async function runBuildToolLoop(
             feedback: `${correction} Keep the original image as the source of truth. Correct the specific coordinates or dimensions and rebuild; do not repeat unchanged geometry.`,
           }));
           if (identicalBuildFailures >= MAX_IDENTICAL_BUILD_FAILURES) {
-            throw Object.assign(new Error(`The construction tool rejected the same plan ${identicalBuildFailures} times. Last validation error: ${failureMessage}`), { statusCode: 422, code: 'BUILD_VALIDATION_REPEATED' });
+            // The model is looping instead of applying the feedback. Returning the closest
+            // built structure (with its measured deficit recorded) beats discarding the work.
+            const salvaged = bestBuiltStructure(builds);
+            if (salvaged) {
+              const salvageMatch = compareReferenceFrontMask(salvaged.plan, salvaged.grid.cells);
+              const deficit = salvageMatch
+                ? ` silhouette ${Math.round(salvageMatch.silhouette * 100)}%, missing ${Math.round(salvageMatch.missing * 100)}%, extra ${Math.round(salvageMatch.extra * 100)}%`
+                : '';
+              return finalizeInspectedBuild(salvaged.plan, input, imageUrl, turn, `The model repeated rejected geometry; the server returned the closest built structure instead of discarding it (${deficit.trim() || 'no measured match'}).`);
+            }
+            throw Object.assign(new Error(`The construction tool rejected ${identicalBuildFailures} consecutive build attempts. Last validation error: ${failureMessage}`), { statusCode: 422, code: 'BUILD_VALIDATION_REPEATED' });
           }
         }
         continue;
@@ -489,14 +553,19 @@ async function runBuildToolLoop(
           messages.push(toolResult(toolCallId, { ok: false, error: 'Image analysis is only available for requests with an original reference image.' }));
           continue;
         }
-        const invalidAnalysis = validateReferenceImageAnalysis(args);
+        const analysisArgs = sanitizeReferenceImageAnalysis(args) as ReferenceImageAnalysis;
+        const invalidAnalysis = validateReferenceImageAnalysis(analysisArgs);
         if (invalidAnalysis) {
+          invalidAnalysisAttempts += 1;
           messages.push(toolResult(toolCallId, { ok: false, error: invalidAnalysis, instruction: 'Look at the attached original image and return a concrete object/building identification and its visible visual facts.' }));
           options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: false, message: invalidAnalysis });
+          if (invalidAnalysisAttempts >= 3) {
+            throw Object.assign(new Error(`The model could not describe the reference image after ${invalidAnalysisAttempts} attempts: ${invalidAnalysis}`), { statusCode: 422, code: 'REFERENCE_ANALYSIS_INVALID' });
+          }
           continue;
         }
         referenceAnalysis = {
-          ...(args as ReferenceImageAnalysis),
+          ...(analysisArgs as ReferenceImageAnalysis),
           topCues: args.topCues ?? ['top details not clearly visible; infer from silhouette'],
           negativeSpaces: args.negativeSpaces ?? ['no additional negative space confidently measurable'],
           materialRegions: args.materialRegions ?? ['dominant visible material region'],
@@ -640,12 +709,12 @@ async function runBuildToolLoop(
           messages.push(toolResult(toolCallId, { ok: false, error: `${referenceSilhouetteFeedback(referenceMatch, completed.plan.dimensions.height)} Required gates: silhouette >= ${Math.round(MIN_REFERENCE_SILHOUETTE_MATCH * 100)}%, missing <= ${Math.round(MAX_REFERENCE_MISSING * 100)}%, extra <= ${Math.round(MAX_REFERENCE_EXTRA * 100)}%. Revise this face and rebuild before finishing.` }));
           continue;
         }
-        return {
+        return withReferenceValidation({
           ...attachReferenceFeatures({ ...completed.plan, constructionReview }, input.referenceImage?.referenceFeatures),
           notes: [...completed.plan.notes, imageUrl
             ? `Built and checked by the unified model using the original reference image in ${turn} tool turns.`
             : `Built and checked by the configured building model in ${turn} tool turns.`],
-        };
+        }, input);
       }
 
       messages.push(toolResult(toolCallId, { ok: false, error: `Unknown construction tool: ${String(toolName)}` }));
@@ -684,12 +753,19 @@ function requiredToolForLatestState(catalogProvided: boolean, latestBuildId: str
 }
 
 function finalizeInspectedBuild(plan: StructurePlan, input: BuildingPrompt, imageUrl: string | undefined, turn: number, completionNote = 'The server finalized the inspected build.'): StructurePlan {
-  return {
+  return withReferenceValidation({
     ...attachReferenceFeatures(plan, input.referenceImage?.referenceFeatures),
     notes: [...plan.notes, imageUrl
       ? `Built and checked by the unified model using the original reference image in ${turn} tool turns. ${completionNote}`
       : `Built and checked by the configured building model in ${turn} tool turns. ${completionNote}`],
-  };
+  }, input);
+}
+
+function withReferenceValidation(plan: StructurePlan, input: BuildingPrompt): StructurePlan {
+  const features = input.referenceImage?.referenceFeatures;
+  if (!features?.frontMask?.length) return plan;
+  const grid = structurePlanToGrid({ ...plan, referenceFeatures: features });
+  return { ...plan, referenceFeatures: features, referenceValidation: compareReferenceFrontMask({ ...plan, referenceFeatures: features }, grid.cells) };
 }
 
 function prepareModelPlan(value: unknown, imageUrl: string | undefined, constraints?: BuildingPrompt['constraints'], referenceFeatures?: ReferenceFeatures, promptHint = ''): StructurePlan {
@@ -703,9 +779,9 @@ function prepareModelPlan(value: unknown, imageUrl: string | undefined, constrai
 }
 
 function addRequestedInterior(plan: StructurePlan, constraints?: BuildingPrompt['constraints'], identityHint = `${plan.type} ${plan.name}`): StructurePlan {
-  if (constraints?.includeInterior === false || (constraints?.detailLevel ?? 0) < 4) return plan;
-  if (plan.inference?.category && plan.inference.category !== 'building' && !/lantern|lamp|chandelier|灯笼|吊灯|灯具/i.test(identityHint)) return plan;
-  const parts = synthesizeInteriorGeometry(plan.geometry?.parts ?? [], plan.regions, plan.rooms ?? [], plan.palette, constraints, identityHint);
+  if (plan.inference?.category && plan.inference.category !== 'building' && !looksLikeLightFixture(identityHint)) return plan;
+  if (!looksLikeLightFixture(identityHint)) return plan;
+  const parts = ensureLanternLightCore(plan.geometry?.parts ?? [], plan.regions, constraints, identityHint);
   return { ...plan, geometry: { parts } };
 }
 
@@ -850,7 +926,8 @@ function referenceOutlineInstruction(features?: ReferenceFeatures): string {
     for (let x = left; x < right; x += 1) row += features.frontMask[(top + y) * features.maskWidth + x] ? '#' : '.';
     return row;
   });
-  return `Measured front-silhouette span profile, top-to-bottom across 16 equal height bands; x bins are 0-15: ${silhouetteSpanProfile(rows).join(', ')}. This is geometry evidence, not a block map. Use the bands to keep the crown narrow, body width proportional, and base/tassels within the reference outline; explain any deliberate perspective/depth overhang in your design.`;
+  const ratio = (right - left) / Math.max(1, bottom - top);
+  return `Measured front-silhouette span profile, top-to-bottom across 16 equal height bands; x bins are 0-15: ${silhouetteSpanProfile(rows).join(', ')}. Measured subject width/height ratio: ${ratio.toFixed(2)}; keep the camera-facing width-to-height proportion within about 10% instead of building a differently shaped mass. This is geometry evidence, not a block map. Use the bands to keep the crown narrow, body width proportional, and base/tassels within the reference outline; explain any deliberate perspective/depth overhang in your design.`;
 }
 
 function referenceColorInstruction(features?: ReferenceFeatures): string {
@@ -957,6 +1034,35 @@ function colorFamilyFromBlock(id: string): ColorFamily | undefined {
   return undefined;
 }
 
+// Real models describe parts verbosely; an 80+ character label is a wording problem, not a
+// reason to reject the whole analysis. Trim and cap the lists before validating the structure.
+function sanitizeReferenceImageAnalysis(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const source = value as Record<string, unknown>;
+  const limits: Record<string, { max: number; length: number }> = {
+    visibleParts: { max: 12, length: 80 },
+    depthCues: { max: 8, length: 120 },
+    topCues: { max: 8, length: 120 },
+    negativeSpaces: { max: 8, length: 120 },
+    materialRegions: { max: 12, length: 120 },
+    evidence: { max: 12, length: 160 },
+    inferences: { max: 12, length: 160 },
+  };
+  const result: Record<string, unknown> = { ...source };
+  for (const [key, rule] of Object.entries(limits)) {
+    const list = source[key];
+    if (!Array.isArray(list)) continue;
+    result[key] = list
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim().slice(0, rule.length))
+      .filter((item) => item.length > 1)
+      .slice(0, rule.max);
+  }
+  if (typeof source.object === 'string') result.object = source.object.trim().slice(0, 120);
+  if (typeof source.silhouette === 'string') result.silhouette = source.silhouette.trim().slice(0, 500);
+  return result;
+}
+
 function validateReferenceImageAnalysis(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return 'Image analysis must be a structured object.';
   const analysis = value as Partial<ReferenceImageAnalysis>;
@@ -966,7 +1072,7 @@ function validateReferenceImageAnalysis(value: unknown): string | undefined {
   const hasText = (text: unknown, maxLength: number) => typeof text === 'string' && text.trim().length > 1 && text.length <= maxLength;
   if (!hasText(analysis.object, 120) || !categories.includes(String(analysis.category))) return 'Name the pictured subject and choose its correct category; do not infer a generic building when the image shows an object.';
   if (!hasText(analysis.silhouette, 500)) return 'Describe the subject silhouette, main mass, and distinctive outline.';
-  if (!Array.isArray(analysis.visibleParts) || analysis.visibleParts.length < 2 || analysis.visibleParts.length > 12 || analysis.visibleParts.some((part) => !hasText(part, 80))) return 'List 2 to 12 specific visible components from the original image.';
+  if (!Array.isArray(analysis.visibleParts) || analysis.visibleParts.length < 2 || analysis.visibleParts.length > 12 || analysis.visibleParts.some((part) => !hasText(part, 80))) return `List 2 to 12 specific visible components from the original image (received ${Array.isArray(analysis.visibleParts) ? analysis.visibleParts.length : 'a non-array value'}; each must be a short string).`;
   if (!symmetries.includes(String(analysis.symmetry))) return 'Choose the visible symmetry class from bilateral, rotational, asymmetric, or unclear.';
   if (!views.includes(String(analysis.view))) return 'Identify the camera view from front, three-quarter, side, top, isometric, or unclear.';
   for (const [key, min, max, length] of [['depthCues', 1, 8, 120], ['topCues', 1, 8, 120], ['negativeSpaces', 1, 8, 120], ['materialRegions', 1, 12, 120], ['evidence', 1, 12, 160], ['inferences', 1, 12, 160]] as const) {
@@ -1083,6 +1189,20 @@ function referenceMatchScore(match: NonNullable<ReturnType<typeof compareReferen
   return match.silhouette * 0.45 + (1 - Math.min(1, profileError)) * 0.35 - match.missing * 0.1 - match.extra * 0.1;
 }
 
+function bestBuiltStructure(builds: Map<string, { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid> }>) {
+  let best: { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid> } | undefined;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const build of builds.values()) {
+    const match = compareReferenceFrontMask(build.plan, build.grid.cells);
+    const score = match ? referenceMatchScore(match) : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = build;
+    }
+  }
+  return best;
+}
+
 function assertRequestedDimensions(plan: StructurePlan, constraints?: BuildingPrompt['constraints']): void {
   const mismatched = (['width', 'height', 'length'] as const).some((axis) => {
     const requested = constraints?.[axis];
@@ -1139,7 +1259,7 @@ function normalizeChatEndpoint(endpoint: string): string {
   return value;
 }
 
-function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, strictSchema = true) {
+function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, strictSchema = true, thinking: VisionPlannerOptions['thinking'] = 'auto') {
   const text = input.prompt?.trim() || 'Analyze this reference image and produce a buildable Minecraft structure plan.';
   const outlineInstruction = imageUrl ? referenceOutlineInstruction(input.referenceImage?.referenceFeatures) : '';
   const colorInstruction = imageUrl ? referenceColorInstruction(input.referenceImage?.referenceFeatures) : '';
@@ -1151,6 +1271,7 @@ function buildRequest(input: BuildingPrompt, imageUrl?: string, model?: string, 
     model: model ?? 'gpt-4o-mini',
     temperature: 0,
     parallel_tool_calls: false,
+    ...(thinking === 'off' ? { thinking: { type: 'disabled' } } : thinking === 'low' ? { reasoning_effort: 'low' } : {}),
     tools: [
       ...(imageUrl ? [{
         type: 'function',
@@ -1410,7 +1531,7 @@ function repairStructurePlan(value: any, constraints?: BuildingPrompt['constrain
     roof: normalizePaletteBlock(value?.palette?.roof, 'minecraft:dark_oak_planks'),
     window: normalizePaletteBlock(value?.palette?.window, 'minecraft:glass_pane'),
   };
-  const interiorGeometry = synthesizeInteriorGeometry(geometry as GeometryPart[], normalizedRegions, rooms, palette, constraints, `${value?.type ?? ''} ${value?.name ?? ''}`);
+  const interiorGeometry = ensureLanternLightCore(geometry as GeometryPart[], normalizedRegions, constraints, `${value?.type ?? ''} ${value?.name ?? ''}`);
   return {
     version: 1,
     name: String(value?.name || 'Vision building'),
@@ -1430,59 +1551,22 @@ function repairStructurePlan(value: any, constraints?: BuildingPrompt['constrain
   };
 }
 
-function synthesizeInteriorGeometry(existing: GeometryPart[], regions: StructureRegionPlan[], rooms: RoomPlan[], palette: Record<string, string>, constraints?: BuildingPrompt['constraints'], identity = ''): GeometryPart[] {
+function ensureLanternLightCore(existing: GeometryPart[], regions: StructureRegionPlan[], constraints?: BuildingPrompt['constraints'], identity = ''): GeometryPart[] {
   if (constraints?.includeInterior === false || (constraints?.detailLevel ?? 0) < 4) return existing;
+  if (!looksLikeLightFixture(identity)) return existing;
   const parts = [...existing];
-  if (/\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(identity)) {
-    const chamber = regions.find((region) => /chamber|interior|lantern body/i.test(`${region.name} ${region.role}`))
-      ?? regions.find((region) => !/roof|spire|dome|battlement|apron/i.test(`${region.name} ${region.role}`));
-    if (!chamber) return parts;
-    const core = {
-      x: chamber.x + Math.floor(chamber.width / 2),
-      y: chamber.y + Math.floor(chamber.height / 2),
-      z: chamber.z + Math.floor(chamber.length / 2),
-    };
-    const hasSeaLanternCore = parts.some((part) => part.material === 'minecraft:sea_lantern'
-      && part.x > chamber.x && part.x < chamber.x + chamber.width - 1
-      && part.y > chamber.y && part.y < chamber.y + chamber.height - 1
-      && part.z > chamber.z && part.z < chamber.z + chamber.length - 1);
-    if (!hasSeaLanternCore) parts.push({ id: 'generated-lantern-light-core', type: 'box', ...core, width: 1, height: 1, length: 1, material: 'minecraft:sea_lantern', purpose: 'lighting' });
-    return parts.slice(0, 1024);
-  }
-  const purposes = new Set(parts.map((part) => part.purpose));
-  const usableRegions = regions.filter((region) => !/roof|spire|dome|battlement|apron/i.test(region.name + ' ' + region.role));
-  const roomSources = rooms.length ? rooms : usableRegions;
-  if (!purposes.has('room')) {
-    roomSources.slice(0, 64).forEach((room: any, index) => {
-      const source = rooms.length ? room : usableRegions[index % Math.max(1, usableRegions.length)];
-      if (!source) return;
-      const roomHeight = Math.max(3, Math.min(source.height, 6));
-      parts.push({ id: 'generated-room-' + (index + 1), type: 'shell', x: source.x, y: source.y, z: source.z, width: source.width, height: roomHeight, length: source.length, material: palette.wall, hollow: true, thickness: 1, openSides: ['bottom', 'top'], purpose: 'room' });
-      parts.push({ id: 'generated-floor-' + (index + 1), type: 'surface', x: source.x, y: source.y, z: source.z, width: source.width, height: 1, length: source.length, material: palette.floor, purpose: 'room' });
-    });
-  }
-  if (!purposes.has('circulation')) {
-    const sorted = [...usableRegions].sort((left, right) => left.y - right.y);
-    for (let index = 0; index < sorted.length - 1 && index < 32; index += 1) {
-      const lower = sorted[index]; const upper = sorted[index + 1];
-      if (upper.y <= lower.y) continue;
-      parts.push({ id: 'generated-stairs-' + (index + 1), type: 'stairs', x: lower.x + Math.floor(Math.max(0, lower.width - 2) / 2), y: lower.y, z: lower.z + Math.floor(Math.max(0, lower.length - 2) / 2), width: 2, height: Math.min(8, Math.max(1, upper.y - lower.y)), length: Math.min(8, Math.max(1, upper.y - lower.y)), material: palette.floor, facing: 'south', purpose: 'circulation' });
-    }
-    if (sorted.length === 1) {
-      const only = sorted[0];
-      parts.push({ id: 'generated-main-stairs', type: 'stairs', x: only.x + Math.floor(Math.max(0, only.width - 2) / 2), y: only.y, z: only.z + Math.floor(Math.max(0, only.length - 2) / 2), width: 2, height: Math.min(8, Math.max(1, Math.floor(only.height / 2))), length: Math.min(8, Math.max(1, Math.floor(only.height / 2))), material: palette.floor, facing: 'south', purpose: 'circulation' });
-    }
-  }
-  const furnitureCount = parts.filter((part) => part.purpose === 'furniture').length;
-  if (furnitureCount < 3) {
-    const source = rooms[0] ?? usableRegions[0] ?? regions[0];
-    if (source) {
-      const x = source.x + Math.max(1, Math.floor(source.width / 2)); const y = source.y + 1; const z = source.z + Math.max(1, Math.floor(source.length / 2));
-      const roomHeight = Math.max(3, Math.min(source.height, 6));
-      const lampY = source.y + Math.max(1, roomHeight - 2);
-      parts.push({ id: 'generated-table', type: 'box', x, y, z, width: 2, height: 1, length: 2, material: palette.floor, purpose: 'furniture' }, { id: 'generated-chair', type: 'stairs', x: Math.max(source.x, x - 1), y, z, width: 1, height: 1, length: 1, material: 'minecraft:oak_planks', facing: 'south', purpose: 'furniture' }, { id: 'generated-lamp', type: 'box', x: Math.min(source.x + source.width - 1, x + 2), y: lampY, z, width: 1, height: 1, length: 1, material: 'minecraft:lantern', purpose: 'furniture' });
-    }
-  }
+  const chamber = lanternChamber({ regions });
+  if (!chamber) return existing;
+  const core = {
+    x: chamber.x + Math.floor(chamber.width / 2),
+    y: chamber.y + Math.floor(chamber.height / 2),
+    z: chamber.z + Math.floor(chamber.length / 2),
+  };
+  const hasSeaLanternCore = parts.some((part) => part.material === 'minecraft:sea_lantern'
+    && part.x > chamber.x && part.x < chamber.x + chamber.width - 1
+    && part.y > chamber.y && part.y < chamber.y + chamber.height - 1
+    && part.z > chamber.z && part.z < chamber.z + chamber.length - 1);
+  if (!hasSeaLanternCore) parts.push({ id: 'generated-lantern-light-core', type: 'box', ...core, width: 1, height: 1, length: 1, material: 'minecraft:sea_lantern', purpose: 'lighting' });
   return parts.slice(0, 1024);
 }
 function normalizePaletteBlock(value: unknown, fallback: string): string {
