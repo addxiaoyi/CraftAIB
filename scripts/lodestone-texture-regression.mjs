@@ -4,70 +4,67 @@ import { resolve } from 'node:path';
 import { PNG } from 'pngjs';
 
 const packRoot = resolve('frontend/public/lodestone-default-pack');
-const assets = JSON.parse(await readFile(resolve(packRoot, 'assets.json'), 'utf8'));
+const { textures, models, blockstates } = JSON.parse(await readFile(resolve(packRoot, 'assets.json'), 'utf8'));
 const atlas = PNG.sync.read(await readFile(resolve(packRoot, 'atlas.png')));
-const textures = assets.textures ?? {};
-const models = assets.models ?? {};
-const blockstates = assets.blockstates ?? {};
-const failures = [];
+const failures = new Set();
+const flattened = new Map();
+const checked = new Set();
+const keyOf = (id) => String(id).replace(/^minecraft:/, '');
 
-function modelId(value) {
-  return String(value).replace(/^minecraft:/, '').replace(/^block\//, 'block/');
+function flatten(id, parents = new Set()) {
+  const key = keyOf(id);
+  if (flattened.has(key)) return flattened.get(key);
+  if (parents.has(key)) throw new Error(`cyclic model parent: ${key}`);
+  const model = models[key];
+  if (!model) throw new Error(`missing model: ${key}`);
+  const parent = model.parent ? flatten(model.parent, new Set([...parents, key])) : {};
+  const merged = { ...parent, ...model, textures: { ...parent.textures, ...model.textures } };
+  flattened.set(key, merged);
+  return merged;
 }
-function flattenModel(id, seen = new Set()) {
-  const key = modelId(id);
-  if (seen.has(key)) return {};
-  seen.add(key);
-  const model = models[key] ?? models[key.replace(/^block\//, '')];
-  if (!model) return {};
-  const parent = model.parent ? flattenModel(model.parent, seen) : {};
-  return { ...parent, ...(model.textures ?? {}) };
-}
+
 function checkModel(id) {
-  const key = modelId(id);
-  const model = models[key] ?? models[key.replace(/^block\//, '')];
-  if (!model) {
-    failures.push(`${key}: model missing`);
-    return;
-  }
-  const refs = flattenModel(key);
-  const faces = Object.values(model.elements ?? {}).flatMap((element) => Object.entries(element.faces ?? {}));
-  for (const [face, data] of faces) {
-    const ref = data?.texture;
-    if (typeof ref !== 'string') continue;
-    if (!ref.startsWith('#')) {
-      failures.push(`${key} face=${face}: bare texture variable ${JSON.stringify(ref)} (expected #${ref})`);
-      continue;
+  const key = keyOf(id);
+  if (checked.has(key)) return;
+  checked.add(key);
+  try {
+    const model = flatten(key);
+    for (const element of model.elements ?? []) {
+      for (const [face, definition] of Object.entries(element.faces ?? {})) {
+        let ref = definition.texture;
+        const seen = new Set();
+        while (typeof ref === 'string' && ref.startsWith('#')) {
+          if (seen.has(ref)) throw new Error(`cyclic texture variable: ${ref}`);
+          seen.add(ref);
+          ref = model.textures[ref.slice(1)];
+        }
+        if (typeof ref !== 'string' || !textures[keyOf(ref)]) {
+          throw new Error(`face=${face}: unresolved ${definition.texture} -> ${ref}`);
+        }
+      }
     }
-    const texture = refs[ref.slice(1)];
-    if (typeof texture !== 'string') {
-      failures.push(`${key} face=${face}: unresolved ${ref}`);
-      continue;
-    }
-    const textureKey = texture.replace(/^minecraft:/, '');
-    if (!textures[textureKey]) failures.push(`${key} face=${face}: missing texture ${textureKey}`);
+  } catch (error) {
+    failures.add(`${key}: ${error.message}`);
   }
 }
+
 for (const state of Object.values(blockstates)) {
-  const variants = state.variants ? Object.values(state.variants) : [];
-  const multipart = state.multipart ?? [];
-  for (const entry of [...variants, ...multipart]) {
-    const candidates = Array.isArray(entry) ? entry : [entry];
-    for (const candidate of candidates) if (candidate?.model) checkModel(candidate.model);
+  const entries = [...Object.values(state.variants ?? {}), ...(state.multipart ?? []).map((part) => part.apply)];
+  for (const entry of entries) {
+    for (const candidate of Array.isArray(entry) ? entry : [entry]) {
+      if (candidate?.model) checkModel(candidate.model);
+    }
   }
 }
 for (const [key, rect] of Object.entries(textures)) {
-  if (!Array.isArray(rect) || rect.length !== 4) failures.push(`${key}: invalid texture rectangle`);
-  else {
-    const [x, y, width, height] = rect;
-    if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 2048 || y + height > 2048) failures.push(`${key}: atlas rectangle out of bounds ${JSON.stringify(rect)}`);
+  if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
+    failures.add(`${key}: invalid rectangle`);
+    continue;
+  }
+  const [x, y, width, height] = rect;
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > atlas.width || y + height > atlas.height) {
+    failures.add(`${key}: rectangle ${rect} outside ${atlas.width}x${atlas.height}`);
   }
 }
-assert.equal(atlas.width, 2048, `atlas width must be 2048, got ${atlas.width}`);
-assert.equal(atlas.height, 1248, `atlas height must be 1248, got ${atlas.height}`);
-if (failures.length) {
-  console.error(JSON.stringify({ failures: failures.slice(0, 40), failureCount: failures.length }, null, 2));
-  process.exitCode = 1;
-} else {
-  console.log(JSON.stringify({ blockstates: Object.keys(blockstates).length, models: Object.keys(models).length, textures: Object.keys(textures).length, atlas: [atlas.width, atlas.height], failures: [] }, null, 2));
-}
+assert.deepEqual([...failures], [], 'All variants, multipart models and inherited faces must resolve within the actual PNG.');
+console.log(JSON.stringify({ blockstates: Object.keys(blockstates).length, checkedModels: checked.size, textures: Object.keys(textures).length, atlas: [atlas.width, atlas.height], failures: [] }));

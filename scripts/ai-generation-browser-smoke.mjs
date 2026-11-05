@@ -154,4 +154,7 @@ try {
   assert.match(await page.locator('[data-ai-error="true"]').innerText(), /TLS certificate|证书密钥强度过低/i);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ textGeneration: true, litematicDownload: true, litematicRegions: litematicSummary.regions, referenceGeneration: true, verifiedRequests, timeoutMessage: true, rateLimitMessage: true, explicitLocalRecovery: true, previewPixels, sliceResult, errors }, null, 2));
+} catch (error) {
+  console.error(JSON.stringify({ previewStatus: await page.locator('[data-lodestone-status]').allTextContents(), errors }));
+  throw error;
 } finally { await browser.close(); }

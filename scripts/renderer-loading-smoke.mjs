@@ -59,12 +59,16 @@ async function measure(browser, base) {
     const switchStarted = await page.evaluate(() => performance.now());
     await page.locator('[data-ai-render-toggle="true"]').click();
     await page.locator('[data-ai-renderer="solid"] canvas').waitFor({ state: 'visible' });
+    if (!baseline) await page.locator('[data-solid-status="ready"]').waitFor();
     await page.getByRole('button', { name: 'Reset Camera View', exact: true }).click();
     const solidReadyMs = Math.round(await page.evaluate(() => performance.now()) - switchStarted);
     const switched = scriptsAt(requests);
     await page.locator('[data-ai-render-toggle="true"]').click();
     await waitForTextured(page);
     const cached = scriptsAt(requests);
+    if (!baseline) {
+      for (const name of ['assets.json', 'atlas.png']) assert.equal(requests.filter((path) => path === `/lodestone-default-pack/${name}`).length, 1, `Switching renderers must reuse bundled ${name}.`);
+    }
     assert.equal(cached.bytes, switched.bytes, 'Switching back must reuse renderer modules.');
     await page.locator('[data-workspace-id="settings"]').filter({ visible: true }).first().click();
     await page.locator('[data-active-workspace="settings"] select').first().waitFor();

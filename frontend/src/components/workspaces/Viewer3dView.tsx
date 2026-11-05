@@ -76,6 +76,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [rendererMode, setRendererMode] = useState<'native' | 'lodestone'>('native');
   const [resourcePackFile, setResourcePackFile] = useState<File | null>(null);
   const resourcePackInputRef = useRef<HTMLInputElement>(null);
+  const resetResourcePack = () => setResourcePackFile(null);
 
   useEffect(() => {
     if (currentSnapshot.current === structure) return;
@@ -281,7 +282,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   return (
     <div className="flex-1 h-full relative overflow-hidden flex bg-[#090a0f]">
       {/* 3D CAD Dominant Viewport */}
-      <div className="flex-1 h-full relative">
+      <div className={`min-w-0 flex-1 h-full relative ${isLeftPanelOpen ? 'lg:ml-[min(var(--workspace-dock-w),280px)]' : ''} ${isRightPanelOpen ? 'lg:mr-80' : ''}`}>
         {rendererMode === 'lodestone' ? <LodestoneViewport lang={lang} structure={structure} resourcePackFile={resourcePackFile} onSelectBlock={setSelectedBlock} onSelectFace={setSelectedFace} className="h-full w-full" /> : <ThreeViewport
             lang={lang}
             structure={structure}
@@ -331,7 +332,13 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
             <span className="hidden sm:inline">{rendererMode === 'native' ? 'Lodestone models' : 'Native inspector'}</span>
           </button>
 
-          <input ref={resourcePackInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => setResourcePackFile(event.target.files?.[0] ?? null)} />
+          <input ref={resourcePackInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            setResourcePackFile(file);
+            setRendererMode('lodestone');
+            event.target.value = '';
+          }} />
           <button
             onClick={() => resourcePackInputRef.current?.click()}
             className="px-2 py-1 rounded text-[11px] font-mono text-zinc-300 hover:text-white hover:bg-white/[0.08] flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
@@ -340,6 +347,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
             <Upload className="h-3 w-3 text-cyan-300" />
             <span className="hidden md:inline">{resourcePackFile ? resourcePackFile.name : 'Resource pack'}</span>
           </button>
+          {resourcePackFile && <button type="button" data-resource-pack-reset="true" onClick={resetResourcePack} className="shrink-0 rounded px-2 py-1 text-[11px] text-zinc-300 hover:bg-white/10">{lang === 'zh' ? '默认材质' : 'Default textures'}</button>}
 
           {/* Spatial Rotate & Mirror */}
           <button

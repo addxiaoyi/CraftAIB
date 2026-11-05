@@ -145,6 +145,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const saveLitematic = () => void fileExport.save(() => exportLitematic(structure, placements));
   const saveSchematic = () => void fileExport.save(() => exportSchematic(structure, placements));
   const [referenceImage, setReferenceImage] = useState<string | null>(initialAiMeta?.referenceImage ?? null);
+  const [readingImage, setReadingImage] = useState(false);
+  const imageReader = useRef<FileReader | null>(null);
+  useEffect(() => () => {
+    const reader = imageReader.current;
+    imageReader.current = null;
+    reader?.abort();
+  }, []);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
@@ -298,10 +305,23 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    imageReader.current?.abort();
     const reader = new FileReader();
+    imageReader.current = reader;
+    setReadingImage(true);
     reader.onload = () => {
+      if (imageReader.current !== reader) return;
       setReferenceImage(reader.result as string);
       setReferenceReport(undefined);
+    };
+    reader.onerror = () => {
+      if (imageReader.current !== reader) return;
+      setErrorMessage(lang === 'zh' ? '无法读取参考图片，请重新选择。' : 'The reference image could not be read. Select it again.');
+    };
+    reader.onloadend = () => {
+      if (imageReader.current !== reader) return;
+      setReadingImage(false);
+      imageReader.current = null;
     };
     reader.readAsDataURL(file);
   };
@@ -320,6 +340,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   };
 
   const handleGenerate = async (forceLocal = false) => {
+    if (readingImage) return;
     if (!prompt.trim() && !referenceImage) {
       setErrorMessage('Describe the building or add a reference image.');
       return;
@@ -501,6 +522,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </div>
 
               {/* Reference Image Dropzone */}
+              {readingImage && <p data-reference-loading="true" role="status" className="text-xs text-zinc-400">{lang === 'zh' ? '正在读取参考图片…' : 'Reading reference image…'}</p>}
               {referenceImage ? (
                 <div className="relative h-18 rounded-lg overflow-hidden border border-emerald-500/30 bg-emerald-950/10 flex items-center justify-between p-2.5">
                   <div className="flex items-center gap-3">
@@ -842,7 +864,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               <button
                 data-ai-generate="true"
                 onClick={() => void handleGenerate()}
-                disabled={isLoading}
+                disabled={isLoading || readingImage}
                 className="w-full py-3 px-4 rounded-lg btn-primary text-xs font-bold tracking-wide flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
               >
                 {isLoading ? (

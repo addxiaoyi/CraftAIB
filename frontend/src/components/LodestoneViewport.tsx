@@ -1,38 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { unzipSync } from 'fflate';
-import { BlockState, ThreeStructureRenderer, createResourcesFromPack, loadDefaultPackResources, type Resources, type StructureProvider } from '@mattzh72/lodestone';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BlockState, ThreeStructureRenderer, type StructureProvider } from '@mattzh72/lodestone';
 import type { StructureData } from '../types/minecraft';
 import { runEngineTask } from '../integrations/engine';
-
-const defaultPackCache = new Map<string, ReturnType<typeof loadDefaultPackResources>>();
-
-function loadDefaultPackCached(baseUrl: string) {
-  let pending = defaultPackCache.get(baseUrl);
-  if (!pending) {
-    pending = loadDefaultPackResources({ baseUrl }).catch((error) => {
-      defaultPackCache.delete(baseUrl);
-      throw error;
-    });
-    defaultPackCache.set(baseUrl, pending);
-  }
-  return pending;
-}
-
-const decodedPackCache = new WeakMap<File, ReturnType<typeof decodePackResources>>();
-
-function decodePackCached(file: File, defaults: Awaited<ReturnType<typeof loadDefaultPackResources>>) {
-  let pending = decodedPackCache.get(file);
-  if (!pending) {
-    pending = decodePackResources(file, defaults).catch((error) => {
-      decodedPackCache.delete(file);
-      throw error;
-    });
-    decodedPackCache.set(file, pending);
-  }
-  return pending;
-}
+import { decodePackCached, loadDefaultPackCached } from '../integrations/resourcePack';
+import { pickVoxel } from '../integrations/voxelPicking';
 
 let rendererInstanceCounter = 0;
+let packRequestCounter = 0;
 
 function sizeKeyOf(structure: StructureData): string {
   return `${structure.size.x}x${structure.size.y}x${structure.size.z}`;
@@ -41,7 +15,7 @@ function sizeKeyOf(structure: StructureData): string {
 function createProvider(structure: StructureData): StructureProvider {
   const placed = structure.blocks.map((block) => ({
     pos: [block.x, block.y, block.z] as [number, number, number],
-    state: new BlockState(block.blockId, block.state),
+    state: new BlockState(block.blockId === 'minecraft:grass' ? 'minecraft:short_grass' : block.blockId, block.state),
   }));
   const byPosition = new Map(placed.map((block) => [block.pos.join(','), block]));
   return {
@@ -51,132 +25,11 @@ function createProvider(structure: StructureData): StructureProvider {
   };
 }
 
-type PackAssets = { blockstates: Record<string, unknown>; models: Record<string, unknown>; textures: Record<string, [number, number, number, number]> };
-
-function normalizeModelTextureReferences(models: Record<string, unknown>): void {
-  for (const [modelId, rawModel] of Object.entries(models)) {
-    if (!rawModel || typeof rawModel !== 'object') continue;
-    const model = rawModel as { textures?: Record<string, unknown>; elements?: Record<string, { faces?: Record<string, { texture?: unknown }> }> };
-    const localTextures = model.textures ?? {};
-    for (const element of Object.values(model.elements ?? {})) {
-      for (const face of Object.values(element.faces ?? {})) {
-        if (typeof face.texture === 'string' && !face.texture.startsWith('#') && Object.prototype.hasOwnProperty.call(localTextures, face.texture)) {
-          face.texture = `#${face.texture}`;
-        }
-      }
-    }
-    models[modelId] = model;
-  }
-}
-
-function validateTextureAtlas(textures: Record<string, [number, number, number, number]>, atlasSize: number): void {
-  for (const [textureId, rect] of Object.entries(textures)) {
-    if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
-      throw new Error(`Invalid Lodestone texture rectangle for ${textureId}: ${JSON.stringify(rect)}`);
-    }
-    const [x, y, width, height] = rect;
-    if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > atlasSize || y + height > atlasSize) {
-      throw new Error(`Lodestone texture atlas overflow for ${textureId}: ${JSON.stringify(rect)} in ${atlasSize}px atlas`);
-    }
-  }
-}
-
-async function decodePackResources(file: File, defaults: Awaited<ReturnType<typeof loadDefaultPackResources>>): Promise<Resources> {
-  const files = unzipSync(new Uint8Array(await file.arrayBuffer()));
-  const find = (suffix: string) => Object.entries(files).find(([name]) => name.endsWith(suffix))?.[1];
-  const readJson = (bytes: Uint8Array | undefined) => bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined;
-  const assets = JSON.parse(JSON.stringify(defaults.assets)) as PackAssets;
-
-  for (const [name, bytes] of Object.entries(files)) {
-    const match = name.match(/assets\/minecraft\/(blockstates|models)\/(.+)\.json$/);
-    if (!match) continue;
-    const key = match[2].replaceAll('\\', '/');
-    const bucket = match[1] as 'blockstates' | 'models';
-    assets[bucket][key] = JSON.parse(new TextDecoder().decode(bytes));
-  }
-  normalizeModelTextureReferences(assets.models);
-
-  const customTextures = Object.entries(files).filter(([name]) => /assets\/minecraft\/textures\/block\/.+\.(png|mcmeta)$/.test(name) && !name.endsWith('.mcmeta'));
-  if (!customTextures.length) {
-    validateTextureAtlas(assets.textures, defaults.atlas.atlasSize);
-    return createResourcesFromPack({ assets, atlas: defaults.atlas });
-  }
-
-  const tileSize = 32;
-  const atlasSize = defaults.atlas.atlasSize * 2;
-  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(atlasSize, atlasSize) : document.createElement('canvas');
-  canvas.width = atlasSize;
-  canvas.height = atlasSize;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Unable to create a resource-pack atlas canvas.');
-  const defaultCanvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(defaults.atlas.atlasSize, defaults.atlas.atlasSize) : document.createElement('canvas');
-  defaultCanvas.width = defaults.atlas.atlasSize;
-  defaultCanvas.height = defaults.atlas.atlasSize;
-  const defaultContext = defaultCanvas.getContext('2d');
-  if (!defaultContext) throw new Error('Unable to decode the bundled Minecraft atlas.');
-  defaultContext.putImageData(defaults.atlas.imageData, 0, 0);
-  context.imageSmoothingEnabled = false;
-  context.drawImage(defaultCanvas, 0, 0, atlasSize, atlasSize);
-
-  let index = 0;
-  for (const [name, bytes] of customTextures) {
-    const image = await createImageBitmap(new Blob([bytes.buffer as ArrayBuffer], { type: 'image/png' }));
-    const x = defaults.atlas.atlasSize + (index % 16) * tileSize;
-    const y = Math.floor(index / 16) * tileSize;
-    context.drawImage(image, x, y, tileSize, tileSize);
-    image.close();
-    const key = name.replace(/^.*assets\/minecraft\/textures\//, '').replace(/\.png$/, '').replaceAll('\\', '/');
-    assets.textures[key] = [x, y, tileSize, tileSize];
-    index += 1;
-  }
-
-  const imageData = context.getImageData(0, 0, atlasSize, atlasSize);
-  const scaledTextures = Object.fromEntries(Object.entries(assets.textures).map(([key, [x, y, width, height]]) => [key, [x * 2, y * 2, width * 2, height * 2] as [number, number, number, number]])) as Record<string, [number, number, number, number]>;
-  for (const [name] of customTextures) {
-    const key = name.replace(/^.*assets\/minecraft\/textures\//, '').replace(/\.png$/, '').replaceAll('\\', '/');
-    const [x, y, width, height] = assets.textures[key];
-    scaledTextures[key] = [x, y, width, height];
-  }
-  validateTextureAtlas(scaledTextures, atlasSize);
-  return createResourcesFromPack({ assets: { ...assets, textures: scaledTextures }, atlas: { imageData, atlasSize } });
-}
-
-function pickBlock(structure: StructureData, camera: ReturnType<ThreeStructureRenderer['getCamera']>, x: number, y: number, width: number, height: number): { pos: [number, number, number]; normal: [number, number, number] } | null {
-  const forward = [camera.target[0] - camera.position[0], camera.target[1] - camera.position[1], camera.target[2] - camera.position[2]];
-  const forwardLength = Math.hypot(...forward) || 1;
-  const f = forward.map((value) => value / forwardLength);
-  const up = [0, 1, 0];
-  const right = [f[2], 0, -f[0]];
-  const rightLength = Math.hypot(...right) || 1;
-  right[0] /= rightLength; right[2] /= rightLength;
-  const upProjected = [f[1] * right[2], Math.sqrt(Math.max(0, 1 - f[1] * f[1])), -f[1] * right[0]];
-  const nx = (x / width) * 2 - 1;
-  const ny = 1 - (y / height) * 2;
-  const aspect = width / Math.max(1, height);
-  const scale = Math.tan((camera.fov * Math.PI) / 360);
-  const direction = [f[0] + right[0] * nx * scale * aspect + upProjected[0] * ny * scale, f[1] + right[1] * nx * scale * aspect + upProjected[1] * ny * scale, f[2] + right[2] * nx * scale * aspect + upProjected[2] * ny * scale];
-  const length = Math.hypot(...direction) || 1;
-  let previous = '';
-  for (let distance = 0; distance < Math.max(structure.size.x, structure.size.y, structure.size.z) * 4; distance += 0.18) {
-    const px = Math.floor(camera.position[0] + direction[0] / length * distance);
-    const py = Math.floor(camera.position[1] + direction[1] / length * distance);
-    const pz = Math.floor(camera.position[2] + direction[2] / length * distance);
-    const key = `${px},${py},${pz}`;
-    if (key === previous) continue;
-    const hit = structure.blocks.some((block) => block.x === px && block.y === py && block.z === pz && block.blockId !== 'minecraft:air');
-    if (hit) {
-      const prior = previous.split(',').map(Number);
-      const normal: [number, number, number] = prior.length === 3 ? [prior[0] - px, prior[1] - py, prior[2] - pz] : [0, 0, 0];
-      return { pos: [px, py, pz], normal };
-    }
-    previous = key;
-  }
-  return null;
-}
-
 export const LodestoneViewport: React.FC<{ structure: StructureData; className?: string; resourcePackFile?: File | null; onSelectBlock?: (block: StructureData['blocks'][number] | null) => void; onSelectFace?: (normal: [number, number, number] | null) => void; backgroundColor?: string }> = ({ structure, className = '', resourcePackFile, onSelectBlock, onSelectFace, backgroundColor = '#101722' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const occupied = useMemo(() => new Set(structure.blocks.filter((block) => !['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'].includes(block.blockId)).map((block) => `${block.x},${block.y},${block.z}`)), [structure.blocks]);
   const rendererRef = useRef<ThreeStructureRenderer | null>(null);
+  const buildingRef = useRef(true);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const savedCameraRef = useRef<{ position: [number, number, number]; target: [number, number, number]; sizeKey: string } | null>(null);
   const statsTokenRef = useRef(0);
@@ -199,7 +52,10 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         .then((index) => {
           if (statsToken === statsTokenRef.current) setMeshStats(index);
         })
-        .catch(() => {});
+        .catch((error) => {
+          if (statsToken === statsTokenRef.current) setMeshStats(null);
+          console.warn('LodestoneViewport mesh statistics failed', error);
+        });
     }, 200);
   };
 
@@ -221,11 +77,21 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    canvas.dataset.packRequest = String(++packRequestCounter);
     let disposed = false;
     let frameId = 0;
-    let stop: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
+    let ownedRenderer: ThreeStructureRenderer | null = null;
+    const release = () => {
+      observer?.disconnect();
+      cancelAnimationFrame(frameId);
+      ownedRenderer?.dispose();
+      if (rendererRef.current === ownedRenderer) rendererRef.current = null;
+      ownedRenderer = null;
+    };
     setPhase('loading');
+    buildingRef.current = true;
+    setPickedBlock(null);
     setStatus('Loading Minecraft resource pack...');
 
     const start = async () => {
@@ -242,6 +108,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
           antialias: true,
           drawDistance: Math.max(current.size.x, current.size.y, current.size.z) * 4,
         });
+        ownedRenderer = renderer;
         rendererRef.current = renderer;
         rendererSizeKeyRef.current = sizeKeyOf(current);
         canvas.dataset.lodestoneInstance = String(++rendererInstanceCounter);
@@ -250,44 +117,41 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         observer.observe(canvas);
         resize();
         renderer.resetCamera();
-        await renderer.whenReady();
-        if (disposed) {
-          observer?.disconnect();
-          renderer.dispose();
-          if (rendererRef.current === renderer) rendererRef.current = null;
-          return;
+        let build = renderer.whenReady();
+        await build;
+        while (!disposed && renderer.whenReady() !== build) {
+          build = renderer.whenReady();
+          await build;
         }
+        if (disposed) return;
+        buildingRef.current = false;
         const saved = savedCameraRef.current;
         if (saved && saved.sizeKey === rendererSizeKeyRef.current) renderer.setCamera({ position: saved.position, target: saved.target });
         const draw = () => {
           if (disposed) return;
-          renderer.drawStructure(renderer.getViewMatrix());
+          // Leave idle time for Lodestone's asynchronous chunk builder after edits.
+          if (!buildingRef.current) renderer.drawStructure(renderer.getViewMatrix());
           frameId = requestAnimationFrame(draw);
         };
         draw();
         scheduleMeshStats(structureRef.current.blocks);
         setStatus('Minecraft resource pack ready');
         setPhase('ready');
-        return () => {
-          observer?.disconnect();
-          cancelAnimationFrame(frameId);
-        };
       } catch (error) {
         if (!disposed) {
+          release();
           console.error('LodestoneViewport resource pack failed', error);
           setPhase('error');
-          setStatus('Resource pack could not load. Check the pack and retry.');
+          setStatus(error instanceof Error ? `Resource pack could not load. ${error.message}` : 'Resource pack could not load. Check the pack and retry.');
         }
       }
     };
-    void start().then((cleanup) => {
-      if (cleanup) stop = cleanup;
-    });
+    void start();
     return () => {
       disposed = true;
       window.clearTimeout(statsTimerRef.current);
-      stop?.();
-      const active = rendererRef.current;
+      statsTokenRef.current += 1;
+      const active = ownedRenderer;
       if (active) {
         const camera = active.getCamera();
         savedCameraRef.current = {
@@ -295,10 +159,9 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
           target: [camera.target[0], camera.target[1], camera.target[2]],
           sizeKey: rendererSizeKeyRef.current ?? '',
         };
-        active.dispose();
-        rendererRef.current = null;
         rendererSizeKeyRef.current = null;
       }
+      release();
     };
   }, [resourcePackFile, rendererEpoch]);
 
@@ -310,9 +173,26 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
       setRendererEpoch((value) => value + 1);
       return;
     }
+    let obsolete = false;
+    buildingRef.current = true;
+    setPhase('loading');
+    setPickedBlock(null);
+    setStatus('Building Minecraft preview...');
     renderer.setStructure(createProvider(structure));
     rendererSizeKeyRef.current = sizeKey;
     scheduleMeshStats(structure.blocks);
+    void renderer.whenReady().then(() => {
+      if (obsolete || rendererRef.current !== renderer) return;
+      buildingRef.current = false;
+      setStatus('Minecraft resource pack ready');
+      setPhase('ready');
+    }).catch((error) => {
+      if (obsolete || rendererRef.current !== renderer) return;
+      console.error('LodestoneViewport structure rebuild failed', error);
+      setStatus('Minecraft preview could not rebuild. Retry the preview.');
+      setPhase('error');
+    });
+    return () => { obsolete = true; };
   }, [structure]);
 
   const orbit = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -337,7 +217,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
       onPointerMove={(event) => {
         if (event.altKey && rendererRef.current && onSelectBlock) {
           const rect = event.currentTarget.getBoundingClientRect();
-          const hit = pickBlock(structure, rendererRef.current.getCamera(), event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
+          const hit = pickVoxel(occupied, rendererRef.current.getCamera(), event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height, Math.hypot(structure.size.x, structure.size.y, structure.size.z));
           const block = hit ? structure.blocks.find((value) => value.x === hit.pos[0] && value.y === hit.pos[1] && value.z === hit.pos[2]) ?? null : null;
           if (hit) rendererRef.current.drawOutline(hit.pos);
           setPickedBlock(block);
