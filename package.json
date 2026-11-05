@@ -45,7 +45,7 @@
     "test:viewer-regions": "node scripts/viewer-region-browser-smoke.mjs",
     "test:buttons": "node scripts/ui-button-smoke.mjs",
     "test:file-actions": "node scripts/ui-file-action-smoke.mjs",
-    "test:textures": "node scripts/builder-texture-regression.mjs && node scripts/lodestone-texture-regression.mjs && node scripts/minecraft-texture-source-regression.mjs --offline",
+    "test:textures": "node scripts/builder-texture-regression.mjs && node scripts/lodestone-texture-regression.mjs && node scripts/lodestone-structure-regression.mjs && node scripts/minecraft-texture-source-regression.mjs --offline",
     "test:builder-textures": "node scripts/builder-texture-regression.mjs",
     "setup:browser": "playwright-core install chromium --only-shell",
     "test:browser": "node scripts/browser-suite.mjs",

@@ -1,28 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BlockState, ThreeStructureRenderer, type StructureProvider } from '@mattzh72/lodestone';
+import { ThreeStructureRenderer } from '@mattzh72/lodestone';
 import type { StructureData } from '../types/minecraft';
 import { runEngineTask } from '../integrations/engine';
 import { decodePackCached, loadDefaultPackCached } from '../integrations/resourcePack';
 import { pickVoxel } from '../integrations/voxelPicking';
+import { createLodestoneProvider } from '../integrations/lodestoneStructure';
 
 let rendererInstanceCounter = 0;
 let packRequestCounter = 0;
 
 function sizeKeyOf(structure: StructureData): string {
   return `${structure.size.x}x${structure.size.y}x${structure.size.z}`;
-}
-
-function createProvider(structure: StructureData): StructureProvider {
-  const placed = structure.blocks.map((block) => ({
-    pos: [block.x, block.y, block.z] as [number, number, number],
-    state: new BlockState(block.blockId === 'minecraft:grass' ? 'minecraft:short_grass' : block.blockId, block.state),
-  }));
-  const byPosition = new Map(placed.map((block) => [block.pos.join(','), block]));
-  return {
-    getSize: () => [structure.size.x, structure.size.y, structure.size.z],
-    getBlocks: () => placed,
-    getBlock: (pos) => byPosition.get(pos.join(',')) ?? null,
-  };
 }
 
 export const LodestoneViewport: React.FC<{ structure: StructureData; className?: string; resourcePackFile?: File | null; onSelectBlock?: (block: StructureData['blocks'][number] | null) => void; onSelectFace?: (normal: [number, number, number] | null) => void; backgroundColor?: string }> = ({ structure, className = '', resourcePackFile, onSelectBlock, onSelectFace, backgroundColor = '#101722' }) => {
@@ -101,7 +89,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         const resources = resourcePackFile ? await decodePackCached(resourcePackFile, defaultPack) : defaultPack.resources;
         if (disposed) return;
         const current = structureRef.current;
-        const renderer = new ThreeStructureRenderer(canvas, createProvider(current), resources, {
+        const renderer = new ThreeStructureRenderer(canvas, createLodestoneProvider(current), resources, {
           chunkSize: 16,
           asyncBuild: true,
           asyncChunkBuildTimeMs: 8,
@@ -178,7 +166,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
     setPhase('loading');
     setPickedBlock(null);
     setStatus('Building Minecraft preview...');
-    renderer.setStructure(createProvider(structure));
+    renderer.setStructure(createLodestoneProvider(structure));
     rendererSizeKeyRef.current = sizeKey;
     scheduleMeshStats(structure.blocks);
     void renderer.whenReady().then(() => {
