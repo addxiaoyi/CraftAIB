@@ -42,6 +42,7 @@
     "test:vision-live": "node scripts/build-engine.mjs && node scripts/vision-live-smoke.mjs",
     "test:model-live": "node scripts/build-engine.mjs && node scripts/bounded-live-acceptance.mjs",
     "acceptance:client": "node scripts/build-engine.mjs && node scripts/client-acceptance-pack.mjs",
+    "acceptance:instance": "npm run acceptance:client && node scripts/prepare-client-instance.mjs",
     "test:viewer-regions": "node scripts/viewer-region-browser-smoke.mjs",
     "test:buttons": "node scripts/ui-button-smoke.mjs",
     "test:file-actions": "node scripts/ui-file-action-smoke.mjs",

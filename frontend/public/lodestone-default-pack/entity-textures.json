@@ -1,0 +1,141 @@
+{
+  "version": "1.21",
+  "clientSha1": "0e9a07b9bb3390602f977073aa12884a4ce12431",
+  "clientUrl": "https://piston-data.mojang.com/v1/objects/0e9a07b9bb3390602f977073aa12884a4ce12431/client.jar",
+  "originalRows": 1248,
+  "originalPixelsSha256": "d80fe61c7a7fa4eda75950b93156902cb50c44b548f4fd774b26d1e0e940eb22",
+  "textures": [
+    {
+      "name": "entity/signs/hanging/acacia",
+      "rect": [
+        0,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "a1488f152d41c64dcfe9795a4a6347e01ded6647629e0ca4efb1f178e766d598",
+      "pixelsSha256": "fbbe0280e07bafc2d60189b65e520b5ee5e80ce004a073f473e4cd1be162f5f6"
+    },
+    {
+      "name": "entity/signs/hanging/bamboo",
+      "rect": [
+        64,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "ee48b26bdd4364293b46f1f6c032aa4caaccc879eb4aceb26e1b531034d4d9ca",
+      "pixelsSha256": "09574c0d9faba02ed987e7c6b33eca96b3cda8a397919f2fff439523c8404366"
+    },
+    {
+      "name": "entity/signs/hanging/birch",
+      "rect": [
+        128,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "5394fa930eff158ec55df6f48add56a253cae94cd1fc233b89385e27a830c1d7",
+      "pixelsSha256": "8ba3942df34e30bab3a22114237c7f30814138a519250e4db9fb126f8562dc48"
+    },
+    {
+      "name": "entity/signs/hanging/cherry",
+      "rect": [
+        192,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "cc6dc6026b19acf027db7656b29eb989ab179001f3080213f6c66f589dd34649",
+      "pixelsSha256": "cd52eb8d7e4a3417679753e57573f737ac4c7645f8b5dbaf22bc300f95ac2bb7"
+    },
+    {
+      "name": "entity/signs/hanging/crimson",
+      "rect": [
+        256,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "1b0265853a8a36aaa37ce47ea8e93e6b2bbbc6d51d2620b558f64a099a91d30a",
+      "pixelsSha256": "8488192d8240562f6578c9090529673ade3ad9ec059131567198457077b4dec9"
+    },
+    {
+      "name": "entity/signs/hanging/dark_oak",
+      "rect": [
+        320,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "1363b3d0f8dd369eb570ce5304230fec49e400a54a8155b9e2126e195a03a6e5",
+      "pixelsSha256": "b0e09d3371ebf9d5cabb397c9aceb9f850695bf31426a16ddcf197e160f1bf1d"
+    },
+    {
+      "name": "entity/signs/hanging/jungle",
+      "rect": [
+        384,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "db97894c73a46429e620af9b94ee77b2f40cebaead1a08e739e2d45f0d604b22",
+      "pixelsSha256": "cd4790de68f32630749e9f36c9e938f0c90622d9501ea6606e51cd6cc9f95011"
+    },
+    {
+      "name": "entity/signs/hanging/mangrove",
+      "rect": [
+        448,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "c9432ca95d5d00e9882306f4e19a1e2ed04ddf0bdcd8b8f420239c7ceadd62a8",
+      "pixelsSha256": "a2eadce15f9d8a33870462060b21b7f05b61238e98272585e826135b7287f33f"
+    },
+    {
+      "name": "entity/signs/hanging/oak",
+      "rect": [
+        512,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "90b35fb18cc99eba8cbb56a3a422571a9222419566e4209d62a5f6f638455bc1",
+      "pixelsSha256": "737d82e4a9cdc3581d384d1ceff0c9eaa4e4c42e76000845bd91dc96f0ad12d7"
+    },
+    {
+      "name": "entity/signs/hanging/spruce",
+      "rect": [
+        576,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "84f02a67a7c317c49616a0f7923cfbf0e60a4e74d61925cd464c18c11e15c101",
+      "pixelsSha256": "ada6f7f1b17eed21ee8be4c8353f302978ac47b0c96cda69f25a970190fb886e"
+    },
+    {
+      "name": "entity/signs/hanging/warped",
+      "rect": [
+        640,
+        1280,
+        64,
+        32
+      ],
+      "pngSha256": "dcee2c1328809ac5799f27b0a627bd25f15cb93dff671d141d936f0ab51664a0",
+      "pixelsSha256": "a6e7036906e3ab9eaa5a7af3559fa4f66064e7af24273842bb2e985fdf4069c7"
+    },
+    {
+      "name": "entity/player/wide/steve",
+      "rect": [
+        704,
+        1280,
+        64,
+        64
+      ],
+      "pngSha256": "d876e0c88f4b3de71040966ed94a614f315b888592b520b993399fd2738418d0",
+      "pixelsSha256": "c1c3474985ecd2c523ca53e9126a365348b39c7d6a3a03adf896041c8d1c3c69"
+    }
+  ]
+}

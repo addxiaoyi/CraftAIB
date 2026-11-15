@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { PNG } from 'pngjs';
+import { createHash } from 'node:crypto';
 
 const packRoot = resolve('frontend/public/lodestone-default-pack');
 const { textures, models, blockstates } = JSON.parse(await readFile(resolve(packRoot, 'assets.json'), 'utf8'));
@@ -67,4 +68,14 @@ for (const [key, rect] of Object.entries(textures)) {
   }
 }
 assert.deepEqual([...failures], [], 'All variants, multipart models and inherited faces must resolve within the actual PNG.');
+const entitySource = JSON.parse(await readFile(resolve(packRoot, 'entity-textures.json'), 'utf8'));
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+assert.equal(hash(atlas.data.subarray(0, atlas.width * entitySource.originalRows * 4)), entitySource.originalPixelsSha256, 'Adding entity textures must preserve the original atlas pixels.');
+for (const texture of entitySource.textures) {
+  assert.deepEqual(textures[texture.name], texture.rect);
+  const [x, y, width, height] = texture.rect;
+  const tile = new PNG({ width, height });
+  PNG.bitblt(atlas, tile, x, y, width, height, 0, 0);
+  assert.equal(hash(tile.data), texture.pixelsSha256, `${texture.name} must preserve its source RGBA pixels.`);
+}
 console.log(JSON.stringify({ blockstates: Object.keys(blockstates).length, checkedModels: checked.size, textures: Object.keys(textures).length, atlas: [atlas.width, atlas.height], failures: [] }));
