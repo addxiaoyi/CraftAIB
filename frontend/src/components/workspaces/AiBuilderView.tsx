@@ -29,6 +29,12 @@ function formatScore(value?: number): string {
 }
 
 const TEXTURED_PREVIEW_BLOCK_LIMIT = 250_000;
+const MIN_GENERATION_SIZE = 8;
+const MAX_GENERATION_SIZE = 512;
+
+function clampGenerationSize(value: number): number {
+  return Math.max(MIN_GENERATION_SIZE, Math.min(MAX_GENERATION_SIZE, Math.round(value || MIN_GENERATION_SIZE)));
+}
 
 interface AiBuilderViewProps {
   structure: StructureData;
@@ -170,6 +176,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [dimY, setDimY] = useState<number>(24);
   const [dimZ, setDimZ] = useState<number>(16);
   const [hasCustomDimensions, setHasCustomDimensions] = useState<boolean>(false);
+  const displayedDimensions = hasCustomDimensions ? { x: dimX, y: dimY, z: dimZ } : structure.size;
+  const chooseDimensions = (dimensions: StructureData['size']) => {
+    setHasCustomDimensions(true);
+    setDimX(clampGenerationSize(dimensions.x));
+    setDimY(clampGenerationSize(dimensions.y));
+    setDimZ(clampGenerationSize(dimensions.z));
+  };
+  const editDimension = (axis: keyof StructureData['size'], value: number) => {
+    chooseDimensions({ ...displayedDimensions, [axis]: value });
+  };
   const [style, setStyle] = useState<string>('AI_AUTO');
   const [paletteTheme, setPaletteTheme] = useState<string>('AI_AUTO');
   const [complexity, setComplexity] = useState<string>('Detailed');
@@ -178,7 +194,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [includeInterior, setIncludeInterior] = useState<boolean>(true);
 
   const [minY, setMinY] = useState<number>(0);
-  const [maxY, setMaxY] = useState<number>(structure.size.y);
+  const [maxY, setMaxY] = useState<number>(Math.max(0, structure.size.y - 1));
+  const visibleLayerCount = Math.min(maxY + 1, structure.size.y);
   const [solidPreview, setSolidPreview] = useState<boolean>(false);
   const [viewportBackground, setViewportBackground] = useState<string>(() => {
     try { return localStorage.getItem('craftaib.viewport-background') || '#090a0f'; }
@@ -198,7 +215,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
   useEffect(() => {
     setMinY(0);
-    setMaxY(structure.size.y);
+    setMaxY(Math.max(0, structure.size.y - 1));
   }, [structure.size.y]);
 
   const changeViewportBackground = (color: string) => {
@@ -402,7 +419,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         ...compareReferenceProfiles(result.structure),
         constructionReview: (result.structure.plan as any)?.constructionReview,
       });
-      setMaxY(result.structure.size.y);
+      setMaxY(Math.max(0, result.structure.size.y - 1));
       setMinY(0);
       setGenerationSource(result.source);
       setMobileTab('viewport');
@@ -622,7 +639,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   <span>{t.settingsTitle}</span>
                 </div>
                 <div className="flex items-center gap-2 text-zinc-400 font-mono text-[11px]">
-                  <span className="tabular-nums">{hasCustomDimensions ? `${dimX}×${dimY}×${dimZ}` : (lang === 'zh' ? 'AI 自动尺寸' : 'AI-chosen size')}</span>
+                  <span className="tabular-nums">{hasCustomDimensions ? `${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z}` : (lang === 'zh' ? 'AI 自动尺寸' : 'AI-chosen size')}</span>
                   {isSettingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </div>
               </button>
@@ -639,6 +656,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       <button
                         data-size-auto="true"
                         onClick={() => setHasCustomDimensions(false)}
+                        aria-pressed={!hasCustomDimensions}
                         className={`p-1.5 rounded-md border text-center transition-all ${
                           !hasCustomDimensions
                             ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-semibold'
@@ -656,17 +674,15 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         { label: '256×256×256', x: 256, y: 256, z: 256, sub: lang === 'zh' ? '巨型' : 'Colossal' },
                         { label: '512×512×512', x: 512, y: 512, z: 512, sub: lang === 'zh' ? '超大型' : 'Super-scale' },
                       ].map((preset) => {
-                        const isCurrent = hasCustomDimensions && dimX === preset.x && dimY === preset.y && dimZ === preset.z;
+                        const isCurrent = hasCustomDimensions && displayedDimensions.x === preset.x && displayedDimensions.y === preset.y && displayedDimensions.z === preset.z;
                         return (
                           <button
                             key={preset.label}
                             data-size-preset={`${preset.x}x${preset.y}x${preset.z}`}
                             onClick={() => {
-                              setHasCustomDimensions(true);
-                              setDimX(preset.x);
-                              setDimY(preset.y);
-                              setDimZ(preset.z);
+                              chooseDimensions(preset);
                             }}
+                            aria-pressed={isCurrent}
                             className={`p-1.5 rounded-md border text-center transition-all ${
                               isCurrent
                                 ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-semibold'
@@ -686,50 +702,50 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.width}</span>
-                        <input type="number" min={8} max={512} value={dimX} onChange={(e) => { setHasCustomDimensions(true); setDimX(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.x} onChange={(e) => editDimension('x', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimX}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimX(Number(e.target.value)); }}
+                        value={displayedDimensions.x}
+                        onChange={(e) => editDimension('x', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.height}</span>
-                        <input type="number" min={8} max={512} value={dimY} onChange={(e) => { setHasCustomDimensions(true); setDimY(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.y} onChange={(e) => editDimension('y', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimY}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimY(Number(e.target.value)); }}
+                        value={displayedDimensions.y}
+                        onChange={(e) => editDimension('y', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.depth}</span>
-                        <input type="number" min={8} max={512} value={dimZ} onChange={(e) => { setHasCustomDimensions(true); setDimZ(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.z} onChange={(e) => editDimension('z', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimZ}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimZ(Number(e.target.value)); }}
+                        value={displayedDimensions.z}
+                        onChange={(e) => editDimension('z', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                   </div>
 
                   <p className="text-[10px] text-zinc-500">{hasCustomDimensions
-                    ? (lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks.`)
-                    : (lang === 'zh' ? '尺寸由 AI 依据描述和参考图决定；选择预设或拖动滑杆才会锁定体量。最多放置 12,000,000 方块。' : 'The AI chooses the size from your description and reference image; pick a preset or move a slider to lock the envelope. Max 12,000,000 placed blocks.')}</p>
+                    ? (lang === 'zh' ? `建筑尺寸 ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} 格；最多放置 12,000,000 方块。` : `Building size ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z}; max 12,000,000 placed blocks.`)
+                    : (lang === 'zh' ? `当前模型 ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} 格，生成时自动决定尺寸。最多放置 12,000,000 个方块。` : `Current model: ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} blocks. The next build uses automatic sizing. Up to 12,000,000 placed blocks.`)}</p>
                   {referenceImage && (
                     <p data-reference-mode="primary" role="status" className="text-[10px] text-emerald-300">
                       {hasCustomDimensions
@@ -1063,13 +1079,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   type="range"
                   data-ai-slice="true"
                   min={0}
-                  max={structure.size.y}
+                  max={Math.max(0, structure.size.y - 1)}
                   value={maxY}
                   onChange={(e) => setMaxY(Number(e.target.value))}
                   className="w-24 sm:w-32 accent-white"
                 />
                 <span className="font-mono text-[10px] sm:text-[11px] text-emerald-400 font-semibold w-8 tabular-nums">
-                  {maxY}/{structure.size.y}
+                  {visibleLayerCount}/{structure.size.y}
                 </span>
               </div>
 

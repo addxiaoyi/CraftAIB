@@ -69,7 +69,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
   const [nbtError, setNbtError] = useState<string | null>(null);
 
   const [minY, setMinY] = useState<number>(0);
-  const [maxY, setMaxY] = useState<number>(structure.size.y);
+  const [maxY, setMaxY] = useState<number>(Math.max(0, structure.size.y - 1));
   const [showRegions, setShowRegions] = useState<boolean>(true);
   const [wireframe, setWireframe] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(true);
@@ -87,7 +87,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
     setActiveRegionId(null);
     setSelectedBlock(null);
     setMinY(0);
-    setMaxY(structure.size.y);
+    setMaxY(Math.max(0, structure.size.y - 1));
   }, [structure, initialHistory]);
 
   // Responsive panel defaults: open on desktop, closed by default on small screens
@@ -418,20 +418,20 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
             <input
               type="range"
               min={0}
-              max={structure.size.y}
+              max={Math.max(0, structure.size.y - 1)}
               value={maxY}
               onChange={(e) => setMaxY(Number(e.target.value))}
               className="w-24 sm:w-32 accent-white"
             />
             <button
-              onClick={() => setMaxY((prev) => Math.min(structure.size.y, prev + 1))}
+              onClick={() => setMaxY((prev) => Math.min(structure.size.y - 1, prev + 1))}
               className="w-5 h-5 rounded bg-white/[0.05] hover:bg-white/15 text-zinc-300 flex items-center justify-center font-mono text-xs cursor-pointer"
               title="Next Layer"
             >
               +
             </button>
             <span className="font-mono text-[10px] sm:text-[11px] text-emerald-400 font-semibold w-10 tabular-nums">
-              {maxY}/{structure.size.y}
+              {Math.min(maxY + 1, structure.size.y)}/{structure.size.y}
             </span>
           </div>
 
@@ -440,7 +440,7 @@ export const Viewer3dView: React.FC<Viewer3dViewProps> = ({
           <button
             onClick={() => {
               setMinY(0);
-              setMaxY(structure.size.y);
+              setMaxY(Math.max(0, structure.size.y - 1));
             }}
             className="px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-mono text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors shrink-0 cursor-pointer"
           >

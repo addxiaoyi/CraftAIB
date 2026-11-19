@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { StructureData, VoxelBlock } from '../types/minecraft';
 import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { viewportCameraPosition, type ViewportView } from './viewportCamera';
 import { blockTextureName, cropBlockTexture, loadBundledTextures } from '../integrations/bundledTextures';
 
 const MAX_PREVIEW_BLOCKS = 500_000;
@@ -203,7 +204,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     hoverOutlineRef.current = outline;
 
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, Math.max(1200, maxDim * 6));
-    camera.position.set(focus.center.x + maxDim * 1.3, focus.center.y + maxDim, focus.center.z + maxDim * 1.3);
+    const { x, y, z } = focus.center;
+    camera.position.set(...viewportCameraPosition([x, y, z], maxDim, 'iso', structure.plan?.referenceFacing));
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -524,32 +526,15 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
   // Silky smooth camera tweening
   const setCameraPreset = useCallback(
-    (view: 'iso' | 'top' | 'front' | 'side' | 'reset') => {
+    (view: ViewportView | 'reset') => {
       if (!cameraRef.current || !controlsRef.current) return;
       const camera = cameraRef.current;
       const controls = controlsRef.current;
       const focus = focusForStructure(structure);
-      const cx = focus.center.x;
-      const cy = focus.center.y;
-      const cz = focus.center.z;
-      const maxDim = focus.size;
-
-      const targetLookAt = new THREE.Vector3(cx, cy, cz);
-      const targetPos = new THREE.Vector3();
-
-      if (view === 'iso' || view === 'reset') {
-        targetPos.set(cx + maxDim * 1.3, cy + maxDim, cz + maxDim * 1.3);
-        setActiveCameraView('iso');
-      } else if (view === 'top') {
-        targetPos.set(cx, cy + maxDim * 2, cz + 0.01);
-        setActiveCameraView('top');
-      } else if (view === 'front') {
-        targetPos.set(cx, cy, cz + maxDim * 1.8);
-        setActiveCameraView('front');
-      } else if (view === 'side') {
-        targetPos.set(cx + maxDim * 1.8, cy, cz);
-        setActiveCameraView('side');
-      }
+      const preset = view === 'reset' ? 'iso' : view;
+      const { x, y, z } = focus.center;
+      const targetPos = new THREE.Vector3(...viewportCameraPosition([x, y, z], focus.size, preset, structure.plan?.referenceFacing));
+      setActiveCameraView(preset);
 
       // Trigger silky 400ms camera lerp animation
       cameraTweenRef.current = {
@@ -558,11 +543,11 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         startPos: camera.position.clone(),
         targetPos: targetPos,
         startTarget: controls.target.clone(),
-        targetTarget: targetLookAt,
+        targetTarget: focus.center,
         active: true,
       };
     },
-    [structure.blocks, structure.id, structure.size.x, structure.size.y, structure.size.z]
+    [structure.blocks, structure.id, structure.size.x, structure.size.y, structure.size.z, structure.plan?.referenceFacing]
   );
 
   useEffect(() => {
@@ -683,8 +668,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       </div>
 
       {/* Layer Height Indicator (Responsive) */}
-      <div className="absolute bottom-3 right-3 text-[10px] sm:text-[11px] font-mono text-zinc-400 studio-glass px-2.5 py-1 rounded-lg tabular-nums shadow-lg z-10">
-        Y {minY}–{maxY} <span className="text-zinc-600">/</span> {structure.size.y - 1}
+      <div data-viewport-layer-range="true" className="absolute bottom-3 right-3 text-[10px] sm:text-[11px] font-mono text-zinc-400 studio-glass px-2.5 py-1 rounded-lg tabular-nums shadow-lg z-10">
+        Y {minY}–{Math.min(maxY, structure.size.y - 1)} <span className="text-zinc-600">/</span> {structure.size.y - 1}
       </div>
     </div>
   );

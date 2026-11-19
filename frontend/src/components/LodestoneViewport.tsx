@@ -5,6 +5,7 @@ import { runEngineTask } from '../integrations/engine';
 import { decodePackCached, loadDefaultPackCached } from '../integrations/resourcePack';
 import { pickVoxel } from '../integrations/voxelPicking';
 import { createLodestoneProvider } from '../integrations/lodestoneStructure';
+import { isReferenceFacing, viewportCameraPosition, type ViewportView } from './viewportCamera';
 
 let rendererInstanceCounter = 0;
 let packRequestCounter = 0;
@@ -13,17 +14,31 @@ function sizeKeyOf(structure: StructureData): string {
   return `${structure.size.x}x${structure.size.y}x${structure.size.z}`;
 }
 
+function cameraKeyOf(structure: StructureData): string {
+  const facing = structure.plan?.referenceFacing;
+  const sizeKey = sizeKeyOf(structure);
+  return isReferenceFacing(facing) ? `${sizeKey}:${structure.id}:${facing}` : sizeKey;
+}
+
+function setViewportCamera(renderer: ThreeStructureRenderer, structure: StructureData, view: ViewportView) {
+  const { x, y, z } = structure.size;
+  const size = Math.max(x, y, z, 16);
+  const target: [number, number, number] = [x / 2, y / 2, z / 2];
+  renderer.setCamera({ position: viewportCameraPosition(target, size, view, structure.plan?.referenceFacing), target });
+}
+
 export const LodestoneViewport: React.FC<{ structure: StructureData; className?: string; resourcePackFile?: File | null; onSelectBlock?: (block: StructureData['blocks'][number] | null) => void; onSelectFace?: (normal: [number, number, number] | null) => void; backgroundColor?: string }> = ({ structure, className = '', resourcePackFile, onSelectBlock, onSelectFace, backgroundColor = '#101722' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const occupied = useMemo(() => new Set(structure.blocks.filter((block) => !['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'].includes(block.blockId)).map((block) => `${block.x},${block.y},${block.z}`)), [structure.blocks]);
   const rendererRef = useRef<ThreeStructureRenderer | null>(null);
   const buildingRef = useRef(true);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
-  const savedCameraRef = useRef<{ position: [number, number, number]; target: [number, number, number]; sizeKey: string } | null>(null);
+  const savedCameraRef = useRef<{ position: [number, number, number]; target: [number, number, number]; key: string } | null>(null);
   const statsTokenRef = useRef(0);
   const structureRef = useRef(structure);
   structureRef.current = structure;
   const rendererSizeKeyRef = useRef<string | null>(null);
+  const rendererCameraKeyRef = useRef<string | null>(null);
   const [rendererEpoch, setRendererEpoch] = useState(0);
   const [status, setStatus] = useState('Loading Minecraft resource pack...');
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -47,19 +62,9 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
     }, 200);
   };
 
-  const setView = (view: 'iso' | 'front' | 'side' | 'top') => {
+  const setView = (view: ViewportView) => {
     const renderer = rendererRef.current;
-    if (!renderer) return;
-    const size = Math.max(structure.size.x, structure.size.y, structure.size.z, 16);
-    const center: [number, number, number] = [structure.size.x / 2, structure.size.y / 2, structure.size.z / 2];
-    const position: [number, number, number] = view === 'front'
-      ? [center[0], center[1], center[2] + size * 1.8]
-      : view === 'side'
-        ? [center[0] + size * 1.8, center[1], center[2]]
-        : view === 'top'
-          ? [center[0], center[1] + size * 2, center[2] + 0.01]
-          : [center[0] + size * 1.3, center[1] + size, center[2] + size * 1.3];
-    renderer.setCamera({ position, target: center });
+    if (renderer) setViewportCamera(renderer, structure, view);
   };
 
   useEffect(() => {
@@ -99,12 +104,14 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         ownedRenderer = renderer;
         rendererRef.current = renderer;
         rendererSizeKeyRef.current = sizeKeyOf(current);
+        rendererCameraKeyRef.current = cameraKeyOf(current);
         canvas.dataset.lodestoneInstance = String(++rendererInstanceCounter);
         const resize = () => renderer.setViewport(0, 0, canvas.clientWidth || 800, canvas.clientHeight || 500, Math.min(window.devicePixelRatio, 2));
         observer = new ResizeObserver(resize);
         observer.observe(canvas);
         resize();
         renderer.resetCamera();
+        if (isReferenceFacing(current.plan?.referenceFacing)) setViewportCamera(renderer, current, 'iso');
         let build = renderer.whenReady();
         await build;
         while (!disposed && renderer.whenReady() !== build) {
@@ -114,7 +121,7 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         if (disposed) return;
         buildingRef.current = false;
         const saved = savedCameraRef.current;
-        if (saved && saved.sizeKey === rendererSizeKeyRef.current) renderer.setCamera({ position: saved.position, target: saved.target });
+        if (saved && saved.key === rendererCameraKeyRef.current) renderer.setCamera({ position: saved.position, target: saved.target });
         const draw = () => {
           if (disposed) return;
           // Leave idle time for Lodestone's asynchronous chunk builder after edits.
@@ -145,9 +152,10 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
         savedCameraRef.current = {
           position: [camera.position[0], camera.position[1], camera.position[2]],
           target: [camera.target[0], camera.target[1], camera.target[2]],
-          sizeKey: rendererSizeKeyRef.current ?? '',
+          key: rendererCameraKeyRef.current ?? '',
         };
         rendererSizeKeyRef.current = null;
+        rendererCameraKeyRef.current = null;
       }
       release();
     };
@@ -168,6 +176,12 @@ export const LodestoneViewport: React.FC<{ structure: StructureData; className?:
     setStatus('Building Minecraft preview...');
     renderer.setStructure(createLodestoneProvider(structure));
     rendererSizeKeyRef.current = sizeKey;
+    const cameraKey = cameraKeyOf(structure);
+    if (rendererCameraKeyRef.current !== cameraKey) {
+      if (isReferenceFacing(structure.plan?.referenceFacing)) setViewportCamera(renderer, structure, 'iso');
+      else renderer.resetCamera();
+      rendererCameraKeyRef.current = cameraKey;
+    }
     scheduleMeshStats(structure.blocks);
     void renderer.whenReady().then(() => {
       if (obsolete || rendererRef.current !== renderer) return;

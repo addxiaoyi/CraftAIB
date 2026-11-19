@@ -52,6 +52,13 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes('tool_result'), null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
   assert.match(await page.locator('body').innerText(), /build_voxel_structure/);
+  const width = page.getByRole('spinbutton', { name: 'Width in blocks' });
+  const height = page.getByRole('spinbutton', { name: 'Height in blocks' });
+  const length = page.getByRole('spinbutton', { name: 'Length in blocks' });
+  assert.deepEqual(await Promise.all([width.inputValue(), height.inputValue(), length.inputValue()]),
+    [generatedPlan.dimensions.width, generatedPlan.dimensions.height, generatedPlan.dimensions.length].map(String));
+  assert.equal(await page.locator('[data-size-auto="true"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-size-preset][aria-pressed="true"]').count(), 0);
 
   // The preview must be a painted, textured render, not an empty canvas behind a DOM shell.
   const preview = page.locator('[data-ai-renderer="textured"]');
@@ -78,6 +85,7 @@ try {
   assert.ok(instanceBeforeSlice, 'textured preview should expose its renderer instance');
   const slice = page.locator('[data-ai-slice="true"]');
   const fullHeight = Number(await slice.getAttribute('max'));
+  assert.equal(fullHeight, generatedPlan.dimensions.height - 1, 'the last selectable slice is the last valid Y coordinate');
   const sliceHeight = Math.max(1, Math.floor(fullHeight / 2));
   await slice.fill(String(sliceHeight));
   await page.waitForFunction((expected) => {
@@ -94,6 +102,7 @@ try {
   // Locking a size or a detail level must reach the request; Auto must release them again.
   expectedRequest = { label: 'locked 16x24x16 envelope', ...unlockedConstraints(), width: 16, height: 24, length: 16 };
   await page.locator('[data-size-preset="16x24x16"]').click();
+  assert.equal(await page.locator('[data-size-preset="16x24x16"]').getAttribute('aria-pressed'), 'true');
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
 
