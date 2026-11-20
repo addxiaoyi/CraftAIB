@@ -324,6 +324,7 @@ export function planBuildingFromReference(input: BuildingPrompt): StructurePlan 
   for (let index = 0; index + 2 < pixels.length; index += 4) brightness += (pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3;
   brightness /= Math.max(1, Math.floor(pixels.length / 4));
   const features = image.referenceFeatures ?? analyzeReferencePixels(image);
+  if (isLanternPrompt(input.prompt)) return planLanternFromReference(input, features);
   const base = planBuilding({ ...input, prompt: input.prompt || 'house' });
   const subjectAspect = (features.subjectBounds.right - features.subjectBounds.left) / Math.max(0.1, features.subjectBounds.bottom - features.subjectBounds.top);
   const type = features.towerColumns.length >= 2 ? 'tower' : subjectAspect < 0.72 ? 'tower' : subjectAspect > 1.45 ? 'castle' : base.type;
@@ -351,6 +352,71 @@ export function planBuildingFromReference(input: BuildingPrompt): StructurePlan 
     notes: [...plan.notes, `Reference silhouette extracted from ${image.width}x${image.height} pixels; facade profile and window rhythm are applied to the voxel grid.`],
     inference: { source: 'reference-heuristic', detectedType: type, detectedStyle: style, confidence: 0.72 },
   }, input.constraints);
+}
+
+function isLanternPrompt(prompt: string): boolean {
+  return /\blantern\b|\blamp\b|chandelier|\u706f\u7b3c|\u540a\u706f|\u706f\u5177/i.test(prompt);
+}
+
+function planLanternFromReference(input: BuildingPrompt, features: ReferenceFeatures): StructurePlan {
+  const dimensions = {
+    width: clamp(input.constraints?.width ?? 20, 8, MAX_STRUCTURE_DIMENSION),
+    height: clamp(input.constraints?.height ?? 24, 8, MAX_STRUCTURE_DIMENSION),
+    length: clamp(input.constraints?.length ?? 16, 8, MAX_STRUCTURE_DIMENSION),
+  };
+  const { width, height, length } = dimensions;
+  const bodyWidth = Math.max(4, Math.min(width - 4, Math.round(width * 0.62)));
+  const bodyLength = Math.max(4, Math.min(length - 4, Math.round(length * 0.58)));
+  const bodyHeight = Math.min(Math.max(3, height - 3), Math.max(3, Math.round(height * 0.52)));
+  const bodyX = Math.floor((width - bodyWidth) / 2);
+  const bodyZ = Math.floor((length - bodyLength) / 2);
+  const bodyY = Math.max(1, Math.min(height - bodyHeight - 2, Math.floor((height - bodyHeight) / 2)));
+  const capWidth = Math.min(width, bodyWidth + 2);
+  const capLength = Math.min(length, bodyLength + 2);
+  const capX = Math.floor((width - capWidth) / 2);
+  const capZ = Math.floor((length - capLength) / 2);
+  const centerX = Math.floor(width / 2);
+  const centerZ = Math.floor(length / 2);
+  const panelMaterial = 'minecraft:white_stained_glass_pane';
+  const frameMaterial = 'minecraft:dark_oak_planks';
+  const roofMaterial = 'minecraft:dark_oak_slab';
+  const parts: GeometryPart[] = [
+    { id: 'lantern-body-shell', type: 'shell', x: bodyX, y: bodyY, z: bodyZ, width: bodyWidth, height: bodyHeight, length: bodyLength, material: frameMaterial, hollow: true, thickness: 1, openSides: [], purpose: 'structure' },
+    { id: 'front-panel-frame', type: 'frame', x: bodyX, y: bodyY, z: bodyZ, width: bodyWidth, height: bodyHeight, length: 1, material: frameMaterial, facing: 'south', purpose: 'structure' },
+    { id: 'front-glass-panel', type: 'surface', x: bodyX + 1, y: bodyY + 1, z: bodyZ, width: Math.max(1, bodyWidth - 2), height: Math.max(1, bodyHeight - 2), length: 1, material: panelMaterial, facing: 'south', purpose: 'opening' },
+    { id: 'rear-panel-frame', type: 'frame', x: bodyX, y: bodyY, z: bodyZ + bodyLength - 1, width: bodyWidth, height: bodyHeight, length: 1, material: frameMaterial, facing: 'north', purpose: 'structure' },
+    { id: 'rear-glass-panel', type: 'surface', x: bodyX + 1, y: bodyY + 1, z: bodyZ + bodyLength - 1, width: Math.max(1, bodyWidth - 2), height: Math.max(1, bodyHeight - 2), length: 1, material: panelMaterial, facing: 'north', purpose: 'opening' },
+    { id: 'left-panel-frame', type: 'frame', x: bodyX, y: bodyY, z: bodyZ, width: 1, height: bodyHeight, length: bodyLength, material: frameMaterial, facing: 'east', purpose: 'structure' },
+    { id: 'left-glass-panel', type: 'surface', x: bodyX, y: bodyY + 1, z: bodyZ + 1, width: 1, height: Math.max(1, bodyHeight - 2), length: Math.max(1, bodyLength - 2), material: panelMaterial, facing: 'east', purpose: 'opening' },
+    { id: 'right-panel-frame', type: 'frame', x: bodyX + bodyWidth - 1, y: bodyY, z: bodyZ, width: 1, height: bodyHeight, length: bodyLength, material: frameMaterial, facing: 'west', purpose: 'structure' },
+    { id: 'right-glass-panel', type: 'surface', x: bodyX + bodyWidth - 1, y: bodyY + 1, z: bodyZ + 1, width: 1, height: Math.max(1, bodyHeight - 2), length: Math.max(1, bodyLength - 2), material: panelMaterial, facing: 'west', purpose: 'opening' },
+    { id: 'lower-eave', type: 'box', x: capX, y: Math.max(1, bodyY - 1), z: capZ, width: capWidth, height: 1, length: capLength, material: roofMaterial, purpose: 'roof' },
+    { id: 'upper-eave', type: 'box', x: capX, y: bodyY + bodyHeight, z: capZ, width: capWidth, height: 1, length: capLength, material: roofMaterial, purpose: 'roof' },
+    { id: 'hanging-chain', type: 'beam', x: centerX, y: bodyY + bodyHeight + 1, z: centerZ, width: 1, height: Math.max(1, height - (bodyY + bodyHeight + 1)), length: 1, material: 'minecraft:iron_bars', purpose: 'decoration' },
+    { id: 'bottom-tassel', type: 'tassel', x: centerX - 1, y: 0, z: centerZ - 1, width: 3, height: Math.max(1, bodyY - 1), length: 3, material: 'minecraft:red_wool', purpose: 'decoration' },
+    { id: 'lantern-light-core', type: 'box', x: centerX, y: bodyY + Math.floor(bodyHeight / 2), z: centerZ, width: 1, height: 1, length: 1, material: 'minecraft:sea_lantern', purpose: 'lighting' },
+  ];
+  return {
+    version: 1,
+    name: 'Reference lantern',
+    type: 'decorative_object',
+    style: 'ornate',
+    dimensions,
+    floors: 1,
+    rooms: [],
+    regions: [
+      { name: 'lantern chamber', role: 'translucent body', x: bodyX + 1, y: bodyY + 1, z: bodyZ + 1, width: Math.max(1, bodyWidth - 2), height: Math.max(1, bodyHeight - 2), length: Math.max(1, bodyLength - 2) },
+      { name: 'lantern crown', role: 'narrow upper eave', x: capX, y: bodyY + bodyHeight, z: capZ, width: capWidth, height: 1, length: capLength },
+    ],
+    components: [],
+    palette: { wall: frameMaterial, roof: roofMaterial, floor: 'minecraft:dark_oak_planks', window: panelMaterial },
+    seed: input.seed ?? 42,
+    notes: ['Deterministic lantern reconstruction uses the visible front panel as the primary elevation and infers only hidden depth.'],
+    geometry: { parts },
+    referenceFacing: 'z-min',
+    referenceFeatures: features,
+    inference: { source: 'reference-heuristic', detectedType: 'decorative_object', detectedStyle: 'ornate', confidence: 0.9, category: 'object', reasoning: 'Lantern identity was explicit in the prompt; front panels, frame, crown, chain and tassel are emitted as deterministic geometry.' },
+  };
 }
 
 // Massing-only preview: when no constraints arrive, a house keeps the plain fallback plan, but anything
