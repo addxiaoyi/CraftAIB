@@ -39,6 +39,7 @@
     "build:browser-worker": "node scripts/build-browser-worker.mjs",
     "test:browser-ai": "node scripts/ai-generation-browser-smoke.mjs",
     "test:ai-ui": "node scripts/ai-generation-browser-smoke.mjs",
+    "benchmark:references": "node scripts/reference-benchmark.mjs",
     "test:architect-ui": "node scripts/architect-ui-smoke.mjs",
     "test:vision-live": "node scripts/build-engine.mjs && node scripts/vision-live-smoke.mjs",
     "test:model-live": "node scripts/build-engine.mjs && node scripts/bounded-live-acceptance.mjs",

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzeReferencePixels, planBuilding, planBuildingFromReference, planBuildingWithModel, structurePlanToGrid, surfaceNormalAxis } from '../packages/ai-planner/dist/index.js';
+import { analyzeReferencePixels, planBuilding, planBuildingFromReference, planBuildingWithModel, structurePlanJsonSchema, structurePlanToGrid, surfaceNormalAxis } from '../packages/ai-planner/dist/index.js';
 import { analyzeMaterials, mergeGrids, applyGridEdit, countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
 import { fromVoxelartcraft } from '../packages/voxelartcraft-adapter/dist/index.js';
 import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
@@ -49,6 +49,34 @@ assert.equal(surfaceNormalAxis({ width: 1, height: 5, length: 1 }), 'y');
 const ambiguousThinAxes = surfaceGrid({ x: 0, y: 0, z: 0, width: 1, height: 5, length: 1 }, { width: 1, height: 5, length: 1 });
 assert.equal(ambiguousThinAxes.length, 2, 'tied X/Z dimensions default to a horizontal surface');
 assert.deepEqual([...new Set(ambiguousThinAxes.map((cell) => cell.y))], [0, 1]);
+function primitiveGrid(part, dimensions) {
+  return structurePlanToGrid({
+    ...towerPlan,
+    dimensions,
+    floors: 1,
+    rooms: [],
+    regions: [{ name: 'primitive', role: 'detail', x: 0, y: 0, z: 0, ...dimensions }],
+    components: [],
+    geometry: { parts: [{ id: 'primitive', material: 'minecraft:dark_oak_planks', purpose: 'decoration', ...part }] },
+  }).cells;
+}
+const frameGrid = primitiveGrid({ type: 'frame', x: 0, y: 0, z: 0, width: 7, height: 6, length: 1, facing: 'south' }, { width: 7, height: 6, length: 1 });
+assert.equal(frameGrid.length, 22, 'a front frame should contain only its four one-block borders');
+assert.equal(new Set(frameGrid.map((cell) => cell.y)).size, 6, 'a vertical frame must preserve the full Y span');
+assert.equal(frameGrid.some((cell) => cell.x === 3 && cell.y === 3), false, 'a frame must leave its panel opening empty');
+const sideFrameGrid = primitiveGrid({ type: 'frame', x: 0, y: 0, z: 0, width: 1, height: 6, length: 7, facing: 'east' }, { width: 1, height: 6, length: 7 });
+assert.equal(sideFrameGrid.length, 22, 'an X-normal frame should use the same border rule');
+assert.equal(new Set(sideFrameGrid.map((cell) => cell.z)).size, 7);
+const tasselGrid = primitiveGrid({ type: 'tassel', x: 1, y: 0, z: 1, width: 5, height: 7, length: 5 }, { width: 7, height: 7, length: 7 });
+assert.ok(tasselGrid.length > 7, 'a tassel should contain a hanging stem and a tapered body');
+assert.equal(new Set(tasselGrid.map((cell) => cell.x)).size <= 3, true, 'a tassel must stay narrow around its center');
+assert.equal(new Set(tasselGrid.map((cell) => cell.z)).size <= 3, true, 'a tassel must stay narrow around its center');
+const wheelGrid = primitiveGrid({ type: 'wheel', x: 0, y: 0, z: 0, width: 7, height: 7, length: 2, facing: 'south' }, { width: 7, height: 7, length: 2 });
+assert.ok(wheelGrid.length >= 30, 'a wheel should generate a filled circular disc, not a single axle');
+assert.equal(new Set(wheelGrid.map((cell) => cell.z)).size, 2, 'a wheel should retain its declared axle thickness');
+assert.equal(new Set(wheelGrid.map((cell) => cell.y)).size, 7, 'a wheel disc should span its full vertical diameter');
+const geometryTypes = structurePlanJsonSchema().properties.geometry.properties.parts.items.properties.type.enum;
+for (const type of ['frame', 'tassel', 'wheel']) assert.ok(geometryTypes.includes(type), `${type} must remain in the planner schema`);
 assert.equal(towerGrid.cells.filter((cell) => cell.y === towerHeight - 2 && cell.block.id === towerPlan.palette.roof).length, towerWidth * towerLength, 'deck should be one solid course under the crown');
 assert.ok(towerGrid.cells.filter((cell) => cell.y === towerHeight - 1 && cell.block.id === towerPlan.palette.roof).length < towerWidth * towerLength / 2, 'crown should be a merlon ring, not a solid cap');
 assert.ok(towerGrid.cells.some((cell) => cell.y === 3 && cell.x === 0 && cell.block.id === towerPlan.palette.wall), 'tower wall should not have the old periodic full-floor gap');
@@ -91,6 +119,11 @@ for (let y = 2; y < 14; y += 1) {
 const referenceFeatures = analyzeReferencePixels({ width: 16, height: 16, pixels: referencePixels });
 assert.ok(referenceFeatures.silhouette.some((value) => value > 0.2), 'reference analysis should capture a non-rectangular silhouette');
 const referencePlan = planBuildingFromReference({ prompt: 'reconstruct this reference', seed: 7, referenceImage: { width: 16, height: 16, pixels: referencePixels } });
+assert.doesNotThrow(() => structurePlanToGrid(referencePlan), 'reference plans must keep their interior room inside the envelope');
+const referenceRoom = referencePlan.rooms[0];
+assert.ok(referenceRoom.x + referenceRoom.width <= referencePlan.dimensions.width);
+assert.ok(referenceRoom.y + referenceRoom.height <= referencePlan.dimensions.height);
+assert.ok(referenceRoom.z + referenceRoom.length <= referencePlan.dimensions.length);
 const referenceGrid = structurePlanToGrid(referencePlan);
 assert.ok(referencePlan.referenceFeatures, 'reference features must remain in the StructurePlan');
 assert.ok(referenceGrid.cells.some((cell) => cell.block.id === referencePlan.palette.window), 'reference facade should retain window openings');

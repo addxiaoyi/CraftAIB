@@ -240,6 +240,7 @@ The user's brief and, when present, the reference image outrank this guidance: f
 2. Aim for a readable silhouette and a clear visual hierarchy, but let the subject decide its massing. A cathedral, a bridge, a cave mouth and a lantern do not share proportions, part counts or symmetry; choose what the subject needs.
 3. Control proportion where the subject calls for it. Use a coherent base, body, transition and crown when they exist, and align repeated windows, beams, columns, stairs and trim to a shared module. Avoid accidental tiering, random setbacks, thin floating plates and noisy over-segmentation, while allowing deliberate irregularity when the subject is organic or ruined.
 4. Build depth. Use foundation, wall plane, frame, recess, projection, eave and ornament layers as appropriate. Openings must be real voids or transparent blocks with lintels, sills and structural edges.
+   For compact objects, use the executable geometry primitives deliberately: 'frame' makes an oriented four-sided panel border, 'surface' makes a plane whose normal follows 'facing' or its thinnest axis, 'tassel' makes a centered hanging taper, and 'wheel' makes a circular disc normal to its vehicle-facing axis. Use 'frame' around glass instead of a thick box, and use 'tassel' or 'wheel' when the reference visibly contains those details.
 5. Use materials intentionally. Select a dominant material, a secondary material, an accent and a light source; keep palette contrast clear and let rare colors serve the focal details. Match the reference color relationships, not just individual color names.
 6. Add detail with rhythm and variation. Repeat motifs with consistent spacing, then vary corners, entrances, roof edges and focal areas. Detail should explain structure, use real Minecraft blocks and never obscure the main form.
 7. Conceive the complete 3D assembly before placing blocks. Estimate width, height and depth from perspective, exposed side planes, shadows, repeated modules and structural use; when depth is occluded, choose a plausible depth for the object rather than a one-block extrusion. Decide whether the reference is bilateral, rotational or intentionally asymmetric and carry that design logic through the back, both sides, top, underside and interior. Continue materials and motifs around corners; do not paste the same front texture onto unseen faces. Infer rooms, circulation, storage, lighting and service spaces only where the subject actually implies them. For objects, infer a complete solid assembly without inventing unrelated rooms or floors.
@@ -283,7 +284,7 @@ export function structurePlanJsonSchema() {
               required: ['id', 'type', 'x', 'y', 'z', 'width', 'height', 'length', 'material', 'hollow', 'thickness', 'facing', 'openSides', 'roofStyle', 'ridgeAxis', 'purpose'],
               properties: {
                 id: { type: 'string' },
-                type: { type: 'string', enum: ['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface'] },
+                type: { type: 'string', enum: ['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface', 'frame', 'tassel', 'wheel'] },
                 x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' },
                 width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, length: { type: 'integer', minimum: 1 },
                 material: { type: 'string' },
@@ -1627,7 +1628,7 @@ function repairStructurePlan(value: any, constraints?: BuildingPrompt['constrain
     const x = clampInt(part?.x, 0, width - 1); const y = clampInt(part?.y, 0, height - 1); const z = clampInt(part?.z, 0, length - 1);
     return {
       id: String(part?.id || `part-${index + 1}`),
-      type: ['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface'].includes(part?.type) ? part.type : 'box',
+      type: ['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface', 'frame', 'tassel', 'wheel'].includes(part?.type) ? part.type : 'box',
       x, y, z, width: clampInt(part?.width, 1, width - x), height: clampInt(part?.height, 1, height - y), length: clampInt(part?.length, 1, length - z),
       material: normalizePaletteBlock(part?.material, 'minecraft:stone_bricks'),
       hollow: Boolean(part?.hollow), thickness: clampInt(part?.thickness, 1, 4), facing: ['north', 'south', 'east', 'west'].includes(part?.facing) ? part.facing : null,

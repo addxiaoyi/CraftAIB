@@ -60,7 +60,7 @@ export type ComponentPlan = {
 
 export type GeometryPart = {
   id: string;
-  type: 'box' | 'shell' | 'roof' | 'cylinder' | 'arch' | 'stairs' | 'beam' | 'surface';
+  type: 'box' | 'shell' | 'roof' | 'cylinder' | 'arch' | 'stairs' | 'beam' | 'surface' | 'frame' | 'tassel' | 'wheel';
   x: number;
   y: number;
   z: number;
@@ -337,13 +337,16 @@ export function planBuildingFromReference(input: BuildingPrompt): StructurePlan 
   components.push({ id: 'reference-silhouette', type: 'reference-silhouette', x: 0, y: 0, z: 0, options: { count: features.silhouette.length, size: Math.round(features.depthRatio * 100) } });
   components.push({ id: 'reference-windows', type: 'reference-window-bays', x: 0, y: 0, z: 0, options: { count: features.windowColumns.length, size: features.floorBands.length } });
   if (features.towerColumns.length) components.push({ id: 'reference-towers', type: 'reference-towers', x: 0, y: 0, z: 0, options: { count: features.towerColumns.length, size: 3 } });
+  const roomWidth = Math.max(1, width - 4);
+  const roomLength = Math.max(1, length - 4);
+  const roomHeight = Math.max(3, Math.min(height - 1, Math.floor((height - 1) / Math.max(1, floors))));
   return addLocalDetailGeometry({
     ...plan,
     dimensions: { width, height, length },
     floors,
     components,
     regions: [{ name: 'main', role: 'reference silhouette', x: 0, y: 0, z: 0, width, height: Math.max(1, height - 2), length }, { name: 'roof', role: 'reference roof', x: 0, y: Math.max(1, height - 2), z: 0, width, height: 2, length }],
-    rooms: [{ id: 'reference-interior', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: Math.max(1, width - 4), height: Math.max(3, Math.floor(height / Math.max(1, floors))), length: Math.max(1, length - 4) }],
+    rooms: [{ id: 'reference-interior', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: roomWidth, height: roomHeight, length: roomLength }],
     referenceFeatures: features,
     notes: [...plan.notes, `Reference silhouette extracted from ${image.width}x${image.height} pixels; facade profile and window rhythm are applied to the voxel grid.`],
     inference: { source: 'reference-heuristic', detectedType: type, detectedStyle: style, confidence: 0.72 },
@@ -677,7 +680,7 @@ export function validateStructurePlan(plan: StructurePlan): StructurePlan {
   }
   for (const room of plan.rooms ?? []) if (room.x < 0 || room.y < 0 || room.z < 0 || room.x + room.width > width || room.y + room.height > height || room.z + room.length > length) throw new Error(`Room '${room.id}' is outside the StructurePlan dimensions.`);
   for (const part of plan.geometry?.parts ?? []) {
-    if (!part.id?.trim() || !['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface'].includes(part.type)) throw new Error(`Geometry part '${part.id}' has an unsupported type.`);
+    if (!part.id?.trim() || !['box', 'shell', 'roof', 'cylinder', 'arch', 'stairs', 'beam', 'surface', 'frame', 'tassel', 'wheel'].includes(part.type)) throw new Error(`Geometry part '${part.id}' has an unsupported type.`);
     if (![part.x, part.y, part.z, part.width, part.height, part.length].every(Number.isInteger) || part.width < 1 || part.height < 1 || part.length < 1) throw new Error(`Geometry part '${part.id}' has invalid bounds.`);
     if (part.x < 0 || part.y < 0 || part.z < 0 || part.x + part.width > width || part.y + part.height > height || part.z + part.length > length) throw new Error(`Geometry part '${part.id}' is outside the StructurePlan dimensions.`);
     if (!part.material || !/^([a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(part.material)) throw new Error(`Geometry part '${part.id}' has an invalid Minecraft material.`);
@@ -1017,6 +1020,9 @@ function addGeometryParts(
     }
     if (part.type === 'roof') { addRoofPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'surface') { addSurfacePart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
+    if (part.type === 'frame') { addFramePart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
+    if (part.type === 'tassel') { addTasselPart(putMaterial, x0, y0, z0, x1, y1, z1); continue; }
+    if (part.type === 'wheel') { addWheelPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'beam') { addBeamPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'arch') { addArchPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
       addBoxPart(putMaterial, part, open, x0, y0, z0, x1, y1, z1);
@@ -1084,6 +1090,73 @@ function addSurfacePart(put: (x: number, y: number, z: number) => void, part: Ge
     return;
   }
   for (let y = y0; y < y0 + thickness; y += 1) for (let z = z0; z < z1; z += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
+}
+
+function addFramePart(put: (x: number, y: number, z: number) => void, part: GeometryPart, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+  const normal = surfaceNormalAxis(part);
+  const thickness = Math.max(1, Math.min(part.thickness ?? 1, normal === 'x' ? x1 - x0 : normal === 'z' ? z1 - z0 : y1 - y0));
+  const horizontalThickness = Math.max(1, Math.min(thickness, 2));
+  if (normal === 'x') {
+    const planeX = part.facing === 'east' ? x1 - thickness : x0;
+    for (let x = planeX; x < planeX + thickness; x += 1) {
+      for (let y = y0; y < Math.min(y1, y0 + horizontalThickness); y += 1) for (let z = z0; z < z1; z += 1) put(x, y, z);
+      for (let y = Math.max(y0, y1 - horizontalThickness); y < y1; y += 1) for (let z = z0; z < z1; z += 1) put(x, y, z);
+      for (let y = y0 + horizontalThickness; y < y1 - horizontalThickness; y += 1) {
+        for (let z = z0; z < Math.min(z1, z0 + horizontalThickness); z += 1) put(x, y, z);
+        for (let z = Math.max(z0, z1 - horizontalThickness); z < z1; z += 1) put(x, y, z);
+      }
+    }
+    return;
+  }
+  if (normal === 'z') {
+    const planeZ = part.facing === 'north' ? z1 - thickness : z0;
+    for (let z = planeZ; z < planeZ + thickness; z += 1) {
+      for (let y = y0; y < Math.min(y1, y0 + horizontalThickness); y += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
+      for (let y = Math.max(y0, y1 - horizontalThickness); y < y1; y += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
+      for (let y = y0 + horizontalThickness; y < y1 - horizontalThickness; y += 1) {
+        for (let x = x0; x < Math.min(x1, x0 + horizontalThickness); x += 1) put(x, y, z);
+        for (let x = Math.max(x0, x1 - horizontalThickness); x < x1; x += 1) put(x, y, z);
+      }
+    }
+    return;
+  }
+  for (let y = y0; y < y0 + thickness; y += 1) {
+    for (let z = z0; z < z1; z += 1) for (let x = x0; x < x1; x += 1) {
+      const edge = x - x0 < horizontalThickness || x1 - 1 - x < horizontalThickness || z - z0 < horizontalThickness || z1 - 1 - z < horizontalThickness;
+      if (edge) put(x, y, z);
+    }
+  }
+}
+
+function addTasselPart(put: (x: number, y: number, z: number) => void, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+  const centerX = Math.floor((x0 + x1 - 1) / 2);
+  const centerZ = Math.floor((z0 + z1 - 1) / 2);
+  const width = Math.max(1, Math.min(x1 - x0, 3));
+  const length = Math.max(1, Math.min(z1 - z0, 3));
+  const top = Math.min(y1, y0 + Math.max(1, Math.ceil((y1 - y0) * 0.25)));
+  for (let y = y0; y < top; y += 1) put(centerX, y, centerZ);
+  for (let y = top; y < y1; y += 1) {
+    const progress = (y - top) / Math.max(1, y1 - top - 1);
+    const radiusX = Math.max(0, Math.floor((width - 1) * (1 - progress) / 2));
+    const radiusZ = Math.max(0, Math.floor((length - 1) * (1 - progress) / 2));
+    for (let x = centerX - radiusX; x <= centerX + radiusX; x += 1) for (let z = centerZ - radiusZ; z <= centerZ + radiusZ; z += 1) put(x, y, z);
+  }
+}
+
+function addWheelPart(put: (x: number, y: number, z: number) => void, part: GeometryPart, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+  const normal = part.facing === 'east' || part.facing === 'west' ? 'x' : 'z';
+  const radius = Math.max(0.5, Math.min(normal === 'x' ? (y1 - y0) / 2 : (Math.min(x1 - x0, y1 - y0)) / 2, 16));
+  const centerY = (y0 + y1 - 1) / 2;
+  const centerAcross = normal === 'x' ? (z0 + z1 - 1) / 2 : (x0 + x1 - 1) / 2;
+  const depth = Math.max(1, Math.min(normal === 'x' ? x1 - x0 : z1 - z0, 2));
+  const start = part.facing === 'west' || part.facing === 'north' ? (normal === 'x' ? x1 - depth : z1 - depth) : (normal === 'x' ? x0 : z0);
+  for (let layer = 0; layer < depth; layer += 1) for (let y = y0; y < y1; y += 1) for (let across = Math.floor(centerAcross - radius); across <= Math.ceil(centerAcross + radius); across += 1) {
+    if (across < (normal === 'x' ? z0 : x0) || across >= (normal === 'x' ? z1 : x1)) continue;
+    const radial = ((y - centerY) / radius) ** 2 + ((across - centerAcross) / radius) ** 2;
+    if (radial <= 1) {
+      if (normal === 'x') put(start + layer, y, across); else put(across, y, start + layer);
+    }
+  }
 }
 
 function addBeamPart(put: (x: number, y: number, z: number) => void, part: GeometryPart, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
