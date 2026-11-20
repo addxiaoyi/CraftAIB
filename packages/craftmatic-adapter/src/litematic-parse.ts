@@ -1,5 +1,5 @@
 import type { BlockGrid, BlockState } from '@craftaib/core';
-import { createGrid } from '../../core/dist/index.js';
+import { createGrid, normalizeState } from '../../core/dist/index.js';
 import { gunzip, Reader } from './parse.js';
 
 export type NbtTag = { type?: number; value?: any };
@@ -92,7 +92,11 @@ export function flattenLitematicaDocument(document: LitematicaDocument): BlockGr
   const entries = document.regions.flatMap((region) => region.cells);
   if (!entries.length) {
     const size = document.metadata.enclosingSize;
-    return createGrid([], { width: Math.max(1, size.x), height: Math.max(1, size.y), length: Math.max(1, size.z) }, 'craftmatic');
+    const origin = document.regions.reduce((minimum, region) => ({ x: Math.min(minimum.x, signedCoordinate(region.position.x, region.size.x, 0)), y: Math.min(minimum.y, signedCoordinate(region.position.y, region.size.y, 0)), z: Math.min(minimum.z, signedCoordinate(region.position.z, region.size.z, 0)) }), { x: Infinity, y: Infinity, z: Infinity });
+    const grid = createGrid([], { width: Math.max(1, size.x), height: Math.max(1, size.y), length: Math.max(1, size.z) }, 'craftmatic');
+    grid.origin = origin;
+    grid.metadata = flattenMetadata(document, origin);
+    return grid;
   }
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -110,13 +114,27 @@ export function flattenLitematicaDocument(document: LitematicaDocument): BlockGr
   }
   const grid = createGrid([...cells.values()], { width: maxX - minX + 1, height: maxY - minY + 1, length: maxZ - minZ + 1 }, 'craftmatic');
   grid.origin = { x: minX, y: minY, z: minZ };
-  grid.metadata = {
-    entities: document.regions.flatMap((region) => region.entities),
-    blockEntities: document.regions.flatMap((region) => region.blockEntities),
-    pendingBlockTicks: document.regions.flatMap((region) => region.pendingBlockTicks),
-    litematicaMetadata: document.metadata,
-  };
+  grid.metadata = flattenMetadata(document, grid.origin);
   return grid;
+}
+
+function flattenMetadata(document: LitematicaDocument, origin: LitematicaVec3): NonNullable<BlockGrid['metadata']> {
+  const groups: NonNullable<BlockGrid['metadata']> = { entities: [], blockEntities: [], pendingBlockTicks: [], litematicaMetadata: document.metadata };
+  for (const region of document.regions) {
+    const offset = { x: signedCoordinate(region.position.x, region.size.x, 0) - origin.x, y: signedCoordinate(region.position.y, region.size.y, 0) - origin.y, z: signedCoordinate(region.position.z, region.size.z, 0) - origin.z };
+    for (const key of ['entities', 'blockEntities', 'pendingBlockTicks'] as const) {
+      for (const entry of region[key]) {
+        const nbt = structuredClone(entry.nbt);
+        const position = entry.position ? { x: entry.position.x + offset.x, y: entry.position.y + offset.y, z: entry.position.z + offset.z } : undefined;
+        if (position) {
+          if (nbt.Pos?.value?.value && Array.isArray(nbt.Pos.value.value)) nbt.Pos.value.value = [position.x, position.y, position.z, ...nbt.Pos.value.value.slice(3)];
+          for (const axis of ['x', 'y', 'z'] as const) if (nbt[axis]) nbt[axis] = { ...nbt[axis], value: position[axis] };
+        }
+        groups[key]!.push({ ...(position ? { position } : {}), nbt });
+      }
+    }
+  }
+  return groups;
 }
 
 function collectRegionEntries(value: any, prefix = ''): Array<[string, RegionTag]> {
@@ -144,6 +162,7 @@ function parseRegion(name: string, region: RegionTag, mainDataVersion: number): 
   const palette = readPalette(region.BlockStatePalette?.value?.value);
   const words = region.BlockStates?.value as bigint[];
   const volume = dimensions.x * dimensions.y * dimensions.z;
+  if (!Number.isSafeInteger(volume)) throw new Error(`Litematic region '${name}' volume exceeds the safe integer range.`);
   const bits = requiredBitWidth(palette.length);
   const requiredWords = Math.ceil((volume * bits) / 64);
   if (!Array.isArray(words) || words.length < requiredWords) throw new Error(`Litematic region '${name}' BlockStates data is truncated.`);
@@ -151,7 +170,8 @@ function parseRegion(name: string, region: RegionTag, mainDataVersion: number): 
   const cells: BlockGrid['cells'] = [];
   for (let index = 0; index < volume; index += 1) {
     const stateIndex = readPackedState(words, index, bits);
-    const state = palette[stateIndex] ?? { id: 'minecraft:air' };
+    const state = palette[stateIndex];
+    if (!state) throw new Error(`Litematic region '${name}' references unknown palette index ${stateIndex}.`);
     if (state.id === 'minecraft:air') continue;
     const localX = index % dimensions.x;
     const localY = Math.floor(index / (dimensions.x * dimensions.z));
@@ -197,15 +217,15 @@ function parseMetadata(value: any, formatVersion: number, minecraftDataVersion: 
 }
 
 function readPalette(value: any): BlockState[] {
-  if (!Array.isArray(value)) throw new Error('Litematic region is missing BlockStatePalette.');
+  if (!Array.isArray(value) || !value.length) throw new Error('Litematic region is missing BlockStatePalette.');
   return value.map((entry) => formatState(entry));
 }
 
 function formatState(entry: any): BlockState {
-  const name = stringValue(entry?.Name, 'minecraft:air');
+  const name = stringValue(entry?.Name, '');
   const properties = entry?.Properties?.value ?? {};
   const pairs = Object.entries(properties).map(([key, value]: [string, any]) => [key, stringValue(value, '')]);
-  return pairs.length ? { id: name, properties: Object.fromEntries(pairs) } : { id: name };
+  return normalizeState(pairs.length ? { id: name, properties: Object.fromEntries(pairs) } : { id: name });
 }
 
 function parseState(value: string): BlockState {
@@ -227,9 +247,14 @@ function readVec3(value: any): LitematicaVec3 {
 }
 
 function enclosingSize(regions: LitematicaRegion[]): LitematicaVec3 {
-  const bounds = regions.flatMap((region) => region.cells);
-  if (!bounds.length) return { x: 1, y: 1, z: 1 };
-  return { x: Math.max(...bounds.map((cell) => cell.x)) - Math.min(...bounds.map((cell) => cell.x)) + 1, y: Math.max(...bounds.map((cell) => cell.y)) - Math.min(...bounds.map((cell) => cell.y)) + 1, z: Math.max(...bounds.map((cell) => cell.z)) - Math.min(...bounds.map((cell) => cell.z)) + 1 };
+  const min = { x: Infinity, y: Infinity, z: Infinity };
+  const max = { x: -Infinity, y: -Infinity, z: -Infinity };
+  for (const region of regions) for (const axis of ['x', 'y', 'z'] as const) {
+    const start = signedCoordinate(region.position[axis], region.size[axis], 0);
+    min[axis] = Math.min(min[axis], start);
+    max[axis] = Math.max(max[axis], start + region.dimensions[axis] - 1);
+  }
+  return { x: max.x - min.x + 1, y: max.y - min.y + 1, z: max.z - min.z + 1 };
 }
 
 function signedCoordinate(origin: number, size: number, local: number): number { return origin + (size < 0 ? size + 1 + local : local); }

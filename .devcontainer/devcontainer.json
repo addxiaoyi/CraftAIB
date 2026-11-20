@@ -10,7 +10,7 @@
       "visibility": "private"
     }
   },
-  "postCreateCommand": "corepack enable && corepack prepare pnpm@11.23.0 --activate && pnpm install --frozen-lockfile --ignore-scripts && npm run build:engine && npm run build:browser-worker && npm run stage:browser-worker && npm run build:ui",
+  "postCreateCommand": "git submodule update --init --recursive && corepack enable && corepack prepare pnpm@11.23.0 --activate && pnpm install --frozen-lockfile --ignore-scripts && npm run build:ui",
   "postStartCommand": "npm run start:detached",
   "customizations": {
     "vscode": {

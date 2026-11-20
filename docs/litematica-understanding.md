@@ -40,7 +40,7 @@ Litematica 的放置位置、启用状态、旋转、镜像、锁定坐标、子
 ## 坐标和压缩规则
 
 - 统一引擎仍使用 `xyz`，索引顺序是 `y -> z -> x`：`(y * length + z) * width + x`。
-- `Position` 是区域锚点；`Size` 可以在任一轴为负数。负尺寸不是错误，负轴的第一个存储单元对应锚点减一。
+- `Position` 是区域锚点；`Size` 可以在任一轴为负数。负尺寸不是错误，存储坐标以该区域的最小角为起点，锚点单独保留。
 - 区域单元坐标采用：
 
 ```text
@@ -49,7 +49,7 @@ size < 0: world = position + size + 1 + local (the container starts at the minim
 ```
 
 - `BlockStates` 使用 tight long packing；一个状态可能跨越两个 64-bit long，不能只用 `floor(64 / bits)` 分组读取。
-- palette 位宽为 `max(2, ceil(log2(paletteSize - 1)))`，ID 0 保留给 air。
+- palette 位宽为 `max(2, ceil(log2(paletteSize)))`，ID 0 保留给 air。
 - `BlockStatePalette` 不是只有方块 ID；`Properties` 必须保留，例如 `oak_log[axis=x]`、`stairs[facing=north,half=top]`。
 - NBT reader 必须支持实体 `Pos` 的 double list，以及 float/double tag；只支持 int/long 会在真实实体 schematic 上失败。
 
@@ -100,6 +100,7 @@ AI 生成建筑时不能只输出一张方块平面或单一 palette。有效的
 - tight long-array 读取和写入。
 - metadata、region material summary、block entity/entity/tick 数量。
 - placement JSON 解析、序列化、旋转、镜像和常见 facing/axis/rotation 属性转换。
+- 原生 Litematica 1.20.1 placement 的 `origin` 数组、`placements[].placement` 子区域包装和大写枚举；`serializeNativeLitematicaPlacement` 显式输出该格式，原有 `serializeLitematicaPlacements` 保持内部可移植格式。
 - CLI `craftaib litematic info <input>`。
 - Worker `litematic.inspect`。
 
@@ -114,7 +115,7 @@ AI 生成建筑时不能只输出一张方块平面或单一 palette。有效的
 ## Viewer and live vision
 
 - The Viewer receives `regions` and `placement` overlays, draws colored Region bounding boxes, and exposes hide/lock/rotate/mirror controls.
-- `scripts/vision-live-smoke.mjs` runs a real endpoint test when `CRAFTAIB_VISION_API_URL` is configured. It reads `CRAFTAIB_REFERENCE_IMAGE` (default `examples/example1.png`), validates the returned StructurePlan, exports a multi-Region `.litematic`, and reads it back. Without an endpoint it exits explicitly as skipped; it never fabricates a live result.
-- The browser uses the same endpoint only when the user enters a Vision endpoint. No API key is committed or persisted.
+- `scripts/vision-live-smoke.mjs` uses the running server configured with the shared `CRAFTAIB_MODEL_*` values. `CRAFTAIB_REFERENCE_IMAGES` selects filenames under `examples/`; by default four samples are checked. It exports plans, views and exact round-trip reports and fails explicitly when the server/model is unavailable.
+- The browser uses the server's shared endpoint. API keys remain in the local server environment, outside browser project files and commits.
 
 - `scripts/viewer-region-browser-smoke.mjs` performs real iframe button clicks for Region select, rotate, mirror, hide, lock, undo, and redo; it asserts the Viewer debug state and main-workbench sync without browser errors.

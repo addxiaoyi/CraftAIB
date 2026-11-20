@@ -9,6 +9,21 @@ import {
   RefreshCw,
   CheckCircle2,
 } from 'lucide-react';
+import { PageWorkspace } from '../layout/PageWorkspace';
+
+function projectStorageSize(): string {
+  try {
+    let bytes = 0;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith('craftaib.') || key?.startsWith('blockcraft_')) bytes += ((key?.length ?? 0) + (localStorage.getItem(key!)?.length ?? 0)) * 2;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  } catch (error) {
+    console.warn('CraftAIB could not measure browser project storage.', error);
+    return '—';
+  }
+}
 
 interface SettingsViewProps {
   lang: 'zh' | 'en';
@@ -28,9 +43,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [healthStatus, setHealthStatus] = useState<any>(null);
   const [isPinging, setIsPinging] = useState<boolean>(false);
   const [latency, setLatency] = useState<number | null>(null);
-  const [cacheSize, setCacheSize] = useState<string>('1.4 MB');
+  const [cacheSize, setCacheSize] = useState(projectStorageSize);
   const [clearedToast, setClearedToast] = useState<boolean>(false);
-  const [config, setConfig] = useState({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', adminToken: '', timeoutMs: 120000, retries: 2 });
+  const [config, setConfig] = useState<{ textEndpoint: string; textModel: string; textKey: string; visionEndpoint: string; visionModel: string; visionKey: string; adminToken: string; timeoutMs: number; retries: number; thinking: 'auto' | 'low' | 'off' }>({ textEndpoint: '', textModel: '', textKey: '', visionEndpoint: '', visionModel: '', visionKey: '', adminToken: '', timeoutMs: 120000, retries: 2, thinking: 'auto' });
   const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [isTestingModel, setIsTestingModel] = useState(false);
 
@@ -41,9 +56,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       preferencesTitle: 'General Studio Preferences',
       languageLabel: 'Studio Language',
       autoSaveLabel: 'Continuous Auto-Save',
-      autoSaveDesc: 'Automatically commits structure changes to browser localStorage every 30 seconds.',
+      autoSaveDesc: 'Saves changed project state to browser storage while you work.',
       cacheTitle: 'Storage & Memory Cache',
-      cacheDesc: 'Local structure snapshots, generated schematics, and cached textures.',
+      cacheDesc: 'Browser project snapshots, edit history, inventory and reference images.',
       clearCacheBtn: 'Clear Client Cache',
       resetDefaultsBtn: 'Restore Default Structures',
       diagnosticsTitle: 'System & Model Service Health',
@@ -94,7 +109,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const elapsed = Math.round(performance.now() - start);
       setLatency(elapsed);
       setHealthStatus(data);
-      setConfig((current) => ({ ...current, textEndpoint: data.generationEndpoint ?? data.textEndpoint ?? current.textEndpoint, textModel: data.generationModel ?? data.textModel ?? current.textModel, visionEndpoint: data.visionEndpoint ?? current.visionEndpoint, visionModel: data.visionModel ?? current.visionModel, timeoutMs: data.textTimeoutMs ?? current.timeoutMs, retries: data.textRetries ?? current.retries }));
+      setConfig((current) => ({ ...current, textEndpoint: data.generationEndpoint ?? data.textEndpoint ?? current.textEndpoint, textModel: data.generationModel ?? data.textModel ?? current.textModel, visionEndpoint: data.visionEndpoint ?? current.visionEndpoint, visionModel: data.visionModel ?? current.visionModel, timeoutMs: data.textTimeoutMs ?? current.timeoutMs, retries: data.textRetries ?? current.retries, thinking: data.thinking ?? current.thinking }));
     } catch (err) {
       console.error('Health check failed:', err);
       setHealthStatus({ ok: false, text: false, vision: false });
@@ -108,11 +123,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, []);
 
   const handleClearCache = () => {
-    localStorage.removeItem('blockcraft_current_structure');
-    localStorage.removeItem('blockcraft_auto_save');
-    setCacheSize('0.0 MB');
-    setClearedToast(true);
-    setTimeout(() => setClearedToast(false), 2500);
+    try {
+      for (const key of ['blockcraft_current_structure', 'blockcraft_auto_save', 'craftaib.edit-history', 'craftaib.ai-meta', 'craftaib.placements', 'craftaib.material-inventory']) localStorage.removeItem(key);
+      setCacheSize(projectStorageSize());
+      setClearedToast(true);
+      setTimeout(() => setClearedToast(false), 2500);
+    } catch (error) {
+      setConfigMessage(error instanceof Error ? error.message : 'Browser project storage could not be cleared.');
+    }
   };
 
   const saveConfig = async () => {
@@ -120,7 +138,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const headers: HeadersInit = { 'content-type': 'application/json' };
       if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
-      const response = await fetch('/api/ai/config', { method: 'POST', headers, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries } }) });
+      const response = await fetch('/api/ai/config', { method: 'POST', headers, body: JSON.stringify({ generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, retries: config.retries, thinking: config.thinking } }) });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error?.message || 'Configuration could not be saved.');
       setConfigMessage(lang === 'zh' ? '模型配置已保存，密钥不会显示。' : 'Model configuration saved. Keys are never displayed.');
@@ -136,7 +154,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (config.adminToken) headers.authorization = `Bearer ${config.adminToken}`;
       const draftIsPresent = Boolean(config.textEndpoint.trim() || config.textModel.trim() || config.textKey.trim());
       const body = draftIsPresent
-        ? { generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs }, capability: 'vision' }
+        ? { generation: { endpoint: config.textEndpoint, model: config.textModel, apiKey: config.textKey, timeoutMs: config.timeoutMs, thinking: config.thinking }, capability: 'vision' }
         : { capability: 'vision' };
       const response = await fetch('/api/ai/test-connection', { method: 'POST', headers, body: JSON.stringify(body) });
       const result = await response.json();
@@ -150,12 +168,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div className="flex-1 h-full overflow-y-auto p-5 lg:p-7 space-y-6 max-w-4xl mx-auto w-full bg-[#090a0f]">
-      {/* Title */}
-      <div>
-        <h1 className="text-base font-semibold tracking-tight text-white">{t.title}</h1>
-        <p className="text-xs text-zinc-400 mt-1">{t.subtitle}</p>
-      </div>
+    <PageWorkspace title={t.title} subtitle={t.subtitle} width="narrow">
 
       {/* Preferences Section */}
       <div className="bg-[#0e1118] border border-white/[0.07] rounded-lg p-5 space-y-4">
@@ -273,6 +286,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="flex items-center gap-2">
           <label className="text-xs text-zinc-400">Timeout <input type="number" min="1000" max="300000" value={config.timeoutMs} onChange={(e) => setConfig((current) => ({ ...current, timeoutMs: Number(e.target.value) }))} className="studio-input ml-1 w-24 rounded px-2 py-1 text-xs" /></label>
           <label className="text-xs text-zinc-400">Retries <input type="number" min="0" max="5" value={config.retries} onChange={(e) => setConfig((current) => ({ ...current, retries: Number(e.target.value) }))} className="studio-input ml-1 w-16 rounded px-2 py-1 text-xs" /></label>
+          <label className="text-xs text-zinc-400">{lang === 'zh' ? '思考模式' : 'Thinking'} <select data-model-thinking="true" value={config.thinking} onChange={(e) => setConfig((current) => ({ ...current, thinking: e.target.value as 'auto' | 'low' | 'off' }))} className="studio-input ml-1 rounded px-2 py-1 text-xs"><option value="auto">auto</option><option value="low">low</option><option value="off">off</option></select></label>
           <button type="button" onClick={() => void testModelConnection()} disabled={isTestingModel} className="ml-auto px-3 py-1.5 rounded border border-white/10 text-xs text-zinc-200 disabled:opacity-50">{isTestingModel ? (lang === 'zh' ? '测试中…' : 'Testing...') : (lang === 'zh' ? '测试已保存模型连接' : 'Test saved model connection')}</button>
           <button type="button" onClick={() => void saveConfig()} className="px-3 py-1.5 btn-primary rounded text-xs">{lang === 'zh' ? '保存配置' : 'Save configuration'}</button>
         </div>
@@ -326,6 +340,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
+            <span className="text-zinc-400">{lang === 'zh' ? '思考模式' : 'Thinking mode'}</span>
+            <span className="font-mono text-zinc-300">{healthStatus?.thinking ?? 'auto'}</span>
+          </div>
+
+          <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
             <span className="text-zinc-400">{t.webglStatus}</span>
             <span className="font-mono text-emerald-400">Active (WebGL 2.0)</span>
           </div>
@@ -338,6 +357,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </PageWorkspace>
   );
 };

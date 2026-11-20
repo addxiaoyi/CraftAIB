@@ -13,6 +13,7 @@ let upstreamPath = null;
 let upstreamBody = null;
 let probeNeedsForcedCall = false;
 let planOverride = null;
+let builderBugSent = false;
 const plan = planBuilding({ prompt: 'small stone house', seed: 17 });
 const referenceFeatures = analyzeReferencePixels({ width: 48, height: 48 });
 const modelPlan = {
@@ -23,6 +24,30 @@ const modelPlan = {
     material: 'minecraft:stone_bricks', hollow: false, thickness: 1, facing: null, openSides: [], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'structure',
   }] },
 };
+const builderReply = [
+  '<build_planning>A small stone hut with a plank roof and one door.</build_planning>',
+  '<description>smoke hut</description>',
+  '<code>',
+  'function buildCreation(startX, startY, startZ) {',
+  '  safeFill(startX, startY, startZ, startX + 5, startY, startZ + 5, "stone");',
+  '  safeFill(startX, startY + 1, startZ, startX + 5, startY + 3, startZ, "stone");',
+  '  safeFill(startX, startY + 1, startZ + 5, startX + 5, startY + 3, startZ + 5, "stone");',
+  '  safeFill(startX, startY + 1, startZ, startX, startY + 3, startZ + 5, "stone");',
+  '  safeFill(startX + 5, startY + 1, startZ, startX + 5, startY + 3, startZ + 5, "stone");',
+  '  safeFill(startX, startY + 4, startZ, startX + 5, startY + 4, startZ + 5, "oak_planks");',
+  '  safeFill(startX + 2, startY + 1, startZ, startX + 3, startY + 2, startZ, "air");',
+  '  safeSetBlock(startX + 1, startY + 2, startZ, "glass");',
+  '}',
+  '</code>',
+].join('\n');
+const builderBrokenReply = [
+  '<code>',
+  'function buildCreation(startX, startY, startZ) {',
+  '  safeFill(missingStartX, startY, startZ, startX + 3, startY + 3, startZ + 3, "stone");',
+  '}',
+  '</code>',
+].join('\n');
+
 const upstream = createServer(async (request, response) => {
   upstreamAuth = request.headers.authorization;
   upstreamPath = request.url;
@@ -47,6 +72,15 @@ const upstream = createServer(async (request, response) => {
   }
   if (upstreamMode === 'slow') {
     setTimeout(() => { if (!response.destroyed) { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(plan) } }] })); } }, 1800);
+    return;
+  }
+  const isBuilderRequest = upstreamBody?.messages?.some((message) => message?.role === 'system' && typeof message?.content === 'string' && /buildCreation/.test(message.content));
+  if (isBuilderRequest) {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    const broken = upstreamMode === 'builder-bug' && !builderBugSent;
+    if (broken) builderBugSent = true;
+    const content = upstreamMode === 'builder-nocode' ? 'A cozy stone hut with a plank roof and a single door.' : broken ? builderBrokenReply : builderReply;
+    response.end(JSON.stringify({ choices: [{ message: { content } }] }));
     return;
   }
   response.writeHead(200, { 'content-type': 'application/json' });
@@ -140,6 +174,44 @@ try {
   assert.ok(output.generationLog.some((entry) => entry.stage === 'grid_validation' && entry.blocks > 0), 'generation log should report final non-empty BlockGrid validation');
   assert.equal(upstreamAuth, 'Bearer smoke-secret');
   assert.equal(JSON.stringify(output).includes('smoke-secret'), false, 'model credentials must not be included in planner output');
+
+  const builderResponse = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'a small stone hut', mode: 'builder' }) });
+  const builderOutput = await builderResponse.json();
+  assert.equal(builderResponse.status, 200, `builder mode should execute the model-authored script: ${JSON.stringify(builderOutput.error)}`);
+  assert.equal(builderOutput.ok, true);
+  assert.ok(builderOutput.grid.cells.length > 0, 'the BuilderGPT script should produce a non-empty BlockGrid');
+  assert.deepEqual(builderOutput.plan.dimensions, { width: builderOutput.grid.width, height: builderOutput.grid.height, length: builderOutput.grid.length }, 'the synthesized plan dimensions must match the grid');
+  assert.equal(builderOutput.regions.length, 1, 'builder output is a single region');
+  assert.ok(builderOutput.generationLog.some((entry) => entry.stage === 'builder_execute' && entry.ok), 'generation log should record script execution');
+  assert.ok(builderOutput.generationLog.some((entry) => entry.stage === 'grid_validation' && entry.blocks > 0), 'generation log should validate the non-empty BlockGrid');
+  assert.equal(Array.isArray(upstreamBody.tools), false, 'the BuilderGPT request must not offer tool calls');
+  assert.equal(upstreamBody.temperature, 1, 'the BuilderGPT request uses the upstream temperature');
+  assert.match(JSON.stringify(upstreamBody.messages), /expert Minecraft builder/, 'the model receives the BuilderGPT system prompt');
+  const streamedBuilder = await fetch(`${base}/api/ai/structure-plan?stream=1`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ prompt: 'a small stone hut', mode: 'builder' }) });
+  const streamedBuilderText = await streamedBuilder.text();
+  const streamedBuilderData = /^event: result\ndata: (.+)$/m.exec(streamedBuilderText)?.[1];
+  assert.ok(streamedBuilderData, 'builder streams should finish with a result event');
+  const streamedBuilderPayload = JSON.parse(streamedBuilderData).payload;
+  assert.ok(streamedBuilderPayload.grid.cells.length > 0, 'the streamed result payload must carry the BlockGrid for the worker');
+
+  upstreamMode = 'builder-bug';
+  builderBugSent = false;
+  const repairedResponse = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'a small stone hut', mode: 'builder' }) });
+  const repairedOutput = await repairedResponse.json();
+  assert.equal(repairedResponse.status, 200, `builder should repair a failed script: ${JSON.stringify(repairedOutput.error)}`);
+  assert.ok(repairedOutput.grid.cells.length > 0, 'the repaired script should produce blocks');
+  assert.ok(repairedOutput.generationLog.some((entry) => entry.stage === 'builder_retry' && entry.ok === false), 'generation log should record the repair turn');
+  assert.match(JSON.stringify(upstreamBody.messages), /missingStartX'? is not defined/, 'the repair request sends the execution error back to the model');
+  assert.match(JSON.stringify(upstreamBody.messages), /corrected <code> buildCreation script/, 'the repair request asks for a corrected script');
+  upstreamMode = 'success';
+  builderBugSent = false;
+
+  upstreamMode = 'builder-nocode';
+  const noCodeReply = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'a small stone hut', mode: 'builder' }) });
+  assert.equal(noCodeReply.status, 422, 'a reply without a code block must be rejected');
+  assert.equal((await noCodeReply.json()).error.code, 'BUILDER_REPLY_INVALID');
+  upstreamMode = 'success';
+
   planOverride = {
     ...modelPlan,
     components: [],
@@ -153,13 +225,44 @@ try {
   assert.equal(referenceOutput.plan.inference.detectedType, 'stone castle', 'the final plan must retain the model visual identification');
   assert.ok(upstreamBody.messages.some((message) => message.role === 'user' && message.content?.some?.((part) => part.type === 'image_url')), 'the original image must remain attached through the construction conversation');
   assert.ok(referenceOutput.plan.dimensions.width < 256 || referenceOutput.plan.dimensions.height < 256 || referenceOutput.plan.dimensions.length < 256);
+  const referenceBuilderMode = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'A castle in the reference image', referenceImage: { dataUrl: 'data:image/png;base64,aGVsbG8=', referenceFeatures }, constraints: { width: 256, height: 256, length: 256, sizeMode: 'envelope', includeInterior: false }, mode: 'builder' }) });
+  const referenceBuilderOutput = await referenceBuilderMode.json();
+  assert.equal(referenceBuilderMode.status, 200, `reference images must keep the plan path: ${JSON.stringify(referenceBuilderOutput.error)}`);
+  assert.equal(referenceBuilderOutput.generationLog.some((entry) => entry.stage === 'builder_request'), false, 'a reference image must ignore mode=builder');
   planOverride = null;
+  const detailedFixture = planBuilding({ prompt: 'small furnished stone house', constraints: { floors: 2, width: 24, length: 20, detailLevel: 4, includeInterior: true } });
+  planOverride = detailedFixture;
   const detailedPlan = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small furnished stone house', constraints: { floors: 2, width: 24, length: 20, detailLevel: 4, includeInterior: true } }) });
   const detailedOutput = await detailedPlan.json();
-  assert.equal(detailedPlan.status, 200, `high-detail plans should pass only after real interior voxels are generated: ${JSON.stringify(detailedOutput.error)}`);
+  assert.equal(detailedPlan.status, 200, `high-detail plans whose declared rooms contain real voxels should pass: ${JSON.stringify(detailedOutput.error)}`);
   const interiorAudit = detailedOutput.generationLog.find((entry) => entry.stage === 'grid_validation');
   assert.ok(interiorAudit?.interiorBlocks >= 3, 'final server audit should count actual voxels inside the room bounds');
-  assert.ok(interiorAudit?.interiorLights >= 1, 'final server audit should find an actual interior light block');
+  const lanternHouse = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'a lantern-lit stone house', constraints: { floors: 2, width: plan.dimensions.width, height: plan.dimensions.height, length: plan.dimensions.length, detailLevel: 4, includeInterior: true } }) });
+  const lanternHouseOutput = await lanternHouse.json();
+  assert.equal(lanternHouse.status, 200, `a building brief that merely mentions a lantern must still plan a building: ${JSON.stringify(lanternHouseOutput.error)}`);
+  const lanternHouseContent = upstreamBody.messages.find((message) => message.role === 'user')?.content ?? '';
+  const lanternHouseRequest = Array.isArray(lanternHouseContent) ? lanternHouseContent.map((part) => part.text ?? '').join('\n') : String(lanternHouseContent);
+  assert.doesNotMatch(lanternHouseRequest, /OBJECT reconstruction, not a habitable building/i, 'a lantern-lit house must not be pushed into object-only mode');
+  assert.match(lanternHouseRequest, new RegExp(`${plan.dimensions.width} x ${plan.dimensions.height} x ${plan.dimensions.length} blocks \\(hard dimensions chosen by the user\\)`), 'the hard dimensions chosen by the user must still reach the model');
+  assert.doesNotMatch(lanternHouseRequest, /fill the requested footprint/i, 'the system must not mandate filling the requested footprint');
+  const lanternHouseAudit = lanternHouseOutput.generationLog.find((entry) => entry.stage === 'grid_validation');
+  assert.ok(lanternHouseAudit?.interiorBlocks >= 3, 'a high-detail lantern-lit house must still be gated by the interior voxel rule');
+  assert.equal(lanternHouseOutput.plan.geometry.parts.some((part) => part.id === 'server-lantern-light-core'), false, 'a lantern-lit house must not receive a forced light core');
+  planOverride = { ...modelPlan, rooms: [{ id: 'empty-hall', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: 20, height: 3, length: 16 }], geometry: { parts: [{ id: 'solid-room-fill', type: 'box', x: 2, y: 1, z: 2, width: 20, height: 3, length: 16, material: 'minecraft:stone_bricks', hollow: false, thickness: 1, facing: null, openSides: [], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'structure' }] } };
+  const solidInterior = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small furnished stone house', constraints: { floors: 2, width: 24, length: 20, detailLevel: 4, includeInterior: true } }) });
+  assert.equal(solidInterior.status, 422, 'a solid mass that fills its declared room is not an interior');
+  assert.match((await solidInterior.json()).error.message, /declares an interior/i);
+  planOverride = { ...detailedFixture, rooms: [], regions: [{ name: 'villa-body', role: 'main structure', x: 0, y: 0, z: 0, width: 20, height: 9, length: 18 }, { name: 'roof', role: 'roof', x: 0, y: 9, z: 0, width: 20, height: 1, length: 18 }], geometry: { parts: [{ id: 'room-shell', type: 'shell', x: 1, y: 1, z: 1, width: 16, height: 5, length: 14, material: 'minecraft:stone_bricks', hollow: true, thickness: 1, facing: null, openSides: ['top', 'bottom'], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'room' }, { id: 'table', type: 'box', x: 8, y: 2, z: 8, width: 2, height: 1, length: 2, material: 'minecraft:oak_planks', hollow: false, thickness: 1, facing: null, openSides: [], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'furniture' }] } };
+  const roomPartPlan = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small furnished stone house', constraints: { floors: 2, width: 24, length: 20, detailLevel: 4, includeInterior: true } }) });
+  const roomPartOutput = await roomPartPlan.json();
+  assert.equal(roomPartPlan.status, 200, `a furnished plan whose rooms are declared as geometry parts must be auditable: ${JSON.stringify(roomPartOutput.error)}`);
+  const roomPartAudit = roomPartOutput.generationLog.find((entry) => entry.stage === 'grid_validation');
+  assert.ok(roomPartAudit?.interiorBlocks >= 3, 'the audit must fall back to interior-purposed geometry parts when no room-named region exists');
+  planOverride = { ...modelPlan, rooms: [{ id: 'empty-hall', type: 'hall', floor: 0, x: 2, y: 1, z: 2, width: 20, height: 3, length: 16 }], geometry: { parts: [{ id: 'hollow-room-shell', type: 'shell', x: 2, y: 1, z: 2, width: 20, height: 3, length: 16, material: 'minecraft:stone_bricks', hollow: true, thickness: 1, facing: null, openSides: ['top', 'bottom'], roofStyle: 'flat', ridgeAxis: 'x', purpose: 'structure' }] } };
+  const hollowInterior = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'small furnished stone house', constraints: { floors: 2, width: 24, length: 20, detailLevel: 4, includeInterior: true } }) });
+  assert.equal(hollowInterior.status, 422, 'a high-detail plan that declares rooms but leaves their voxels empty must be rejected');
+  assert.match((await hollowInterior.json()).error.message, /declares an interior/i);
+  planOverride = null;
   planOverride = { ...plan, regions: plan.regions.map((region) => ({ ...region, name: 'ornamental roof tassel', role: 'roof decoration' })) };
   const referenceLantern = await fetch(`${base}/api/ai/structure-plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: '灯笼', referenceImage: { dataUrl: 'data:image/png;base64,aGVsbG8=', referenceFeatures }, constraints: { detailLevel: 4, includeInterior: true, sizeMode: 'envelope' } }) });
   assert.equal(referenceLantern.status, 422, 'the tool fixture must not pass an unrelated house plan off as a reference lantern');

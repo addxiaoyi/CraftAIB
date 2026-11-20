@@ -1,6 +1,6 @@
 import type { BlockGrid, EngineEvent, EngineTask } from '@craftaib/core';
 import { compareReferenceFrontMask, analyzeReferencePixels, planBuilding, planBuildingFromReference, planBuildingWithModel, planBuildingWithVision, structurePlanToGrid, structurePlanToRegionGrids } from '../../ai-planner/dist/index.js';
-import { analyzeMaterials, applyGridEdit, countMaterials, createGrid, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
+import { stringifyEngineJson, analyzeMaterials, applyGridEdit, countMaterials, createGrid, mergeScenes, parseCheckpoint, renderCutaway, sceneToGrid, setLayerOffset, setLayerVisibility, toggleLayerVisibility, renderExterior, renderFloor, serializeCheckpoint, validateGrid } from '@craftaib/core';
 import { generateMapArt, serializeLitematica, serializeLitematicaRegions } from '../../cartographer-adapter/dist/index.js';
 import { generateWaxMapArt } from '../../waxmapart-adapter/dist/index.js';
 import { createHtmlSceneViewer, createHtmlViewer, createTexturedHtmlViewer, defaultLDrawColorBlocks, generateStructure, geoJsonToScene, geoPoisToBlockGrid, geoSceneToBlockGrid, legoSceneToBlockGrid, ldrawToBlockGrid, ldrawToScene, loadLegoModel, parseLDraw, parseLitematicaBytes, parseLitematicaDocumentBytes, parseLitematicaPlacements, parseSchematicBytes, searchLegoCatalog, serializeGlb, serializeSchematic, summarizeLitematicaDocument } from '../../craftmatic-adapter/dist/index.js';
@@ -60,7 +60,7 @@ export function createCoreRunner(): EngineRunner {
             referenceFeatures: input.referenceImage.referenceFeatures ?? await analyzeReferenceImage(input.referenceImage),
           }
         : undefined;
-      const request = { prompt: input.prompt, seed: input.seed, constraints: input.constraints, referenceImage };
+      const request = { prompt: input.prompt, seed: input.seed, constraints: input.constraints, referenceImage, mode: input.mode };
       emit({ type: 'progress', taskId: task.id, value: 0.12, stage: referenceImage ? 'Uploading reference image to unified model' : 'Waiting for building model plan' });
       const response = await fetch('/api/ai/structure-plan?stream=1', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify(request), signal });
       const { payload, generationLog } = await readPlanningEvents(response, task.id, emit, signal);
@@ -70,9 +70,9 @@ export function createCoreRunner(): EngineRunner {
       }
       emit({ type: 'progress', taskId: task.id, value: 0.72, stage: 'Building deduplicated voxel grid' });
       const plan = payload.plan;
-      const grid = structurePlanToGrid(plan);
+      const grid = payload.grid ?? structurePlanToGrid(plan);
       emit({ type: 'progress', taskId: task.id, value: 0.88, stage: `BlockGrid ready: ${grid.cells.length.toLocaleString()} blocks` });
-      const regions = plan.regions.map((region: any) => ({ name: region.name, position: { x: region.x, y: region.y, z: region.z }, size: { x: region.width, y: region.height, z: region.length } }));
+      const regions = payload.regions ?? plan.regions.map((region: any) => ({ name: region.name, position: { x: region.x, y: region.y, z: region.z }, size: { x: region.width, y: region.height, z: region.length } }));
       emit({ type: 'progress', taskId: task.id, value: 0.96, stage: `Loading Viewer: ${regions.length} Regions` });
       return { plan, grid, regions, source: 'ai', generationLog };
     }
@@ -108,7 +108,8 @@ export function createCoreRunner(): EngineRunner {
       emit({ type: 'progress', taskId: task.id, value: 0.2, stage: `encoding ${format}` });
       if (signal.aborted) throw new Error('Task cancelled.');
       let output: unknown;
-      if (format === 'schem') output = await serializeSchematic(grid);
+      if (format === 'json') output = stringifyEngineJson(grid, 2);
+      else if (format === 'schem') output = await serializeSchematic(grid);
       else if (format === 'litematic') output = await serializeLitematica(grid, (task.options as any));
       else if (format === 'glb') output = serializeGlb(grid);
       else if (format === 'html') output = createHtmlViewer(grid);

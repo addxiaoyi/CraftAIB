@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzeReferencePixels, attachReferenceFeatures, auditConstruction, compareReferenceFrontMask, createLitematicaPlannerInstruction, planBuilding, planBuildingWithModel, referenceMaterialColorFeedback, structurePlanJsonSchema, structurePlanToGrid, summarizeInteriorVoxelization } from '../packages/ai-planner/dist/index.js';
+import { analyzeReferencePixels, attachReferenceFeatures, auditConstruction, compareReferenceFrontMask, createLitematicaPlannerInstruction, lanternChamber as findLanternChamber, planBuilding, planBuildingWithModel, referenceMaterialColorFeedback, structurePlanJsonSchema, structurePlanToGrid, summarizeInteriorVoxelization } from '../packages/ai-planner/dist/index.js';
 import { serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
 import { parseLitematicaDocumentBytes } from '../packages/craftmatic-adapter/dist/index.js';
 import { referenceSilhouetteFeedback } from '../packages/ai-planner/dist/vision.js';
@@ -75,6 +75,28 @@ await assert.rejects(
   }),
   (error) => error?.code === 'REFERENCE_ANALYSIS_REQUIRED',
 );
+
+// Real models describe parts verbosely. Over-long labels are trimmed instead of rejecting
+// the whole analysis, which previously trapped the loop in analyze_reference_image retries.
+let verboseAnalysisAccepted = false;
+const longPart = 'a long descriptive component label with decorative detail '.repeat(3);
+await assert.rejects(
+  planBuildingWithModel({ prompt: 'Use this reference image.', referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures } }, {
+    endpoint: 'http://mock.invalid',
+    maxRetries: 0,
+    fetcher: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const calledTools = body.messages.flatMap((message) => message.tool_calls ?? []).map((call) => call.function.name);
+      if (!calledTools.includes('analyze_reference_image')) {
+        const call = referenceAnalysisCall({ visibleParts: ['main body', longPart, `${longPart} extra`], evidence: [`${longPart}${longPart}`] });
+        return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'verbose-analysis', type: 'function', function: call }] } }] }), { status: 200 });
+      }
+      verboseAnalysisAccepted = !body.messages.some((message) => message.role === 'tool' && /List 2 to 12 specific visible components/.test(String(message.content)));
+      throw new Error('stop-after-analysis');
+    },
+  }),
+);
+assert.equal(verboseAnalysisAccepted, true, 'over-long component labels must be trimmed instead of rejecting the analysis');
 const referencePlan = attachReferenceFeatures(planBuilding({ prompt: 'small stone house', constraints: { width: 32, height: 46, length: 24, floors: 4 } }), referenceFeatures);
 assert.equal(referencePlan.inference?.source, 'vision-model');
 const modelGeometry = {
@@ -149,6 +171,127 @@ const missingColorFeedback = referenceMaterialColorFeedback(redReferenceFeatures
 assert.match(missingColorFeedback ?? '', /red covers 70%.*only 0%/i, 'reference-dominant colors missing from the build must be rejected with measured proportions');
 const redColorCells = [...Array.from({ length: 70 }, () => ({ block: { id: 'minecraft:red_concrete' } })), ...Array.from({ length: 30 }, () => ({ block: { id: 'minecraft:yellow_concrete' } }))];
 assert.equal(referenceMaterialColorFeedback(redReferenceFeatures, redColorCells), undefined, 'a build preserving dominant reference color areas should pass color coverage');
+
+const glazingPixels = new Uint8Array(32 * 32 * 4);
+for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) {
+  const insideSubject = x >= 4 && x < 28 && y >= 4 && y < 28;
+  const insidePanel = x >= 10 && x < 22 && y >= 8 && y < 22;
+  const shade = insidePanel ? 240 : insideSubject ? 48 : 4;
+  const offset = (y * 32 + x) * 4;
+  glazingPixels[offset] = shade;
+  glazingPixels[offset + 1] = shade;
+  glazingPixels[offset + 2] = shade;
+  glazingPixels[offset + 3] = 255;
+}
+const glazingFeatures = analyzeReferencePixels({ width: 32, height: 32, pixels: glazingPixels });
+const glazingAnalysis = {
+  object: 'ornamental lantern', category: 'object', silhouette: 'square hanging case',
+  visibleParts: ['large white luminous glass panels'], symmetry: 'bilateral', view: 'three-quarter',
+  depthCues: ['visible side wall'], topCues: ['ornamental crown'], negativeSpaces: ['open panels'],
+  materialRegions: ['luminous white glass panels'], evidence: ['large white panels'], inferences: ['rear depth'],
+};
+const glazingPlan = {
+  ...modelGeometry,
+  name: 'Reference panel coverage fixture',
+  type: 'decorative_object',
+  dimensions: { width: 16, height: 16, length: 8 },
+  floors: 1,
+  rooms: [],
+  regions: [{ name: 'body', role: 'structure', x: 0, y: 0, z: 0, width: 16, height: 16, length: 8 }],
+  referenceFacing: 'z-min',
+  referenceFeatures: glazingFeatures,
+  geometry: { parts: [
+    { ...modelGeometry.geometry.parts[0], id: 'case_frame', type: 'box', x: 0, y: 0, z: 1, width: 16, height: 16, length: 7, material: 'minecraft:dark_oak_planks', purpose: 'structure' },
+    { ...modelGeometry.geometry.parts[0], id: 'white_luminous_panels', type: 'surface', x: 4, y: 3, z: 0, width: 8, height: 10, length: 1, material: 'minecraft:dark_oak_planks', purpose: 'opening' },
+  ] },
+};
+const missingGlassGrid = structurePlanToGrid(glazingPlan);
+const missingGlassAudit = auditConstruction(glazingPlan, missingGlassGrid.cells, glazingAnalysis);
+assert.match(missingGlassAudit.revisions.join(' '), /bright panel coverage is too low/i, 'a dark face must fail when the reference has large luminous panels');
+assert.equal(missingGlassAudit.material.referenceCoverage?.brightPanelCoverage, 0);
+assert.equal(missingGlassAudit.projections.find((audit) => audit.view === 'front')?.materials, 0);
+
+const glazedPlan = { ...glazingPlan, geometry: { parts: glazingPlan.geometry.parts.map((part) => part.id === 'white_luminous_panels' ? { ...part, material: 'minecraft:white_stained_glass_pane' } : part) } };
+const glazedGrid = structurePlanToGrid(glazedPlan);
+const glazedAudit = auditConstruction(glazedPlan, glazedGrid.cells, glazingAnalysis);
+assert.ok((glazedAudit.material.referenceCoverage?.brightPanelCoverage ?? 0) >= 0.5, 'front-facing glass must cover at least half of the bright panel pixels');
+assert.equal(glazedAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false);
+
+const noBrightFeatures = { ...glazingFeatures, colorMask: glazingFeatures.colorMask.map(() => 0), colorPalette: [{ r: 48, g: 48, b: 48 }] };
+const noBrightAudit = auditConstruction({ ...glazingPlan, referenceFeatures: noBrightFeatures }, missingGlassGrid.cells, glazingAnalysis);
+assert.equal(noBrightAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false, 'dark references must not require white glazing');
+
+const ordinaryDarkPlan = { ...glazingPlan, geometry: { parts: glazingPlan.geometry.parts.map((part) => ({ ...part, id: part.id === 'white_luminous_panels' ? 'trim' : part.id, purpose: part.id === 'white_luminous_panels' ? 'decoration' : part.purpose })) } };
+const ordinaryDarkAudit = auditConstruction(ordinaryDarkPlan, structurePlanToGrid(ordinaryDarkPlan).cells, {
+  ...glazingAnalysis, visibleParts: ['square body', 'wood frame'], materialRegions: ['dark wood'],
+});
+assert.equal(ordinaryDarkAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false, 'dark references without a declared panel must not be forced to add glass');
+
+const panelReference = {
+  prompt: 'Reconstruct the ornamental lantern shown in the reference.',
+  constraints: { includeInterior: false },
+  referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures: glazingFeatures },
+};
+const toolCall = (name, args) => ({ name, arguments: JSON.stringify(args) });
+const buildCall = (plan) => {
+  const { referenceFeatures: _features, ...geometry } = plan;
+  return toolCall('build_voxel_structure', { plan: geometry });
+};
+const inspectCalls = (buildId) => [
+  toolCall('build_volume_layer', { buildId }),
+  ...['front', 'side', 'rear', 'top'].map((view) => toolCall('inspect_projection', { buildId, view })),
+  toolCall('inspect_interior', { buildId }),
+  toolCall('inspect_voxel_structure', { buildId }),
+  toolCall('review_reference_structure', { buildId, matchesReference: true, mismatches: [], summary: 'The silhouette matches the reference.' }),
+];
+
+async function runPanelReview(nextCalls, replies, events = []) {
+  const firstBuild = 'build-3-1';
+  const sequence = [
+    referenceAnalysisCall({ ...glazingAnalysis, visibleParts: ['hanging case', ...glazingAnalysis.visibleParts] }),
+    toolCall('get_minecraft_blocks', { category: 'all' }),
+    buildCall(glazingPlan),
+    ...inspectCalls(firstBuild),
+    toolCall('finish_structure', { buildId: firstBuild }),
+    ...nextCalls,
+  ];
+  let turn = 0;
+  return planBuildingWithModel(panelReference, {
+    endpoint: 'http://mock.invalid',
+    maxRetries: 0,
+    onToolEvent: (event) => events.push(event),
+    fetcher: async (_url, init) => {
+      const { messages } = JSON.parse(init.body);
+      if (turn > 0) {
+        const prior = messages.findLast((message) => message.role === 'tool');
+        replies.push({ name: sequence[turn - 1].name, ...JSON.parse(prior.content) });
+      }
+      const call = sequence[turn];
+      assert.ok(call, `unexpected vision model turn ${turn + 1}`);
+      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `panels-${++turn}`, type: 'function', function: call }] } }] }), { status: 200 });
+    },
+  });
+}
+
+const blockedPanelReplies = [];
+await assert.rejects(
+  runPanelReview(Array.from({ length: 3 }, () => buildCall(glazingPlan)), blockedPanelReplies),
+  (error) => error?.code === 'REFERENCE_GLASS_COVERAGE_TOO_LOW' && /bright panel coverage is too low/i.test(error.message),
+  'repeated builds must not bypass glass coverage through silhouette-only reuse or salvage',
+);
+const badPanelBuild = blockedPanelReplies.find((reply) => reply.name === 'build_voxel_structure');
+assert.ok(badPanelBuild?.ok && badPanelBuild.referenceMatch?.silhouette > 0.9, 'the deficient panel fixture must pass silhouette before being rejected for its material');
+const badPanelReview = blockedPanelReplies.find((reply) => reply.name === 'review_reference_structure');
+assert.equal(badPanelReview?.ok, false);
+assert.match(badPanelReview.requiredRevision?.join(' ') ?? '', /bright panel coverage is too low/i);
+assert.equal(blockedPanelReplies.find((reply) => reply.name === 'finish_structure')?.ok, false, 'model approval alone must not finalize the deficient build');
+
+const correctedPanelEvents = [];
+const correctedPanelPlan = await runPanelReview([buildCall(glazedPlan), ...inspectCalls('build-13-2')], [], correctedPanelEvents);
+assert.deepEqual(correctedPanelEvents.filter((event) => event.stage === 'tool_result' && event.tool === 'review_reference_structure').map((event) => event.ok), [false, true]);
+const correctedPanelCells = structurePlanToGrid(correctedPanelPlan).cells;
+assert.ok(correctedPanelCells.some(({ block }) => block.id === 'minecraft:white_stained_glass_pane'));
+assert.ok((correctedPanelPlan.referenceValidation?.silhouette ?? 0) > 0.9, 'a material-only correction must preserve the accepted silhouette');
 
 let rejectedBuildCalls = 0;
 const failedBuildEvents = [];
@@ -227,34 +370,65 @@ let sawDuplicateGeometryFeedback = false;
 const narrowReferenceMask = Array.from({ length: referenceFeatures.maskWidth * referenceFeatures.maskHeight }, () => 0);
 for (let y = 5; y < 28; y += 1) narrowReferenceMask[y * referenceFeatures.maskWidth + 15] = 1;
 const narrowReferenceFeatures = { ...referenceFeatures, frontMask: narrowReferenceMask };
-await assert.rejects(
-  planBuildingWithModel({ prompt: 'Reconstruct this lantern.', constraints: { includeInterior: false }, referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures: narrowReferenceFeatures } }, {
-    endpoint: 'http://mock.invalid',
-    maxRetries: 0,
-    fetcher: async (_url, init) => {
-      const body = JSON.parse(init.body);
-      const calledTools = body.messages.flatMap((message) => message.tool_calls ?? []).map((call) => call.function.name);
-      const lastTool = body.messages.findLast((message) => message.role === 'tool');
-      if (lastTool && /identical to previous build/.test(String(lastTool.content))) sawDuplicateGeometryFeedback = true;
-      const nextCall = !calledTools.includes('analyze_reference_image')
-        ? referenceAnalysisCall()
-        : !calledTools.includes('get_minecraft_blocks')
-          ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
-        : !calledTools.includes('build_voxel_structure')
-          ? { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: modelGeometry }) }
-          : !calledTools.includes('inspect_voxel_structure')
-            ? { name: 'inspect_voxel_structure', arguments: '{"buildId":"build-3-1"}' }
-            : (duplicateBuildCalls += 1, { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: modelGeometry }) });
-      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `repeat-${calledTools.length}-${duplicateBuildCalls}`, type: 'function', function: nextCall }] } }] }), { status: 200 });
-    },
-  }),
-  (error) => error?.code === 'BUILD_VALIDATION_REPEATED' && /identical to previous build/i.test(error.message),
-);
+const salvagedDuplicatePlan = await planBuildingWithModel({ prompt: 'Reconstruct this lantern.', constraints: { includeInterior: false }, referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures: narrowReferenceFeatures } }, {
+  endpoint: 'http://mock.invalid',
+  maxRetries: 0,
+  fetcher: async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const calledTools = body.messages.flatMap((message) => message.tool_calls ?? []).map((call) => call.function.name);
+    const lastTool = body.messages.findLast((message) => message.role === 'tool');
+    if (lastTool && /identical to previous build/.test(String(lastTool.content))) sawDuplicateGeometryFeedback = true;
+    const nextCall = !calledTools.includes('analyze_reference_image')
+      ? referenceAnalysisCall()
+      : !calledTools.includes('get_minecraft_blocks')
+        ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
+      : !calledTools.includes('build_voxel_structure')
+        ? { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: modelGeometry }) }
+        : !calledTools.includes('inspect_voxel_structure')
+          ? { name: 'inspect_voxel_structure', arguments: '{"buildId":"build-3-1"}' }
+          : (duplicateBuildCalls += 1, { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: modelGeometry }) });
+    return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `repeat-${calledTools.length}-${duplicateBuildCalls}`, type: 'function', function: nextCall }] } }] }), { status: 200 });
+  },
+});
 assert.equal(duplicateBuildCalls, 3, 'the model must not spend the full turn budget repeating an unchanged 3D plan');
 assert.equal(sawDuplicateGeometryFeedback, true, 'a repeated plan must receive its previous silhouette diagnostics and a request to change geometry');
+assert.match(salvagedDuplicatePlan.notes.at(-1), /closest built structure/, 'a looping model must return its closest built structure instead of an empty failure');
+assert.ok((compareReferenceFrontMask(salvagedDuplicatePlan, structurePlanToGrid(salvagedDuplicatePlan).cells)?.silhouette ?? 0) < 0.6, 'a salvaged structure must not be presented as passing the reference gates');
+
+// A repeated plan that already meets the reference gates must be reused instead of
+// discarding a passing build. The server re-prompts once, then finalizes the earlier build.
+const squarePassingPlan = {
+  ...modelGeometry,
+  geometry: { parts: [{ ...modelGeometry.geometry.parts[0], width: 12, height: 12 }] },
+};
+const passingReuseMessages = [];
+let passingDuplicateBuilds = 0;
+const reusedPlan = await planBuildingWithModel({ prompt: 'Reconstruct this square keep.', constraints: { includeInterior: false }, referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures: redReferenceFeatures } }, {
+  endpoint: 'http://mock.invalid',
+  maxRetries: 0,
+  fetcher: async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const calledTools = body.messages.flatMap((message) => message.tool_calls ?? []).map((call) => call.function.name);
+    const lastTool = body.messages.findLast((message) => message.role === 'tool');
+    if (lastTool && /already exists as build-3-1/.test(String(lastTool.content))) passingReuseMessages.push(String(lastTool.content));
+    const nextCall = !calledTools.includes('analyze_reference_image')
+      ? referenceAnalysisCall()
+      : !calledTools.includes('get_minecraft_blocks')
+        ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
+        : (passingDuplicateBuilds += 1, { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: squarePassingPlan }) });
+    return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `reuse-${passingDuplicateBuilds}-${calledTools.length}`, type: 'function', function: nextCall }] } }] }), { status: 200 });
+  },
+});
+assert.equal(passingDuplicateBuilds, 3, 'a passing duplicate is reused once, then finalized instead of rebuilding forever');
+assert.equal(passingReuseMessages.length, 1, 'the model must be told the passing build already exists before finalization');
+assert.deepEqual(reusedPlan.dimensions, squarePassingPlan.dimensions);
+assert.ok((reusedPlan.referenceValidation?.silhouette ?? 0) > 0.9, 'finalized reference plans must expose their measured silhouette to the UI');
+assert.match(reusedPlan.notes.at(-1), /Repeated identical geometry/, 'finalization must record that the earlier passing build was kept');
 
 const regionOnlyFailures = [];
 let regionOnlyBuilds = 0;
+// The heuristic planner now always emits typed geometry.parts, so a label-only plan must be constructed explicitly.
+const regionOnlyPlan = { ...invalidDimensionsPlan, geometry: undefined };
 await assert.rejects(
   planBuildingWithModel({ prompt: 'Build from this reference image.', referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures } }, {
     endpoint: 'http://mock.invalid',
@@ -267,7 +441,7 @@ await assert.rejects(
         ? referenceAnalysisCall()
         : !calledTools.includes('get_minecraft_blocks')
           ? { name: 'get_minecraft_blocks', arguments: '{"category":"all"}' }
-          : (regionOnlyBuilds += 1, { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: invalidDimensionsPlan }) });
+          : (regionOnlyBuilds += 1, { name: 'build_voxel_structure', arguments: JSON.stringify({ plan: regionOnlyPlan }) });
       return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `region-only-${calledTools.length}`, type: 'function', function: functionCall }] } }] }), { status: 200 });
     },
   }),
@@ -348,6 +522,8 @@ const lanternReferenceFeatures = {
   ...referenceFeatures,
   subjectBounds: { left: lanternLeft / lanternWidth, top: lanternTop / lanternHeight, right: lanternRight / lanternWidth, bottom: lanternBottom / lanternHeight },
   frontMask: lanternMask,
+  colorMask: lanternMask.map(() => 0),
+  colorPalette: [{ r: 48, g: 48, b: 48 }],
 };
 const calledLanternTools = new Set();
 let lanternProjectionCount = 0;
@@ -386,12 +562,27 @@ const litLantern = await planBuildingWithModel({
 assert.ok(litLantern.geometry.parts.some((part) => part.id === 'generated-lantern-light-core' && part.material === 'minecraft:sea_lantern'));
 const litLanternGrid = structurePlanToGrid(litLantern);
 assert.ok(litLanternGrid.cells.some((cell) => cell.block.id === 'minecraft:sea_lantern' && cell.x > lanternChamber.x && cell.x < lanternChamber.x + lanternChamber.width - 1 && cell.y > lanternChamber.y && cell.y < lanternChamber.y + lanternChamber.height - 1 && cell.z > lanternChamber.z && cell.z < lanternChamber.z + lanternChamber.length - 1), 'a high-detail lantern must contain an actual light block inside its chamber');
+assert.deepEqual(findLanternChamber({ regions: [{ name: '灯笼内腔', role: 'interior', x: 0, y: 0, z: 0, width: 5, height: 5, length: 5 }, { name: 'body', role: 'main', x: 0, y: 0, z: 0, width: 9, height: 9, length: 6 }] }), { name: '灯笼内腔', role: 'interior', x: 0, y: 0, z: 0, width: 5, height: 5, length: 5 }, 'the shared chamber helper must prefer a named chamber so the injector and the audit agree');
 const lanternInteriorAudit = summarizeInteriorVoxelization(litLantern, litLanternGrid.cells, '灯笼');
 assert.ok(lanternInteriorAudit.occupiedBlocks >= 1 && lanternInteriorAudit.lightBlocks >= 1, 'lantern interior metrics must inspect the chamber instead of unrelated room labels');
 const lanternLitematic = await serializeLitematica(litLanternGrid, { name: litLantern.name });
 const lanternDocument = await parseLitematicaDocumentBytes(lanternLitematic);
 assert.equal(lanternDocument.regions.reduce((total, region) => total + region.cells.length, 0), litLanternGrid.cells.length);
 assert.ok(lanternDocument.regions.some((region) => region.cells.some((cell) => cell.block.id === 'minecraft:sea_lantern')), 'the interior light core must survive Litematic export and re-import');
+const lampCityPlan = { ...planBuilding({ prompt: 'a lamp-lit harbor city' }), type: 'city', name: 'lamp-lit harbor city' };
+const lampCityOutput = await planBuildingWithModel({ prompt: 'a lamp-lit harbor city', constraints: { detailLevel: 4, includeInterior: true } }, {
+  endpoint: 'http://mock.invalid',
+  maxRetries: 0,
+  fetcher: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(lampCityPlan) } }] }), { status: 200 }),
+});
+assert.equal(lampCityOutput.geometry.parts.some((part) => part.id === 'generated-lantern-light-core'), false, 'a city brief that merely mentions a lamp must not receive a forced light core');
+const lanternOnlyPlan = { ...planBuilding({ prompt: 'hanging lantern' }), type: 'decorative_object', name: 'ornate chandelier lamp lantern' };
+const lanternOnlyOutput = await planBuildingWithModel({ prompt: 'ornate chandelier', constraints: { detailLevel: 4, includeInterior: true } }, {
+  endpoint: 'http://mock.invalid',
+  maxRetries: 0,
+  fetcher: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(lanternOnlyPlan) } }] }), { status: 200 }),
+});
+assert.ok(lanternOnlyOutput.geometry.parts.some((part) => part.id === 'generated-lantern-light-core' && part.material === 'minecraft:sea_lantern'), 'chandelier, lamp and lantern identities must still receive their light core');
 await assert.rejects(
   planBuildingWithModel({ prompt: 'tower' }, {
     endpoint: 'http://mock.invalid',

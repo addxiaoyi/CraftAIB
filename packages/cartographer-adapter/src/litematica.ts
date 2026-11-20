@@ -1,4 +1,5 @@
 import type { BlockGrid } from '@craftaib/core';
+import { normalizeState, validateGrid } from '@craftaib/core';
 
 export type LitematicaSchema = { name: string; value: Record<string, any> };
 export type LitematicaVec3 = { x: number; y: number; z: number };
@@ -6,15 +7,22 @@ export type LitematicaRegionInput = { name: string; grid: BlockGrid; position?: 
 export type LitematicaOptions = { name?: string; author?: string; description?: string; version?: number; minecraftDataVersion?: number; originalOrigin?: LitematicaVec3; regions?: LitematicaRegionInput[] };
 
 export function generateLitematicaSchema(grid: BlockGrid, options: LitematicaOptions = {}): LitematicaSchema {
+  validateGrid(grid);
   if (!grid.cells.length && !options.regions?.length) throw new Error('Cannot generate Litematica from an empty grid.');
-  const regions = options.regions?.length ? options.regions : [{ name: 'CraftAIB', grid, position: { x: 0, y: 0, z: 0 } }];
-  return generateLitematicaDocumentSchema(regions, options);
+  const regions = options.regions?.length ? options.regions : [{ name: 'CraftAIB', grid, position: grid.origin }];
+  return generateLitematicaDocumentSchema(regions, { originalOrigin: grid.origin, ...options });
 }
 
 export function generateLitematicaDocumentSchema(regions: LitematicaRegionInput[], options: LitematicaOptions = {}): LitematicaSchema {
-  if (!regions.length) throw new Error('Cannot generate Litematica without regions.');
-  const regionTags = Object.fromEntries(regions.map((region, index) => [region.name || `Region_${index + 1}`, compound(createRegionTag(region, options.minecraftDataVersion ?? 2584))]));
-  const totalBlocks = regions.reduce((total, region) => total + region.grid.cells.length, 0);
+  if (!Array.isArray(regions) || !regions.length) throw new Error('Cannot generate Litematica without regions.');
+  const names = new Set<string>();
+  const regionTags = Object.fromEntries(regions.map((region, index) => {
+    const name = region.name || `Region_${index + 1}`;
+    if (names.has(name)) throw new Error(`Duplicate Litematic region name: ${name}.`);
+    names.add(name);
+    return [name, compound(createRegionTag(region, region.dataVersion ?? options.minecraftDataVersion ?? 2584))];
+  }));
+  const totalBlocks = regions.reduce((total, region) => total + region.grid.cells.filter((cell) => normalizeState(cell.block).id !== 'minecraft:air').length, 0);
   const totalVolume = regions.reduce((total, region) => total + absoluteVolume(region.size ?? dimensions(region.grid)), 0);
   const enclosingSize = getEnclosingSize(regions);
   const metadata = compound({
@@ -46,15 +54,21 @@ export async function serializeLitematicaRegions(regions: LitematicaRegionInput[
 
 function createRegionTag(input: LitematicaRegionInput, dataVersion: number) {
   const { grid } = input;
+  validateGrid(grid);
   const size = input.size ?? dimensions(grid);
   const position = input.position ?? { x: 0, y: 0, z: 0 };
+  validateVector(position, 'position');
+  validateVector(size, 'size');
+  if (Math.abs(size.x) !== grid.width || Math.abs(size.y) !== grid.height || Math.abs(size.z) !== grid.length) throw new Error(`Litematic region '${input.name}' size must match its grid dimensions.`);
+  if (absoluteVolume(size) > 0x7fffffff) throw new Error(`Litematic region '${input.name}' exceeds the NBT volume limit.`);
   const palette = [{ Name: { type: 'string', value: 'minecraft:air' } }];
   const paletteIndex = new Map<string, number>([['minecraft:air|', 0]]);
   for (const cell of grid.cells) {
-    const key = stateKey(cell.block.id, cell.block.properties);
+    const block = normalizeState(cell.block);
+    const key = stateKey(block.id, block.properties);
     if (paletteIndex.has(key)) continue;
     paletteIndex.set(key, palette.length);
-    palette.push({ Name: { type: 'string', value: cell.block.id }, ...(cell.block.properties ? { Properties: { type: 'compound', value: Object.fromEntries(Object.entries(cell.block.properties).map(([name, value]) => [name, { type: 'string', value }])) } } : {}) });
+    palette.push({ Name: { type: 'string', value: block.id }, ...(block.properties ? { Properties: { type: 'compound', value: Object.fromEntries(Object.entries(block.properties).map(([name, value]) => [name, { type: 'string', value }])) } } : {}) });
   }
   const dims = { x: Math.abs(size.x), y: Math.abs(size.y), z: Math.abs(size.z) };
   const states = new Array(dims.x * dims.y * dims.z).fill(0);
@@ -64,7 +78,8 @@ function createRegionTag(input: LitematicaRegionInput, dataVersion: number) {
     const z = cell.z;
     const index = (y * dims.z + z) * dims.x + x;
     if (index < 0 || index >= states.length) throw new Error(`Litematic region '${input.name}' contains a cell outside its size.`);
-    states[index] = paletteIndex.get(stateKey(cell.block.id, cell.block.properties)) ?? 0;
+    const block = normalizeState(cell.block);
+    states[index] = paletteIndex.get(stateKey(block.id, block.properties)) ?? 0;
   }
   const bits = requiredBitWidth(palette.length);
   return {
@@ -89,6 +104,9 @@ function getEnclosingSize(regions: LitematicaRegionInput[]): LitematicaVec3 {
 }
 
 function dimensions(grid: BlockGrid): LitematicaVec3 { return { x: grid.width, y: grid.height, z: grid.length }; }
+function validateVector(vector: LitematicaVec3, label: string) {
+  if (!vector || ![vector.x, vector.y, vector.z].every((value) => Number.isInteger(value) && value >= -0x80000000 && value <= 0x7fffffff)) throw new Error(`Litematic ${label} must contain 32-bit integer coordinates.`);
+}
 function absoluteVolume(size: LitematicaVec3): number { return Math.abs(size.x * size.y * size.z); }
 function signedEnd(size: number): number { return size >= 0 ? size - 1 : size + 1; }
 function stateKey(id: string, properties?: Record<string, string>) { return `${id}|${Object.entries(properties ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join(';')}`; }
@@ -102,12 +120,82 @@ const vecTag = (value: LitematicaVec3) => compound({ x: intTag(value.x), y: intT
 const compound = (value: Record<string, unknown>) => ({ type: 'compound', value });
 const emptyList = () => ({ type: 'list', value: { type: 'end', value: [] } });
 const nbtList = (items: unknown) => {
-  const compounds = Array.isArray(items) ? items.filter((item): item is { type: 'compound'; value: Record<string, unknown> } => Boolean(item && typeof item === 'object' && (item as any).type === 'compound')) : [];
+  if (items === undefined) return emptyList();
+  if (!Array.isArray(items)) throw new Error('Litematic entity metadata must be an array.');
+  const compounds = items.map((item) => {
+    const entry = record(item, 'entity');
+    if ('nbt' in entry) return { type: 'compound', value: record(entry.nbt, 'entity NBT') };
+    if (entry.type === 'compound' || entry.type === 10) return { type: 'compound', value: record(entry.value, 'entity NBT') };
+    throw new Error('Litematic entity metadata must contain an NBT compound.');
+  });
   return compounds.length ? { type: 'list', value: { type: 'compound', value: compounds } } : emptyList();
 };
-const TAG: Record<string, number> = { byte: 1, short: 2, int: 3, long: 4, float: 5, double: 6, byteArray: 7, string: 8, list: 9, compound: 10, intArray: 11, longArray: 12 };
-class Writer { bytes: number[] = []; byte(v: number) { this.bytes.push(v & 255); } short(v: number) { this.byte(v >> 8); this.byte(v); } int(v: number) { this.byte(v >> 24); this.byte(v >> 16); this.byte(v >> 8); this.byte(v); } long(v: bigint) { for (let shift = 56n; shift >= 0n; shift -= 8n) this.byte(Number((v >> shift) & 255n)); } raw(values: Uint8Array | number[]) { for (const value of values) this.byte(value); } string(value: string) { const bytes = new TextEncoder().encode(value); this.short(bytes.length); this.raw(bytes); } result() { return new Uint8Array(this.bytes); } }
-function encodeCompound(name: string, value: Record<string, any>) { const writer = new Writer(); writer.byte(TAG.compound); writer.string(name); encodeCompoundPayload(writer, value); return writer.result(); }
-function encodeCompoundPayload(writer: Writer, value: Record<string, any>) { for (const [name, tag] of Object.entries(value)) { writer.byte(TAG[tag.type]); writer.string(name); encodePayload(writer, tag); } writer.byte(0); }
-function encodePayload(writer: Writer, tag: any) { switch (tag.type) { case 'string': writer.string(tag.value); break; case 'int': writer.int(tag.value); break; case 'long': writer.long((BigInt(tag.value[0]) << 32n) | BigInt(tag.value[1] >>> 0)); break; case 'compound': encodeCompoundPayload(writer, tag.value); break; case 'list': writer.byte(TAG[tag.value.type]); writer.int(tag.value.value.length); for (const child of tag.value.value) encodePayload(writer, child); break; case 'longArray': writer.int(tag.value.length); for (const value of tag.value) writer.long(BigInt.asIntN(64, BigInt(value))); break; default: throw new Error(`Unsupported NBT tag: ${tag.type}`); } }
+const TAG: Record<string, number> = { end: 0, byte: 1, short: 2, int: 3, long: 4, float: 5, double: 6, byteArray: 7, string: 8, list: 9, compound: 10, intArray: 11, longArray: 12 };
+type WritableTag = { type: number | string; value: unknown };
+class Writer {
+  bytes: number[] = [];
+  byte(v: number) { this.bytes.push(v & 255); }
+  short(v: number) { this.byte(v >> 8); this.byte(v); }
+  int(v: number) { this.byte(v >> 24); this.byte(v >> 16); this.byte(v >> 8); this.byte(v); }
+  long(v: bigint) { for (let shift = 56n; shift >= 0n; shift -= 8n) this.byte(Number((v >> shift) & 255n)); }
+  float(v: number, width: 4 | 8) { const bytes = new Uint8Array(width); const view = new DataView(bytes.buffer); if (width === 4) view.setFloat32(0, v); else view.setFloat64(0, v); this.raw(bytes); }
+  raw(values: Uint8Array | number[]) { for (const value of values) this.byte(value); }
+  string(value: string) { const bytes = new TextEncoder().encode(value); if (bytes.length > 65535) throw new Error('NBT string exceeds 65535 encoded bytes.'); this.short(bytes.length); this.raw(bytes); }
+  result() { return new Uint8Array(this.bytes); }
+}
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${label} compound.`);
+  return value as Record<string, unknown>;
+}
+function tagId(type: unknown): number {
+  const id = typeof type === 'number' ? type : typeof type === 'string' ? TAG[type] : undefined;
+  if (id === undefined || !Number.isInteger(id) || id < 0 || id > 12) throw new Error(`Unsupported NBT tag: ${String(type)}`);
+  return id;
+}
+function readTag(value: unknown): WritableTag { const tag = record(value, 'NBT tag'); tagId(tag.type); return tag as WritableTag; }
+function encodeCompound(name: string, value: Record<string, unknown>) { const writer = new Writer(); writer.byte(TAG.compound); writer.string(name); encodeCompoundPayload(writer, value); return writer.result(); }
+function encodeCompoundPayload(writer: Writer, value: Record<string, unknown>) {
+  for (const [name, entry] of Object.entries(value)) { const tag = readTag(entry); if (tagId(tag.type) === 0) throw new Error('Named NBT tags cannot have end type.'); writer.byte(tagId(tag.type)); writer.string(name); encodePayload(writer, tag); }
+  writer.byte(0);
+}
+function nbtNumber(value: unknown): number { if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('NBT numeric tags require finite numbers.'); return value; }
+function nbtInteger(value: unknown, min: number, max: number): number { const number = nbtNumber(value); if (!Number.isInteger(number) || number < min || number > max) throw new Error('NBT integer is outside its tag range.'); return number; }
+function nbtLong(value: unknown): bigint {
+  if (typeof value === 'bigint') return BigInt.asIntN(64, value);
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
+  if (Array.isArray(value) && value.length === 2) return (BigInt(nbtInteger(value[0], -0x80000000, 0xffffffff)) << 32n) | BigInt(nbtInteger(value[1], -0x80000000, 0xffffffff) >>> 0);
+  throw new Error('NBT long requires a bigint, safe integer, or high/low pair.');
+}
+function nbtArray(value: unknown): unknown[] { if (!Array.isArray(value)) throw new Error('NBT array tag requires an array.'); return value; }
+function encodePayload(writer: Writer, tag: WritableTag): void {
+  const value = tag.value;
+  switch (tagId(tag.type)) {
+    case 1: writer.byte(nbtInteger(value, -128, 255)); break;
+    case 2: writer.short(nbtInteger(value, -32768, 65535)); break;
+    case 3: writer.int(nbtInteger(value, -0x80000000, 0x7fffffff)); break;
+    case 4: writer.long(nbtLong(value)); break;
+    case 5: writer.float(nbtNumber(value), 4); break;
+    case 6: writer.float(nbtNumber(value), 8); break;
+    case 7: { const bytes = value instanceof Uint8Array ? value : nbtArray(value).map((item) => nbtInteger(item, -128, 255)); writer.int(bytes.length); writer.raw(bytes); break; }
+    case 8: if (typeof value !== 'string') throw new Error('NBT string tag requires a string.'); writer.string(value); break;
+    case 9: {
+      const list = record(value, 'NBT list');
+      const type = tagId(list.type);
+      const children = nbtArray(list.value);
+      if (type === 0 && children.length) throw new Error('NBT end lists must be empty.');
+      writer.byte(type); writer.int(children.length);
+      for (const child of children) {
+        const isWrapped = child !== null && typeof child === 'object' && 'type' in child && (typeof child.type === 'number' || typeof child.type === 'string') && 'value' in child && !(type === 9 && Array.isArray(child.value));
+        const item = isWrapped ? readTag(child) : { type, value: child };
+        if (tagId(item.type) !== type) throw new Error('NBT list contains a mismatched tag type.');
+        encodePayload(writer, item);
+      }
+      break;
+    }
+    case 10: encodeCompoundPayload(writer, record(value, 'NBT')); break;
+    case 11: { const values = nbtArray(value); writer.int(values.length); for (const item of values) writer.int(nbtInteger(item, -0x80000000, 0x7fffffff)); break; }
+    case 12: { const values = nbtArray(value); writer.int(values.length); for (const item of values) writer.long(nbtLong(item)); break; }
+    default: throw new Error('Unexpected standalone NBT end tag.');
+  }
+}
 async function gzip(bytes: Uint8Array): Promise<Uint8Array> { if (typeof CompressionStream === 'undefined') throw new Error('CompressionStream is required to serialize Litematica.'); return new Uint8Array(await new Response(new Blob([bytes.buffer as ArrayBuffer]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer()); }

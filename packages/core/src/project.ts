@@ -1,3 +1,6 @@
+import { parseEngineJson, stringifyEngineJson } from './json.js';
+import { validateGrid } from './grid.js';
+
 export type ProjectMode = 'image' | 'map-art' | 'voxel' | 'structure' | 'schematic' | 'viewer' | 'materials' | 'lego' | 'geo';
 export type ProjectState = {
   version: 1; id: string; name: string; mode: ProjectMode;
@@ -11,9 +14,14 @@ export function createProject(name = 'Untitled CraftAIB Project'): ProjectState 
   const now = new Date().toISOString();
   return { version: 1, id: globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`, name, mode: 'image', imageAdjustments: {}, selectedPalette: [], materials: {}, exports: [], updatedAt: now };
 }
-export function serializeProject(project: ProjectState): string { return JSON.stringify({ ...project, updatedAt: new Date().toISOString() }, null, 2); }
+export function serializeProject(project: ProjectState): string { return stringifyEngineJson({ ...project, updatedAt: new Date().toISOString() }, 2); }
 export function parseProject(input: string): ProjectState {
-  const parsed = JSON.parse(input) as Partial<ProjectState>;
-  if (parsed.version !== 1 || typeof parsed.id !== 'string' || typeof parsed.name !== 'string' || !parsed.mode || !Array.isArray(parsed.selectedPalette) || !Array.isArray(parsed.exports)) throw new Error('Invalid CraftAIB project file.');
+  const parsed = parseEngineJson(input) as Partial<ProjectState>;
+  if (!parsed || parsed.version !== 1 || typeof parsed.id !== 'string' || typeof parsed.name !== 'string' || !parsed.mode || !Array.isArray(parsed.selectedPalette) || !Array.isArray(parsed.exports)) throw new Error('Invalid CraftAIB project file.');
+  if (parsed.grid) validateGrid(parsed.grid);
+  if (parsed.scene) {
+    if (parsed.scene.version !== 1 || !Array.isArray(parsed.scene.grids)) throw new Error('Invalid project scene.');
+    for (const grid of parsed.scene.grids) validateGrid(grid);
+  }
   return parsed as ProjectState;
 }

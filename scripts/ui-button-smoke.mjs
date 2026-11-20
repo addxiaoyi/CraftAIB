@@ -10,7 +10,9 @@ const ids = ['ai_builder', 'viewer_3d', 'projections', 'materials', 'pixel_art',
 const navigate = async (id) => {
   const button = page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first();
   if (!(await button.count())) {
-    await page.locator('[data-mobile-menu-toggle="true"]').click();
+    const toolbox = page.locator('[data-toolbox-toggle="true"]').filter({ visible: true }).first();
+    if (await toolbox.count()) await toolbox.click();
+    else await page.locator('[data-mobile-menu-toggle="true"]').click();
   }
   await page.locator(`[data-workspace-id="${id}"]`).filter({ visible: true }).first().click();
   await page.waitForFunction((expected) => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === expected, id);
@@ -31,7 +33,7 @@ for (const task of ['map-art', 'voxel', 'geo', 'lego']) {
   await page.locator(`[data-engine-commit="${task}"]`).click();
   await page.waitForFunction(() => document.querySelector('[data-active-workspace]')?.getAttribute('data-active-workspace') === 'viewer_3d', null, { timeout: 30000 });
 }
-const language = page.getByRole('button', { name: /Switch Language|EN|中/ }).first();
+const language = page.getByRole('button', { name: /Switch Language|Switch to Chinese|切换到英文|EN|中/ }).first();
 assert.equal(await language.count(), 1);
 await language.click();
 await language.click();

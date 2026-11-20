@@ -1,0 +1,30 @@
+{
+  "minecraft": "1.20.1",
+  "fabricLoader": "0.20.1",
+  "mods": [
+    {
+      "project": "bEpr0Arc",
+      "versionId": "1ZTpW1lr",
+      "version": "0.15.4",
+      "filename": "litematica-fabric-1.20.1-0.15.4.jar",
+      "url": "https://cdn.modrinth.com/data/bEpr0Arc/versions/1ZTpW1lr/litematica-fabric-1.20.1-0.15.4.jar",
+      "size": 923876,
+      "hashes": {
+        "sha512": "3cf1f2a16997e5a1dcda37b2626595f37873a39e33c254af1a7eda986aa13be74449d56fe706db7f158ed1a047271a48fa705091e5c71e3b0aa28d0d53c7cb01",
+        "sha1": "68bc88228d567ec0c56dd5d308d51c4cb5eab3ff"
+      }
+    },
+    {
+      "project": "GcWjdA9I",
+      "versionId": "V7yLDtJV",
+      "version": "0.16.3",
+      "filename": "malilib-fabric-1.20.1-0.16.3.jar",
+      "url": "https://cdn.modrinth.com/data/GcWjdA9I/versions/V7yLDtJV/malilib-fabric-1.20.1-0.16.3.jar",
+      "size": 545403,
+      "hashes": {
+        "sha512": "2c16a64cf9af03569618c6bd0359797bbaecec854ac8e8197e9180b1739eb74b6157a9c389a4f8dd8b4aabe52227aafb8d2a6b6b72732ed3c450ff9a0849234c",
+        "sha1": "94d4dd8a82e493d956b423019134d8c48ee737be"
+      }
+    }
+  ]
+}

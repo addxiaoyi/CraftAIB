@@ -86,7 +86,7 @@ async function readEvents(response, onProgress) {
       if (!json) continue;
       const parsed = JSON.parse(json);
       if (event === 'progress') await onProgress(parsed);
-      if (event === 'result') payload = parsed.payload;
+      if (event === 'result' || event === 'failure') payload = parsed.payload;
     }
     if (chunk.done) break;
   }

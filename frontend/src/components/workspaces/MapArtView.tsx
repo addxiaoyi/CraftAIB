@@ -5,6 +5,7 @@ import { BLOCK_REGISTRY } from '../../utils/blockRegistry';
 import { gridToStructure, runEngineTask } from '../../integrations/engine';
 import { useEngineCommit } from '../../hooks/useEngineCommit';
 import { tr } from '../../i18n';
+import { PageWorkspace } from '../layout/PageWorkspace';
 import {
   Upload,
   Sparkles,
@@ -252,12 +253,7 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
 
 
   return (
-    <div className="flex-1 h-full overflow-y-auto p-5 lg:p-7 space-y-6 max-w-7xl mx-auto w-full bg-[#090a0f]">
-      {/* Header */}
-      <div>
-        <h1 className="text-base font-semibold tracking-tight text-white">{t.title}</h1>
-        <p className="text-xs text-zinc-400 mt-1">{t.subtitle}</p>
-      </div>
+    <PageWorkspace title={t.title} subtitle={t.subtitle}>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left Column: Settings */}
@@ -434,6 +430,6 @@ export const MapArtView: React.FC<MapArtViewProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </PageWorkspace>
   );
 };

@@ -33,10 +33,22 @@ function toCoreGrid(source: CraftmaticGrid): BlockGrid {
 export async function generateStructure(options: StructureOptions): Promise<BlockGrid> {
   const runtime = globalThis as typeof globalThis & { process?: { versions?: { node?: string } } };
   if (!runtime.process?.versions?.node) return generateBrowserStructure(options);
+
   const moduleUrl = new URL('../../../vendor/craftmatic/dist/gen/generator.js', import.meta.url).href;
   const loader = new Function('url', 'return import(url)') as (url: string) => Promise<{ generateStructure(options: StructureOptions): CraftmaticGrid }>;
   const module = await loader(moduleUrl);
-  return toCoreGrid(module.generateStructure({ type: 'house', floors: 2, style: 'fantasy', ...options }));
+
+  const effectiveOptions = {
+    type: options.type ?? 'house',
+    floors: options.floors ?? 2,
+    style: options.style ?? 'fantasy',
+    seed: options.seed ?? Date.now(),
+    width: options.width,
+    length: options.length,
+    ...options,
+  };
+
+  return toCoreGrid(module.generateStructure(effectiveOptions));
 }
 
 export function generateBrowserStructure(options: StructureOptions): BlockGrid {

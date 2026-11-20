@@ -1,10 +1,15 @@
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { CraftAibProject, LitematicaPlacementState, StructureData, WorkspaceId } from './types/minecraft';
-import { normalizePlacement } from './integrations/placement';
 import { tr } from './i18n';
 import { createDefaultStructure } from './utils/sampleStructure';
 import { exportLitematic } from './utils/exporters';
 import { decodeStructureFile } from './integrations/engine';
+import { AppHeader, HeaderToast } from './components/layout/AppHeader';
+import { WorkspaceDrawer } from './components/layout/WorkspaceDrawer';
+import { isWorkspaceId } from './layout/workspaces';
+import { parseProjectJson, stringifyProjectJson, validateProject } from './integrations/project';
+import { persistWorkbench, restoreWorkbench, saveReloadSnapshot, takeReloadSnapshot, type SavedWorkbench } from './integrations/storage';
+import { ViewportReloadContext } from './components/ViewportReloadContext';
 
 // Workspace Views
 const AiBuilderView = lazy(() => import('./components/workspaces/AiBuilderView').then((module) => ({ default: module.AiBuilderView })));
@@ -18,159 +23,105 @@ const GeoSceneView = lazy(() => import('./components/workspaces/GeoSceneView').t
 const LegoLdrawView = lazy(() => import('./components/workspaces/LegoLdrawView').then((module) => ({ default: module.LegoLdrawView })));
 const SettingsView = lazy(() => import('./components/workspaces/SettingsView').then((module) => ({ default: module.SettingsView })));
 
-// Collaboration Components & Hooks
-
-// Icons
-import {
-  Sparkles,
-  Box,
-  FileCode2,
-  Package,
-  Palette,
-  Map,
-  Boxes,
-  Mountain,
-  Blocks,
-  Settings,
-  Download,
-  Menu,
-  X,
-  CheckCircle2,
-  ChevronDown,
-  Wrench,
-} from 'lucide-react';
-
-function safeStorageSet(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    if (key === 'craftaib.edit-history') {
-      try { localStorage.removeItem(key); } catch { /* storage can remain unavailable */ }
-    }
-  }
-}
 export default function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>(() => {
-    const saved = localStorage.getItem('craftaib.active-workspace');
-    return saved && ['ai_builder', 'viewer_3d', 'projections', 'materials', 'pixel_art', 'map_art', 'voxel_lab', 'geo_scene', 'lego_ldraw', 'settings'].includes(saved) ? saved as WorkspaceId : 'ai_builder';
+  const [restored] = useState(() => {
+    const saved = restoreWorkbench({ getItem: (key) => window.localStorage.getItem(key) });
+    try {
+      const snapshot = takeReloadSnapshot(window.sessionStorage);
+      if (snapshot) return { ...snapshot, warnings: [] };
+    } catch (error) {
+      console.error('Workbench reload snapshot could not be restored', error);
+      saved.warnings.push('Workbench reload snapshot could not be restored.');
+    }
+    return saved;
   });
-  const [lang, setLang] = useState<'zh' | 'en'>(() => {
-    const saved = localStorage.getItem('craftaib.language');
-    return saved === 'en' || saved === 'zh' ? saved : 'zh';
-  });
-  const [autoSave, setAutoSave] = useState<boolean>(() => localStorage.getItem('craftaib.auto-save') !== 'false');
-  const [isToolboxOpen, setIsToolboxOpen] = useState<boolean>(false);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>(restored.activeWorkspace);
+  const [lang, setLang] = useState<'zh' | 'en'>(restored.language);
+  const [autoSave, setAutoSave] = useState<boolean>(restored.autoSave);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileDrawerRef = useRef<HTMLDivElement>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState(restored.warnings.length > 0);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exportPending = useRef(false);
+  const persisted = useRef<Partial<SavedWorkbench>>({});
+  const [projectEpoch, setProjectEpoch] = useState(0);
   const i18n = tr(lang);
-  const [aiMeta, setAiMeta] = useState<CraftAibProject['ai']>(() => {
-    const saved = localStorage.getItem('craftaib.ai-meta');
-    if (!saved) return { prompt: '' };
-    try { return JSON.parse(saved) as CraftAibProject['ai']; } catch { return { prompt: '' }; }
-  });
-  const [editHistory, setEditHistory] = useState<StructureData[]>(() => {
-    const saved = localStorage.getItem('craftaib.edit-history');
-    if (!saved) return [];
-    try { const value = JSON.parse(saved); return Array.isArray(value) ? value : []; } catch { return []; }
-  });
-  const [materialInventory, setMaterialInventory] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('craftaib.material-inventory');
-    if (!saved) return {};
-    try { return JSON.parse(saved) as Record<string, number>; } catch { return {}; }
-  });
-  const [placements, setPlacements] = useState<LitematicaPlacementState[]>(() => {
-    const saved = localStorage.getItem('craftaib.placements');
-    if (!saved) return [];
-    try { const value = JSON.parse(saved); return Array.isArray(value) ? value.map(normalizePlacement) : []; } catch { return []; }
-  });
+  const [aiMeta, setAiMeta] = useState<CraftAibProject['ai']>(restored.ai);
+  const [editHistory, setEditHistory] = useState<StructureData[]>(restored.history ?? []);
+  const [materialInventory, setMaterialInventory] = useState<Record<string, number>>(restored.materialInventory ?? {});
+  const [placements, setPlacements] = useState<LitematicaPlacementState[]>(restored.placements ?? []);
   const updateAiMeta = useCallback((next: CraftAibProject['ai']) => {
     setAiMeta((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
   }, []);
   const projectInputRef = useRef<HTMLInputElement>(null);
 
-  const [structure, setStructure] = useState<StructureData>(() => {
-    const saved = localStorage.getItem('blockcraft_current_structure');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // Fallback
-      }
-    }
-    return createDefaultStructure();
-  });
+  const [structure, setStructure] = useState<StructureData>(restored.structure);
+  const reloadViewport = () => {
+    saveReloadSnapshot(window.sessionStorage, { activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, materialInventory, placements });
+    window.location.reload();
+  };
 
   useEffect(() => {
-    if (autoSave) safeStorageSet('blockcraft_current_structure', JSON.stringify(structure));
-    safeStorageSet('craftaib.auto-save', String(autoSave));
-  }, [autoSave, structure]);
+    const warnings = persistWorkbench({
+      setItem: (key, value) => window.localStorage.setItem(key, value),
+      removeItem: (key) => window.localStorage.removeItem(key),
+    }, { activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, materialInventory, placements }, persisted.current);
+    if (warnings.length) setStorageWarning(true);
+  }, [activeWorkspace, lang, autoSave, structure, aiMeta, editHistory, materialInventory, placements]);
 
-  useEffect(() => {
-    safeStorageSet('craftaib.active-workspace', activeWorkspace);
-    safeStorageSet('craftaib.edit-history', JSON.stringify(editHistory.slice(-5)));
-    safeStorageSet('craftaib.material-inventory', JSON.stringify(materialInventory));
-    try {
-      safeStorageSet('craftaib.ai-meta', JSON.stringify(aiMeta ?? { prompt: '' }));
-    } catch {
-      // Keep the structure snapshot usable when a large reference image exceeds localStorage quota.
-      if (aiMeta?.referenceImage) safeStorageSet('craftaib.ai-meta', JSON.stringify({ ...aiMeta, referenceImage: undefined }));
-    }
-  }, [activeWorkspace, aiMeta, editHistory, materialInventory]);
-
-  useEffect(() => {
-    safeStorageSet('craftaib.placements', JSON.stringify(placements));
-  }, [placements]);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const handleLanguageChange = (next: 'zh' | 'en') => {
     setLang(next);
-    safeStorageSet('craftaib.language', next);
   };
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMessage(null), 5000);
   }, []);
+
+  const closeDrawer = useCallback(() => setIsMobileMenuOpen(false), []);
 
   const handleStructureChange = (newStructure: StructureData) => {
     setStructure(newStructure);
-    if (autoSave) {
-      safeStorageSet('blockcraft_current_structure', JSON.stringify(newStructure));
-    }
-    
+    if (newStructure.id !== structure.id) { setEditHistory([]); setPlacements([]); }
   };
 
   const handleResetDefaults = () => {
     const def = createDefaultStructure();
     setStructure(def);
-    safeStorageSet('blockcraft_current_structure', JSON.stringify(def));
-    
+    setEditHistory([]);
+    setPlacements([]);
     showToast(lang === 'zh' ? '已重置为默认建筑结构' : 'Reset to default structure');
   };
 
   const saveProject = () => {
     const project: CraftAibProject = { version: 1, activeWorkspace, language: lang, autoSave, structure, ai: aiMeta, history: editHistory, placements, materialInventory, savedAt: new Date().toISOString() };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([stringifyProjectJson(project, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
     link.download = `${structure.name || 'craftaib-project'}.craftaib.json`;
     link.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const openProject = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const project = JSON.parse(await file.text()) as Partial<CraftAibProject>;
-      if (project.version !== 1 || !project.structure?.size || !Array.isArray(project.structure.blocks)) throw new Error('Invalid CraftAIB project file.');
+      const project = validateProject(parseProjectJson(await file.text()));
+      setProjectEpoch((epoch) => epoch + 1);
       setStructure(project.structure);
       setAiMeta(project.ai ?? { prompt: '' });
       setEditHistory(project.history ?? [project.structure]);
-      setPlacements((project.placements ?? []).map(normalizePlacement));
+      setPlacements(project.placements ?? []);
       setMaterialInventory(project.materialInventory ?? {});
       if (project.language === 'zh' || project.language === 'en') handleLanguageChange(project.language);
       if (typeof project.autoSave === 'boolean') setAutoSave(project.autoSave);
-      if (project.activeWorkspace && allNavItems.some((item) => item.id === project.activeWorkspace)) setActiveWorkspace(project.activeWorkspace);
+      if (isWorkspaceId(project.activeWorkspace)) setActiveWorkspace(project.activeWorkspace);
       showToast(i18n.project.restored);
     } catch (error) {
       showToast(error instanceof Error ? error.message : i18n.project.invalid);
@@ -179,307 +130,61 @@ export default function App() {
     }
   };
 
-  const coreNavItems = [
-    { id: 'ai_builder' as WorkspaceId, label: lang === 'zh' ? 'AI 建筑' : 'AI Architect', icon: Sparkles },
-    {
-      id: 'viewer_3d' as WorkspaceId,
-      label: lang === 'zh' ? '3D 查看器' : '3D Viewer',
-      icon: Box,
-    },
-    {
-      id: 'projections' as WorkspaceId,
-      label: lang === 'zh' ? '投影转换' : 'Projections',
-      icon: FileCode2,
-    },
-    {
-      id: 'materials' as WorkspaceId,
-      label: lang === 'zh' ? '材料清单' : 'Materials BOM',
-      icon: Package,
-    },
-  ];
-
-  const toolboxNavItems = [
-    {
-      id: 'pixel_art' as WorkspaceId,
-      label: lang === 'zh' ? '图片转像素画' : 'Pixel Art',
-      icon: Palette,
-    },
-    {
-      id: 'map_art' as WorkspaceId,
-      label: lang === 'zh' ? 'Map Art 地图画' : 'Map Art',
-      icon: Map,
-    },
-    {
-      id: 'voxel_lab' as WorkspaceId,
-      label: lang === 'zh' ? 'Voxel 体素实验室' : 'Voxel Lab',
-      icon: Boxes,
-    },
-    {
-      id: 'geo_scene' as WorkspaceId,
-      label: lang === 'zh' ? 'Geo Scene 地貌' : 'Geo Scene',
-      icon: Mountain,
-    },
-    {
-      id: 'lego_ldraw' as WorkspaceId,
-      label: lang === 'zh' ? 'LEGO / LDraw' : 'LEGO LDraw',
-      icon: Blocks,
-    },
-    {
-      id: 'settings' as WorkspaceId,
-      label: lang === 'zh' ? '系统设置' : 'Settings',
-      icon: Settings,
-    },
-  ];
-
-  const zhNavLabels: Partial<Record<WorkspaceId, string>> = {
-    ai_builder: 'AI 建筑', viewer_3d: '3D 查看器', projections: '投影文件', materials: '材料清单',
-    pixel_art: '图片像素画', map_art: '地图画', voxel_lab: '体素实验室', geo_scene: '地理场景',
-    lego_ldraw: 'LEGO / LDraw', settings: '设置',
+  const downloadLitematic = async () => {
+    if (exportPending.current) return;
+    exportPending.current = true;
+    try {
+      await exportLitematic(structure, placements);
+      showToast(lang === 'zh' ? 'Litematic 文件已导出' : 'Litematic file exported');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Litematic export failed.');
+    } finally { exportPending.current = false; }
   };
-  const localizedCoreNavItems = lang === 'zh' ? coreNavItems.map((item) => ({ ...item, label: zhNavLabels[item.id] ?? item.label })) : coreNavItems;
-  const localizedToolboxNavItems = lang === 'zh' ? toolboxNavItems.map((item) => ({ ...item, label: zhNavLabels[item.id] ?? item.label })) : toolboxNavItems;
-  const allNavItems = [...localizedCoreNavItems, ...localizedToolboxNavItems];
-  const isToolboxActive = localizedToolboxNavItems.some((n) => n.id === activeWorkspace);
-  const currentToolboxItem = localizedToolboxNavItems.find((n) => n.id === activeWorkspace);
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#07090e] text-zinc-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-white bg-radial-ambient">
-      {/* =========================================================================
-          TOP BAR CONTRACT (Luxury Minimalist Architectural CAD Workbench):
-          [Brand Wordmark + Model Info] — [Segmented Workspace Switcher] — [Presence + Actions]
-          ========================================================================= */}
-      <header className="min-h-[52px] overflow-hidden border-b border-white/[0.08] bg-[#0c0f17]/95 backdrop-blur-2xl flex items-center px-3.5 sm:px-5 lg:px-6 gap-3 z-40 shrink-0">
-        {/* Zone 1: Geometric Wordmark & Model Context */}
-        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5 shrink-0">
-          <button
-            data-mobile-menu-toggle="true"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] 2xl:hidden transition-colors cursor-pointer"
-          >
-            {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          </button>
-
-          <button
-            onClick={() => setActiveWorkspace('ai_builder')}
-            className="flex items-center gap-2.5 text-left group cursor-pointer"
-          >
-            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-              <Box className="w-3.5 h-3.5 text-zinc-950 stroke-[2.5]" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-bold tracking-wider text-white uppercase whitespace-nowrap font-mono flex items-center gap-1.5">
-                BLOCKCRAFT
-                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-semibold">
-                  CAD
-                </span>
-              </span>
-            </div>
-          </button>
-
-          <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono text-zinc-500 pl-3 border-l border-white/[0.08]">
-            <span className="text-zinc-200 font-medium truncate max-w-[120px] md:max-w-[160px]">
-              {structure.name}
-            </span>
-            <span>·</span>
-            <span className="text-emerald-400 font-semibold tabular-nums flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              {structure.blocks.length.toLocaleString()} voxels
-            </span>
-            <span className="hidden md:inline">·</span>
-            <span className="tabular-nums hidden md:inline text-zinc-400">
-              {structure.size.x}×{structure.size.y}×{structure.size.z}
-            </span>
-          </div>
-        </div>
-
-        {/* Zone 2: Minimal Segmented Workspace Switcher (Desktop) */}
-        <nav className="hidden 2xl:flex flex-1 min-w-0 items-center justify-center gap-2 text-xs">
-          {/* Core Suite */}
-          <div className="flex min-w-0 items-center bg-white/[0.03] border border-white/[0.07] rounded-md p-0.5">
-            {localizedCoreNavItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeWorkspace === item.id;
-              return (
-                <button
-                  key={item.id}
-                  data-workspace-id={item.id}
-                  onClick={() => setActiveWorkspace(item.id)}
-                    className={`px-2.5 xl:px-3 py-1.5 rounded-[4px] text-xs font-medium transition-all duration-150 flex items-center gap-1.5 whitespace-nowrap ${
-                    isActive
-                      ? 'bg-white/10 text-white shadow-sm font-semibold'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.02]'
-                  }`}
-                >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Toolbox Dropdown */}
-          <div className="relative shrink-0">
-            <button
-              data-toolbox-toggle="true"
-              onClick={() => setIsToolboxOpen(!isToolboxOpen)}
-              aria-expanded={isToolboxOpen}
-              aria-haspopup="menu"
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 border ${
-                isToolboxActive
-                  ? 'bg-white/10 border-white/20 text-white shadow-sm'
-                  : 'bg-white/[0.03] border-white/[0.07] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]'
-              }`}
-            >
-              <Wrench className="w-3.5 h-3.5 text-zinc-500" />
-              <span>
-                {isToolboxActive && currentToolboxItem
-                  ? currentToolboxItem.label
-                  : lang === 'zh'
-                  ? '工具箱'
-                  : 'Toolbox'}
-              </span>
-              <ChevronDown className="w-3 h-3 text-zinc-500" />
-            </button>
-
-            {isToolboxOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-30"
-                  onClick={() => setIsToolboxOpen(false)}
-                />
-                <div role="menu" className="absolute top-full mt-1.5 right-0 z-40 w-48 bg-[#0c0e15]/95 backdrop-blur-2xl border border-white/[0.08] rounded-md shadow-2xl p-1 space-y-0.5 animate-fade-in">
-                  {localizedToolboxNavItems.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = activeWorkspace === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        data-workspace-id={item.id}
-                        onClick={() => {
-                          setActiveWorkspace(item.id);
-                          setIsToolboxOpen(false);
-                        }}
-                        role="menuitem"
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs transition-colors ${
-                          isActive
-                            ? 'bg-white/10 text-white font-medium'
-                            : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
-                        }`}
-                      >
-                        <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        </nav>
-
-        {/* Zone 3: Presence & Actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Language Switch */}
-          <button
-            onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
-            className="px-2 py-1 rounded text-xs font-mono text-zinc-400 hover:text-white hover:bg-white/[0.05] border border-white/[0.06] transition-colors"
-            title="Switch Language"
-          >
-            {lang === 'zh' ? 'EN' : '中'}
-          </button>
-
-          {/* Quick Settings Icon */}
-          <button
-            onClick={() => setActiveWorkspace('settings')}
-            className={`p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/[0.05] transition-colors ${
-              activeWorkspace === 'settings' ? 'text-white bg-white/10' : ''
-            }`}
-            title="Settings"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-
-          <button data-project-action="save" onClick={saveProject} className="px-2 py-1 rounded text-xs text-zinc-400 hover:text-white hover:bg-white/[0.05] border border-white/[0.06]" title={lang === 'zh' ? '保存项目' : 'Save project'}>
-            {lang === 'zh' ? '保存' : 'Save'}
-          </button>
-          <button data-project-action="open" onClick={() => projectInputRef.current?.click()} className="px-2 py-1 rounded text-xs text-zinc-400 hover:text-white hover:bg-white/[0.05] border border-white/[0.06]" title={lang === 'zh' ? '打开项目' : 'Open project'}>
-            {lang === 'zh' ? '打开' : 'Open'}
-          </button>
-          <input ref={projectInputRef} type="file" accept="application/json,.craftaib.json" onChange={openProject} hidden />
-
-          {/* Primary Action Button */}
-          <button
-            onClick={() => {
-              exportLitematic(structure);
-              showToast(lang === 'zh' ? '已导出 Litematica 结构文件' : 'Exported Litematic file');
-            }}
-            className="px-2.5 sm:px-3 py-1.5 btn-primary rounded-md text-xs font-medium flex items-center gap-1.5 shadow-sm whitespace-nowrap active:scale-[0.98] cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden xs:inline">{lang === 'zh' ? '导出 Litematic' : 'Export Litematic'}</span>
-            <span className="xs:hidden">.litematic</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Mobile Drawer Menu (Silky slide down) */}
-      {isMobileMenuOpen && (
-        <div className="2xl:hidden border-b border-white/[0.08] bg-[#0c0e15]/98 backdrop-blur-2xl p-3 space-y-1 z-30 shadow-2xl animate-fade-in max-h-[80vh] overflow-y-auto">
-          <div className="text-[10px] font-mono text-zinc-500 uppercase px-2 pb-1">Core Workspaces</div>
-          {localizedCoreNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeWorkspace === item.id;
-            return (
-              <button
-                key={item.id}
-                data-workspace-id={item.id}
-                onClick={() => {
-                  setActiveWorkspace(item.id);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition-colors ${
-                  isActive
-                    ? 'bg-white/10 text-white font-medium'
-                    : 'text-zinc-400 hover:text-white hover:bg-white/[0.02]'
-                }`}
-              >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-
-          <div className="text-[10px] font-mono text-zinc-500 uppercase px-2 pt-2 pb-1 border-t border-white/[0.06]">Toolbox Utilities</div>
-          {localizedToolboxNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeWorkspace === item.id;
-            return (
-              <button
-                key={item.id}
-                data-workspace-id={item.id}
-                onClick={() => {
-                  setActiveWorkspace(item.id);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition-colors ${
-                  isActive
-                    ? 'bg-white/10 text-white font-medium'
-                    : 'text-zinc-400 hover:text-white hover:bg-white/[0.02]'
-                }`}
-              >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-[var(--bg-canvas)] font-sans text-zinc-100 antialiased bg-radial-ambient selection:bg-emerald-500/30 selection:text-white">
+      <AppHeader
+        lang={lang}
+        activeWorkspace={activeWorkspace}
+        structureName={structure.name}
+        blockCount={structure.blocks.length}
+        size={structure.size}
+        isDrawerOpen={isMobileMenuOpen}
+        drawerId="craftaib-mobile-drawer"
+        drawerToggleRef={mobileMenuToggleRef}
+        onSelectWorkspace={setActiveWorkspace}
+        onToggleDrawer={() => setIsMobileMenuOpen((open) => !open)}
+        onToggleLanguage={() => handleLanguageChange(lang === 'zh' ? 'en' : 'zh')}
+        onSaveProject={saveProject}
+        onOpenProject={() => projectInputRef.current?.click()}
+        onExportLitematic={downloadLitematic}
+      />
+      <input ref={projectInputRef} type="file" accept="application/json,.craftaib.json" onChange={openProject} hidden />
+      {storageWarning && (
+        <div role="alert" data-storage-warning className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-400/30 bg-amber-950 px-4 py-2 text-xs text-amber-100">
+          <span>{lang === 'zh' ? '浏览器存储不可用、空间不足或保存内容损坏。请下载项目文件以保留当前工作。' : 'Browser storage is unavailable, full, or contains invalid saved content. Download the project to keep your work.'}</span>
+          <button type="button" onClick={saveProject} className="shrink-0 underline">{lang === 'zh' ? '保存项目' : 'Save project'}</button>
         </div>
       )}
 
-      {/* Main Full-Stage Workspace Canvas */}
-      <main data-active-workspace={activeWorkspace} className="flex-1 h-full overflow-hidden flex flex-col bg-[#090a0f] relative">
+      {isMobileMenuOpen && (
+        <WorkspaceDrawer
+          lang={lang}
+          activeWorkspace={activeWorkspace}
+          drawerId="craftaib-mobile-drawer"
+          drawerRef={mobileDrawerRef}
+          toggleRef={mobileMenuToggleRef}
+          onSelectWorkspace={setActiveWorkspace}
+          onClose={closeDrawer}
+        />
+      )}
+
+      <main id="craftaib-main" tabIndex={-1} data-active-workspace={activeWorkspace} className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#090a0f] focus:outline-none">
+        <ViewportReloadContext.Provider value={reloadViewport}>
         <Suspense fallback={<div className="flex-1 grid place-items-center text-xs text-zinc-400">Loading workspace...</div>}>
         {activeWorkspace === 'ai_builder' && (
           <AiBuilderView
+            key={projectEpoch}
             structure={structure}
             onStructureChange={handleStructureChange}
             initialAiMeta={aiMeta}
@@ -492,6 +197,7 @@ export default function App() {
 
         {activeWorkspace === 'viewer_3d' && (
           <Viewer3dView
+            key={`${structure.id}:${projectEpoch}`}
             structure={structure}
             onStructureChange={handleStructureChange}
             initialHistory={editHistory}
@@ -591,16 +297,10 @@ export default function App() {
           />
         )}
         </Suspense>
+        </ViewportReloadContext.Provider>
       </main>
 
-      {/* Floating Quiet Toast with Silky Slide Animation */}
-      {toastMessage && (
-        <div className="fixed bottom-4 right-4 z-50 bg-[#0c0e15]/95 backdrop-blur-2xl text-zinc-200 text-xs px-3.5 py-2 rounded-md shadow-2xl flex items-center gap-2 border border-white/10 animate-fade-in">
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
+      <HeaderToast message={toastMessage} />
     </div>
   );
 }

@@ -22,7 +22,7 @@ Return booleans by capability and safe model identifiers only. Never return endp
 
 `POST /api/ai/structure-plan`
 
-Content type: `application/json`. The frontend resizes a reference to at most 512 pixels on its longest edge and sends JPEG data URL to keep the request bounded.
+Content type: `application/json`. The frontend resizes a reference to at most 1280 pixels on its longest edge and sends a WebP data URL to keep the request bounded.
 
 ```json
 {
@@ -44,7 +44,7 @@ Content type: `application/json`. The frontend resizes a reference to at most 51
 }
 ```
 
-`prompt` may be empty only when a valid reference image is included. `referenceImage` is optional. Validate dimensions, MIME type, encoded size, and prompt length before calling the model. The client can abort the HTTP request when the user cancels generation; propagate disconnect/abort to the upstream provider.
+`prompt` may be empty only when a valid reference image is included. `referenceImage` is optional. Every `constraints` field is optional: omit `width`, `height`, `length`, `floors` and `detailLevel` to let the model choose the envelope and the level of detail from the prompt and image. Send them only when the user explicitly locked a value in the UI; an explicit size is enforced (`sizeMode` `exact`), and a reference image uses `envelope` so the plan must fit within it. An explicitly requested `detailLevel` is a preference rather than a contract: the server does not require a fixed room, circulation or furniture count. Validate dimensions, MIME type, encoded size, and prompt length before calling the model. The client can abort the HTTP request when the user cancels generation; propagate disconnect/abort to the upstream provider.
 
 Success: `200`
 
@@ -78,6 +78,8 @@ Success: `200`
 
 `plan` must satisfy `StructurePlan` version 1 and the schema in `packages/ai-planner/src/vision.ts`. The browser validates it again before creating blocks. Keep all region coordinates within `dimensions`.
 
+Reference builds with bright translucent or luminous panels can include `plan.constructionReview.materialAudit.referenceCoverage`. The audit compares the frontmost blocks along `referenceFacing` with the reference foreground. When panel evidence is present and bright neutral pixels make up at least 12% of the reference subject, the projected glass or bright panel blocks must cover at least half of those pixels.
+
 ## 3. Error shape
 
 All errors use one safe shape; messages are user-visible and must not contain prompts, image data, provider response bodies, or secrets.
@@ -92,7 +94,7 @@ All errors use one safe shape; messages are user-visible and must not contain pr
 }
 ```
 
-Expected status/code pairs: `400 INVALID_REQUEST`, `413 IMAGE_TOO_LARGE`, `422 INVALID_STRUCTURE_PLAN`, `429 RATE_LIMITED`, `502 MODEL_REQUEST_FAILED`, and `503 MODEL_NOT_CONFIGURED`. Keep the request open only while planning; a disconnected client must not leave expensive model work running.
+Expected status/code pairs: `400 INVALID_REQUEST`, `413 IMAGE_TOO_LARGE`, `422 INVALID_STRUCTURE_PLAN`, `422 REFERENCE_GLASS_COVERAGE_TOO_LOW`, `429 RATE_LIMITED`, `502 MODEL_REQUEST_FAILED`, and `503 MODEL_NOT_CONFIGURED`. Keep the request open only while planning; a disconnected client must not leave expensive model work running.
 
 ## Not backend endpoints
 

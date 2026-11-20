@@ -4,129 +4,16 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { StructureData, VoxelBlock } from '../types/minecraft';
 import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { frameViewport, viewportCameraKey, viewportFocus, VIEWPORT_FOV, type ViewportView } from './viewportCamera';
+import { blockTextureName, cropBlockTexture, loadBundledTextures } from '../integrations/bundledTextures';
 
-const MINECRAFT_TEXTURE_BASE = 'https://assets.mcasset.cloud/1.21.4/assets/minecraft/textures/block/';
 const MAX_PREVIEW_BLOCKS = 500_000;
 const RENDER_CHUNK_SIZE = 16;
-const textureCache = new Map<string, Promise<THREE.Texture | null>>();
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-function textureUrlForBlock(blockId: string): string {
-  const name = blockId.replace(/^minecraft:/, '');
-  const aliases: Record<string, string> = {
-    dark_oak_door: 'dark_oak_door_bottom',
-    iron_door: 'iron_door_bottom',
-    grass_block: 'grass_block_side',
-    dirt_path: 'dirt_path_side',
-    glass_pane: 'glass_pane_top',
-    white_stained_glass_pane: 'white_stained_glass',
-    orange_stained_glass_pane: 'orange_stained_glass',
-    magenta_stained_glass_pane: 'magenta_stained_glass',
-    light_blue_stained_glass_pane: 'light_blue_stained_glass',
-    yellow_stained_glass_pane: 'yellow_stained_glass',
-    lime_stained_glass_pane: 'lime_stained_glass',
-    pink_stained_glass_pane: 'pink_stained_glass',
-    gray_stained_glass_pane: 'gray_stained_glass',
-    light_gray_stained_glass_pane: 'light_gray_stained_glass',
-    cyan_stained_glass_pane: 'cyan_stained_glass',
-    purple_stained_glass_pane: 'purple_stained_glass',
-    blue_stained_glass_pane: 'blue_stained_glass',
-    brown_stained_glass_pane: 'brown_stained_glass',
-    green_stained_glass_pane: 'green_stained_glass',
-    red_stained_glass_pane: 'red_stained_glass',
-    black_stained_glass_pane: 'black_stained_glass',
-    barrel: 'barrel_side',
-    furnace: 'furnace_side',
-    stone_brick_stairs: 'stone_bricks',
-    dark_oak_stairs: 'dark_oak_planks',
-    oak_stairs: 'oak_planks',
-    stone_brick_slab: 'stone_bricks',
-    dark_oak_slab: 'dark_oak_planks',
-    oak_slab: 'oak_planks',
-    red_bed: 'red_wool',
-    white_bed: 'white_wool',
-    orange_bed: 'orange_wool',
-    yellow_bed: 'yellow_wool',
-    lime_bed: 'lime_wool',
-    green_bed: 'green_wool',
-    cyan_bed: 'cyan_wool',
-    light_blue_bed: 'light_blue_wool',
-    blue_bed: 'blue_wool',
-    purple_bed: 'purple_wool',
-    magenta_bed: 'magenta_wool',
-    pink_bed: 'pink_wool',
-    brown_bed: 'brown_wool',
-    gray_bed: 'gray_wool',
-    light_gray_bed: 'light_gray_wool',
-    black_bed: 'black_wool',
-  };
-  const textureName = aliases[name] ?? (name.endsWith('_bed') ? `${name.slice(0, -4)}_wool` : name);
-  return `${MINECRAFT_TEXTURE_BASE}${textureName}.png`;
-}
-
-function loadBlockTexture(url: string): Promise<THREE.Texture | null> {
-  const cached = textureCache.get(url);
-  if (cached) return cached;
-
-  const request = fetch(url, { mode: 'cors', credentials: 'omit' })
-    .then(async (response) => {
-      if (!response.ok) return null;
-      const blob = await response.blob();
-      if ('createImageBitmap' in window) {
-        const bitmap = await createImageBitmap(blob);
-        const texture = new THREE.Texture(bitmap);
-        texture.needsUpdate = true;
-        return texture;
-      }
-      const source = URL.createObjectURL(blob);
-      try {
-        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const element = new Image();
-          element.onload = () => resolve(element);
-          element.onerror = () => reject(new Error(`Unable to decode block texture: ${url}`));
-          element.src = source;
-        });
-        const texture = new THREE.Texture(image);
-        texture.needsUpdate = true;
-        return texture;
-      } finally {
-        URL.revokeObjectURL(source);
-      }
-    })
-    .then((texture) => {
-      if (!texture) return null;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.magFilter = THREE.NearestFilter;
-      texture.minFilter = THREE.NearestFilter;
-      texture.generateMipmaps = false;
-      return texture;
-    })
-    .catch(() => null);
-
-  textureCache.set(url, request);
-  return request;
-}
-
-function focusForStructure(structure: StructureData): { center: THREE.Vector3; size: number } {
-  if (!structure.blocks.length) {
-    return {
-      center: new THREE.Vector3(structure.size.x / 2, structure.size.y / 2, structure.size.z / 2),
-      size: Math.max(structure.size.x, structure.size.y, structure.size.z, 16),
-    };
-  }
-  const bounds = structure.blocks.reduce((acc, block) => ({
-    minX: Math.min(acc.minX, block.x), maxX: Math.max(acc.maxX, block.x),
-    minY: Math.min(acc.minY, block.y), maxY: Math.max(acc.maxY, block.y),
-    minZ: Math.min(acc.minZ, block.z), maxZ: Math.max(acc.maxZ, block.z),
-  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity });
-  return {
-    center: new THREE.Vector3((bounds.minX + bounds.maxX + 1) / 2, (bounds.minY + bounds.maxY + 1) / 2, (bounds.minZ + bounds.maxZ + 1) / 2),
-    size: Math.max(bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1, bounds.maxZ - bounds.minZ + 1, 16),
-  };
-}
 interface ThreeViewportProps {
   structure: StructureData;
   activeRegionId?: string | null;
@@ -141,6 +28,7 @@ interface ThreeViewportProps {
   isFullscreen?: boolean;
   backgroundColor?: string;
   onBackgroundColorChange?: (color: string) => void;
+  cameraView?: ViewportView;
 }
 
 export const ThreeViewport: React.FC<ThreeViewportProps> = ({
@@ -157,6 +45,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   isFullscreen = false,
   backgroundColor = '#090a0f',
   onBackgroundColorChange,
+  cameraView,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -167,6 +56,9 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const hoverOutlineRef = useRef<THREE.LineSegments | null>(null);
   const boundingBoxesGroupRef = useRef<THREE.Group | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const cameraKey = viewportCameraKey(structure);
+  const framedKeyRef = useRef(cameraKey);
+  const focus = useMemo(() => viewportFocus([structure.size.x, structure.size.y, structure.size.z], structure.blocks), [structure.size, structure.blocks]);
 
   // Smooth camera tweening ref
   const cameraTweenRef = useRef<{
@@ -182,7 +74,12 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const [hoveredBlock, setHoveredBlock] = useState<VoxelBlock | null>(null);
   const [isInspectingBlock, setIsInspectingBlock] = useState(false);
   const [fps, setFps] = useState<number>(60);
-  const [activeCameraView, setActiveCameraView] = useState<'iso' | 'top' | 'front' | 'side'>('iso');
+  const [texturePhase, setTexturePhase] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [textureError, setTextureError] = useState('');
+  const [missingTextures, setMissingTextures] = useState(0);
+  const [textureEpoch, setTextureEpoch] = useState(0);
+  const retryTextures = () => setTextureEpoch((epoch) => epoch + 1);
+  const [activeCameraView, setActiveCameraView] = useState<ViewportView>(cameraView ?? 'iso');
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -272,8 +169,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 500;
 
-    const focus = focusForStructure(structure);
     const maxDim = focus.size;
+    const center = new THREE.Vector3(...focus.center);
     const isLightBackground = backgroundColor === '#d9dde5';
 
     // Keep large structures visible across the full schematic envelope.
@@ -294,8 +191,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     scene.add(outline);
     hoverOutlineRef.current = outline;
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, Math.max(1200, maxDim * 6));
-    camera.position.set(focus.center.x + maxDim * 1.3, focus.center.y + maxDim, focus.center.z + maxDim * 1.3);
+    const camera = new THREE.PerspectiveCamera(VIEWPORT_FOV, width / height, 0.1, Math.max(1200, maxDim * 6));
+    camera.position.set(...frameViewport(focus, 'iso', structure.plan?.referenceFacing, camera.aspect));
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -319,8 +216,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05; // Buttery smooth inertial drag
-    controls.target.copy(focus.center);
-    controls.maxDistance = Math.max(320, maxDim * 6);
+    controls.target.copy(center);
+    controls.maxDistance = Math.max(320, maxDim * 6, camera.position.distanceTo(center) * 1.5);
     controls.minDistance = 2;
     controlsRef.current = controls;
 
@@ -329,18 +226,18 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     scene.add(ambientLight);
 
     const keyLight = new THREE.DirectionalLight('#fffcf5', isLightBackground ? 0.95 : 1.85);
-    keyLight.position.set(focus.center.x + maxDim * 2.2, focus.center.y + maxDim * 3.2, focus.center.z + maxDim * 2.2);
+    keyLight.position.set(center.x + maxDim * 2.2, center.y + maxDim * 3.2, center.z + maxDim * 2.2);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
 
     const fillLight = new THREE.DirectionalLight('#a1a1aa', isLightBackground ? 0.2 : 0.48);
-    fillLight.position.set(focus.center.x - maxDim * 2, focus.center.y + maxDim * 1.5, focus.center.z - maxDim);
+    fillLight.position.set(center.x - maxDim * 2, center.y + maxDim * 1.5, center.z - maxDim);
     scene.add(fillLight);
 
     const rimLight = new THREE.DirectionalLight('#10b981', isLightBackground ? 0.12 : 0.28);
-    rimLight.position.set(focus.center.x, focus.center.y - maxDim, focus.center.z + maxDim * 2.5);
+    rimLight.position.set(center.x, center.y - maxDim, center.z + maxDim * 2.5);
     scene.add(rimLight);
 
     // Ground Grid with delicate subdivisions
@@ -482,48 +379,53 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     if (!sceneRef.current) return;
     const scene = sceneRef.current;
     let cancelled = false;
-
-    const sharedGeometry = instancedMeshesRef.current[0]?.geometry;
-    instancedMeshesRef.current.forEach((mesh) => {
-      scene.remove(mesh);
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach((m: THREE.Material) => m.dispose());
-      } else {
-        mesh.material.dispose();
-      }
-    });
-    sharedGeometry?.dispose();
+    const meshes: THREE.InstancedMesh[] = [];
+    const textures = new Map<string, { texture: THREE.CanvasTexture; translucent: boolean }>();
     instancedMeshesRef.current = [];
-
     const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
     const dummy = new THREE.Object3D();
+    setTexturePhase('loading');
+    setTextureError('');
+    setMissingTextures(0);
 
     const renderBlocks = async () => {
+      const pack = await loadBundledTextures();
+      if (cancelled) return;
       const groups = new Map<string, VoxelBlock[]>();
+      const missing = new Set<string>();
       for (const block of previewBlocks) {
-        const url = textureUrlForBlock(block.blockId);
+        if (['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'].includes(block.blockId)) continue;
         const chunk = `${Math.floor(block.x / RENDER_CHUNK_SIZE)},${Math.floor(block.y / RENDER_CHUNK_SIZE)},${Math.floor(block.z / RENDER_CHUNK_SIZE)}`;
-        const key = `${url}|${chunk}`;
+        const key = `${block.blockId}|${chunk}`;
         const group = groups.get(key);
         if (group) group.push(block);
         else groups.set(key, [block]);
       }
-      const loaded = await Promise.all([...groups.entries()].map(async ([key, blocks]) => {
-        const separator = key.lastIndexOf('|');
-        const url = key.slice(0, separator);
-        return { url, blocks, texture: await loadBlockTexture(url) };
-      }));
-      if (cancelled) {
-        loaded.forEach(({ texture }) => texture?.dispose());
-        return;
-      }
-      for (const [{ url, blocks, texture }, index] of loaded.map((entry, index) => [entry, index] as const)) {
+      let index = 0;
+      for (const blocks of groups.values()) {
+        if (cancelled) return;
+        const name = blockTextureName(pack.assets, blocks[0].blockId);
+        if (name && !textures.has(name)) {
+          const { canvas, translucent } = cropBlockTexture(pack, name);
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.magFilter = THREE.NearestFilter;
+          texture.minFilter = THREE.NearestFilter;
+          texture.generateMipmaps = false;
+          textures.set(name, { texture, translucent });
+        }
+        const loaded = name ? textures.get(name) : undefined;
+        const texture = loaded?.texture;
+        if (!texture) missing.add(blocks[0].blockId);
         const material = new THREE.MeshStandardMaterial({
           color: new THREE.Color(texture ? '#ffffff' : colorForBlock(blocks[0]?.blockId ?? '')),
           ...(texture ? { map: texture } : {}),
           roughness: 0.78,
           metalness: 0.04,
           wireframe,
+          alphaTest: 0.1,
+          transparent: loaded?.translucent ?? false,
+          depthWrite: !loaded?.translucent,
         });
         const instancedMesh = new THREE.InstancedMesh(boxGeometry, material, blocks.length);
         instancedMesh.frustumCulled = true;
@@ -535,17 +437,34 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
           instancedMesh.setMatrixAt(index, dummy.matrix);
         });
         instancedMesh.instanceMatrix.needsUpdate = true;
-        (instancedMesh as any).userData = { blocks, textureUrl: url };
+        instancedMesh.userData = { blocks, textureName: name };
         scene.add(instancedMesh);
+        meshes.push(instancedMesh);
         instancedMeshesRef.current.push(instancedMesh);
-        if (index % 24 === 23) await nextFrame();
+        if (++index % 24 === 0) await nextFrame();
       }
+      if (cancelled) return;
+      setMissingTextures(missing.size);
+      setTexturePhase('ready');
     };
-    void renderBlocks();
+    void renderBlocks().catch((error) => {
+      if (cancelled) return;
+      console.error('ThreeViewport texture loading failed', error);
+      setTextureError(error instanceof Error ? error.message : 'Unable to load Minecraft textures.');
+      setTexturePhase('error');
+    });
     return () => {
       cancelled = true;
+      for (const mesh of meshes) {
+        scene.remove(mesh);
+        (mesh.material as THREE.Material).dispose();
+        mesh.dispose();
+      }
+      boxGeometry.dispose();
+      textures.forEach(({ texture }) => texture.dispose());
+      instancedMeshesRef.current = [];
     };
-  }, [previewBlocks, wireframe]);
+  }, [previewBlocks, wireframe, textureEpoch]);
 
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const mouse = useMemo(() => new THREE.Vector2(), []);
@@ -594,32 +513,18 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
   // Silky smooth camera tweening
   const setCameraPreset = useCallback(
-    (view: 'iso' | 'top' | 'front' | 'side' | 'reset') => {
+    (view: ViewportView | 'reset') => {
       if (!cameraRef.current || !controlsRef.current) return;
       const camera = cameraRef.current;
       const controls = controlsRef.current;
-      const focus = focusForStructure(structure);
-      const cx = focus.center.x;
-      const cy = focus.center.y;
-      const cz = focus.center.z;
-      const maxDim = focus.size;
-
-      const targetLookAt = new THREE.Vector3(cx, cy, cz);
-      const targetPos = new THREE.Vector3();
-
-      if (view === 'iso' || view === 'reset') {
-        targetPos.set(cx + maxDim * 1.3, cy + maxDim, cz + maxDim * 1.3);
-        setActiveCameraView('iso');
-      } else if (view === 'top') {
-        targetPos.set(cx, cy + maxDim * 2, cz + 0.01);
-        setActiveCameraView('top');
-      } else if (view === 'front') {
-        targetPos.set(cx, cy, cz + maxDim * 1.8);
-        setActiveCameraView('front');
-      } else if (view === 'side') {
-        targetPos.set(cx + maxDim * 1.8, cy, cz);
-        setActiveCameraView('side');
-      }
+      const preset = view === 'reset' ? 'iso' : view;
+      const target = new THREE.Vector3(...focus.center);
+      const targetPos = new THREE.Vector3(...frameViewport(focus, preset, structure.plan?.referenceFacing, camera.aspect));
+      const distance = targetPos.distanceTo(target);
+      camera.far = Math.max(1200, focus.size * 6, distance + focus.size * 2);
+      camera.updateProjectionMatrix();
+      controls.maxDistance = Math.max(320, focus.size * 6, distance * 1.5);
+      setActiveCameraView(preset);
 
       // Trigger silky 400ms camera lerp animation
       cameraTweenRef.current = {
@@ -628,16 +533,22 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         startPos: camera.position.clone(),
         targetPos: targetPos,
         startTarget: controls.target.clone(),
-        targetTarget: targetLookAt,
+        targetTarget: target,
         active: true,
       };
     },
-    [structure.blocks, structure.id, structure.size.x, structure.size.y, structure.size.z]
+    [focus, structure.plan?.referenceFacing]
   );
 
   useEffect(() => {
-    if (structure.blocks.length > 0) setCameraPreset('reset');
-  }, [structure.id, setCameraPreset]);
+    if (cameraView) setCameraPreset(cameraView);
+  }, [cameraView, setCameraPreset]);
+
+  useEffect(() => {
+    if (framedKeyRef.current === cameraKey) return;
+    framedKeyRef.current = cameraKey;
+    setCameraPreset('reset');
+  }, [cameraKey, setCameraPreset]);
 
   return (
     <div
@@ -747,9 +658,14 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         </div>
       )}
 
+      <div data-solid-status={texturePhase} data-missing-textures={missingTextures} role={texturePhase === 'error' ? 'alert' : 'status'} className={texturePhase === 'error' ? 'absolute left-1/2 top-1/2 z-20 flex max-w-[calc(100%-32px)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 rounded bg-black/80 p-4 text-center text-xs text-zinc-300' : 'pointer-events-none absolute bottom-12 left-3 rounded bg-black/55 px-2 py-1 text-[10px] text-zinc-300'}>
+        {texturePhase === 'loading' ? 'Loading Minecraft textures...' : texturePhase === 'error' ? textureError : missingTextures ? `${missingTextures} block types use color previews; no bundled texture is available.` : 'Minecraft textures ready'}
+        {texturePhase === 'error' && <button type="button" data-solid-texture-retry="true" onClick={retryTextures} className="rounded border border-white/20 px-2 py-1 text-white hover:bg-white/10">Retry textures</button>}
+      </div>
+
       {/* Layer Height Indicator (Responsive) */}
-      <div className="absolute bottom-3 right-3 text-[10px] sm:text-[11px] font-mono text-zinc-400 studio-glass px-2.5 py-1 rounded-lg tabular-nums shadow-lg z-10">
-        Y {minY}–{maxY} <span className="text-zinc-600">/</span> {structure.size.y - 1}
+      <div data-viewport-layer-range="true" className="absolute bottom-3 right-3 text-[10px] sm:text-[11px] font-mono text-zinc-400 studio-glass px-2.5 py-1 rounded-lg tabular-nums shadow-lg z-10">
+        Y {minY}–{Math.min(maxY, structure.size.y - 1)} <span className="text-zinc-600">/</span> {structure.size.y - 1}
       </div>
     </div>
   );

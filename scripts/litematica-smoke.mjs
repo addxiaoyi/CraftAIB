@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createGrid } from '../packages/core/dist/index.js';
 import { planBuilding, structurePlanToGrid, structurePlanToRegionGrids } from '../packages/ai-planner/dist/index.js';
 import { serializeLitematica, serializeLitematicaRegions } from '../packages/cartographer-adapter/dist/index.js';
-import { applyLitematicaPlacement, parseLitematicaDocumentBytes, parseLitematicaPlacements, Reader, serializeLitematicaPlacements, summarizeLitematicaDocument } from '../packages/craftmatic-adapter/dist/index.js';
+import { applyLitematicaPlacement, parseLitematicaDocumentBytes, parseLitematicaPlacements, Reader, serializeLitematicaPlacements, serializeNativeLitematicaPlacement, summarizeLitematicaDocument } from '../packages/craftmatic-adapter/dist/index.js';
 
 const doubleList = new Uint8Array(1 + 4 + 24); const doubleView = new DataView(doubleList.buffer); doubleList[0] = 6; doubleView.setInt32(1, 3, false); doubleView.setFloat64(5, 1.25, false); doubleView.setFloat64(13, 2.5, false); doubleView.setFloat64(21, -3.75, false); assert.deepEqual(new Reader(doubleList).payload(9), { type: 6, value: [1.25, 2.5, -3.75] });
 
@@ -38,6 +38,31 @@ const placed = applyLitematicaPlacement(createGrid([{ x: 0, y: 0, z: 0, block: {
 assert.deepEqual(placed.origin, { x: 10, y: 2, z: -4 });
 assert.equal(placed.cells[0].block.properties.axis, 'z');
 assert.match(serializeLitematicaPlacements(placementDocument), /clockwise_90/);
+const nativePlacement = {
+  schematic: '/minecraft/schematics/acceptance.litematic', name: 'Client fixture',
+  origin: [100, 64, -30], rotation: 'COUNTERCLOCKWISE_90', mirror: 'LEFT_RIGHT',
+  enabled: true, enable_render: false, selected_region: 'Chest',
+  placements: [{ name: 'Chest', placement: { name: 'Chest', pos: [-4, 1, 7], rotation: 'CLOCKWISE_180', mirror: 'NONE', enabled: true, rendering_enabled: false } }],
+};
+const nativeDocument = parseLitematicaPlacements(nativePlacement);
+assert.deepEqual(nativeDocument.placements[0].position, { x: 100, y: 64, z: -30 });
+assert.equal(nativeDocument.placements[0].regions[0].rotation, '180');
+assert.deepEqual(nativeDocument.placements[0].regions[0].position, { x: -4, y: 1, z: 7 });
+const nativeExport = JSON.parse(serializeNativeLitematicaPlacement(nativeDocument.placements[0]));
+assert.deepEqual(nativeExport.origin, nativePlacement.origin);
+assert.equal(nativeExport.rotation, 'COUNTERCLOCKWISE_90');
+assert.equal(nativeExport.enable_render, false);
+assert.deepEqual(nativeExport.placements[0].placement.pos, [-4, 1, 7]);
+assert.equal(nativeExport.placements[0].placement.rendering_enabled, false);
+assert.deepEqual(parseLitematicaPlacements(nativeExport), nativeDocument);
+assert.deepEqual(parseLitematicaPlacements({ placements: [nativeExport], selected: 0 }), nativeDocument);
+assert.throws(() => parseLitematicaPlacements({ ...nativePlacement, origin: [0, 1] }), /pos/);
+assert.throws(() => serializeNativeLitematicaPlacement({ name: 'Missing path', position: { x: 0, y: 0, z: 0 } }), /schematic file path/);
+const directional = createGrid([{ x: 0, y: 0, z: 0, block: { id: 'minecraft:oak_stairs', properties: { facing: 'north', half: 'bottom' } } }], { width: 3, height: 1, length: 5 });
+const leftRight = applyLitematicaPlacement(directional, parseLitematicaPlacements({ placements: [{ name: 'Native mirror', pos: { x: 0, y: 0, z: 0 }, mirror: 'LEFT_RIGHT' }] }).placements[0]);
+assert.deepEqual([leftRight.cells[0].x, leftRight.cells[0].z, leftRight.cells[0].block.properties.facing], [0, 4, 'south'], 'Minecraft LEFT_RIGHT reflects north/south along Z');
+const frontBack = applyLitematicaPlacement(directional, parseLitematicaPlacements({ placements: [{ name: 'Native mirror', pos: { x: 0, y: 0, z: 0 }, mirror: 'FRONT_BACK' }] }).placements[0]);
+assert.deepEqual([frontBack.cells[0].x, frontBack.cells[0].z, frontBack.cells[0].block.properties.facing], [2, 0, 'north'], 'Minecraft FRONT_BACK reflects east/west along X');
 const plan = planBuilding({ prompt: 'gothic castle 3 floors with turret and courtyard' });
 const plannedRegions = structurePlanToRegionGrids(plan);
 const plannedBytes = await serializeLitematicaRegions(plannedRegions, { name: plan.name, author: 'CraftAIB' });

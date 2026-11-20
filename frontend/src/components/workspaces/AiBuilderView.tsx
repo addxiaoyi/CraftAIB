@@ -1,6 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
-import { ThreeViewport } from '../ThreeViewport';
+import { ThreeViewport, LodestoneViewport } from '../LazyViewport';
+import { VoxelThumbnail, type ThumbnailMode, type ThumbnailFacing } from '../VoxelThumbnail';
+import { resolvePreviewBlockId } from '../../utils/blockAliases';
+import { SegmentedTabs } from '../layout/SegmentedTabs';
+import { useFileExport } from '../../hooks/useFileExport';
 import { exportLitematic, exportSchematic, exportBlockGridJson } from '../../utils/exporters';
 import { compareReferenceProfiles, compareReferenceSilhouette, generateBuilding, type GenerationLogEntry } from '../../integrations/building';
 import {
@@ -23,6 +27,14 @@ import {
 
 function formatScore(value?: number): string {
   return value == null ? '-' : `${Math.round(value * 100)}%`;
+}
+
+const TEXTURED_PREVIEW_BLOCK_LIMIT = 250_000;
+const MIN_GENERATION_SIZE = 8;
+const MAX_GENERATION_SIZE = 512;
+
+function clampGenerationSize(value: number): number {
+  return Math.max(MIN_GENERATION_SIZE, Math.min(MAX_GENERATION_SIZE, Math.round(value || MIN_GENERATION_SIZE)));
 }
 
 interface AiBuilderViewProps {
@@ -136,8 +148,20 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   placements = [],
 }) => {
   const [prompt, setPrompt] = useState<string>(initialAiMeta?.prompt ?? '');
+  const fileExport = useFileExport();
+  const saveLitematic = () => void fileExport.save(() => exportLitematic(structure, placements));
+  const saveSchematic = () => void fileExport.save(() => exportSchematic(structure, placements));
   const [referenceImage, setReferenceImage] = useState<string | null>(initialAiMeta?.referenceImage ?? null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(true);
+  const [readingImage, setReadingImage] = useState(false);
+  const imageReader = useRef<FileReader | null>(null);
+  useEffect(() => () => {
+    const reader = imageReader.current;
+    imageReader.current = null;
+    reader?.abort();
+  }, []);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
+  const [thumbnailMode, setThumbnailMode] = useState<ThumbnailMode>('iso');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -155,6 +179,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [dimY, setDimY] = useState<number>(24);
   const [dimZ, setDimZ] = useState<number>(16);
   const [hasCustomDimensions, setHasCustomDimensions] = useState<boolean>(false);
+  const displayedDimensions = hasCustomDimensions ? { x: dimX, y: dimY, z: dimZ } : structure.size;
+  const chooseDimensions = (dimensions: StructureData['size']) => {
+    setHasCustomDimensions(true);
+    setDimX(clampGenerationSize(dimensions.x));
+    setDimY(clampGenerationSize(dimensions.y));
+    setDimZ(clampGenerationSize(dimensions.z));
+  };
+  const editDimension = (axis: keyof StructureData['size'], value: number) => {
+    chooseDimensions({ ...displayedDimensions, [axis]: value });
+  };
   const [style, setStyle] = useState<string>('AI_AUTO');
   const [paletteTheme, setPaletteTheme] = useState<string>('AI_AUTO');
   const [complexity, setComplexity] = useState<string>('Detailed');
@@ -163,9 +197,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const [includeInterior, setIncludeInterior] = useState<boolean>(true);
 
   const [minY, setMinY] = useState<number>(0);
-  const [maxY, setMaxY] = useState<number>(structure.size.y);
-  const [wireframe, setWireframe] = useState<boolean>(false);
-  const [viewportBackground, setViewportBackground] = useState<string>(() => localStorage.getItem('craftaib.viewport-background') || '#090a0f');
+  const [maxY, setMaxY] = useState<number>(Math.max(0, structure.size.y - 1));
+  const visibleLayerCount = Math.min(maxY + 1, structure.size.y);
+  const [solidPreview, setSolidPreview] = useState<boolean>(false);
+  const [viewportBackground, setViewportBackground] = useState<string>(() => {
+    try { return localStorage.getItem('craftaib.viewport-background') || '#090a0f'; }
+    catch (error) { console.warn('CraftAIB could not restore the viewport background.', error); return '#090a0f'; }
+  });
 
   useEffect(() => {
     setPrompt(initialAiMeta?.prompt ?? '');
@@ -178,10 +216,32 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     onAiMetaChange?.({ prompt, referenceImage: referenceImage ?? undefined, source: generationSource ?? undefined, referenceReport });
   }, [prompt, referenceImage, generationSource, referenceReport, onAiMetaChange]);
 
+  useEffect(() => {
+    setMinY(0);
+    setMaxY(Math.max(0, structure.size.y - 1));
+  }, [structure.size.y]);
+
   const changeViewportBackground = (color: string) => {
     setViewportBackground(color);
-    localStorage.setItem('craftaib.viewport-background', color);
+    try { localStorage.setItem('craftaib.viewport-background', color); }
+    catch (error) {
+      console.warn('CraftAIB could not save the viewport background.', error);
+      setErrorMessage(lang === 'zh' ? '背景已切换，但浏览器存储不可用，无法记住此设置。' : 'The background changed, but browser storage is unavailable to save this preference.');
+    }
   };
+
+  const previewStructure = useMemo(() => {
+    const blocks = structure.blocks
+      .filter((block) => block.y >= minY && block.y <= maxY)
+      .map((block) => {
+        const blockId = resolvePreviewBlockId(block.blockId);
+        return blockId === block.blockId ? block : { ...block, blockId };
+      });
+    return { ...structure, blocks };
+  }, [structure, minY, maxY]);
+  const previewBlockCount = previewStructure.blocks.length;
+  const solidFallback = previewBlockCount > TEXTURED_PREVIEW_BLOCK_LIMIT;
+  const rendererMode: 'textured' | 'solid' = solidPreview || solidFallback ? 'solid' : 'textured';
 
   const base = {
     en: {
@@ -211,6 +271,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       tabViewport: '3D Spatial Viewport',
       quickTags: 'Prompt Modifiers',
       layerSlice: 'Layer Height Slice',
+      renderTextured: 'Textured',
+      renderSolid: 'Solid',
     },
     zh: {
       headline: '生成式建筑计算引擎',
@@ -239,6 +301,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
       tabViewport: '3D 空间视口',
       quickTags: '构件修饰词',
       layerSlice: '高度切片',
+      renderTextured: '材质',
+      renderSolid: '实体',
     },
   }[lang];
   const t = lang === 'zh' ? {
@@ -261,10 +325,23 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    imageReader.current?.abort();
     const reader = new FileReader();
+    imageReader.current = reader;
+    setReadingImage(true);
     reader.onload = () => {
+      if (imageReader.current !== reader) return;
       setReferenceImage(reader.result as string);
       setReferenceReport(undefined);
+    };
+    reader.onerror = () => {
+      if (imageReader.current !== reader) return;
+      setErrorMessage(lang === 'zh' ? '无法读取参考图片，请重新选择。' : 'The reference image could not be read. Select it again.');
+    };
+    reader.onloadend = () => {
+      if (imageReader.current !== reader) return;
+      setReadingImage(false);
+      imageReader.current = null;
     };
     reader.readAsDataURL(file);
   };
@@ -283,6 +360,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   };
 
   const handleGenerate = async (forceLocal = false) => {
+    if (readingImage) return;
     if (!prompt.trim() && !referenceImage) {
       setErrorMessage('Describe the building or add a reference image.');
       return;
@@ -292,6 +370,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     const controller = new AbortController();
     abortController.current = controller;
     setIsLoading(true);
+    setIsResultsOpen(true);
     setErrorMessage(null);
     setErrorCode(null);
     setGenerationLog([]);
@@ -301,22 +380,28 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     setLoadingStep(forceLocal ? 'Creating a local preview…' : 'Checking model service…');
 
     try {
-      const referenceOwnsEnvelope = Boolean(referenceImage) && !hasCustomDimensions;
       const styleId = style === 'AI_AUTO' ? '' : style.toLowerCase().includes('gothic') ? 'gothic'
         : style.toLowerCase().includes('medieval') ? 'medieval'
         : style.toLowerCase().includes('modern') || style.toLowerCase().includes('brutalist') ? 'modern'
         : style.toLowerCase().includes('oriental') ? 'colonial'
         : style.toLowerCase().includes('nether') ? 'underwater' : 'fantasy';
+      const requestedSize = hasCustomDimensions ? { width: dimX, height: dimY, length: dimZ } : {};
       const result = await generateBuilding({
-        prompt: [prompt, styleId ? `Secondary style preference: ${styleId}` : '', paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme, hasCustomDetail || !referenceImage ? 'Detail level: ' + detailLevel + '/5' : '', includeInterior ? 'Complete the subject interior appropriately: buildings have usable rooms; objects retain their physical cavity, assembly and light source without inventing habitable rooms.' : 'Exterior structure only; do not add interior furniture'].filter(Boolean).join('. '),
+        prompt: [
+          prompt,
+          styleId ? `Secondary style preference: ${styleId}` : '',
+          paletteTheme === 'AI_AUTO' ? '' : 'Secondary palette preference: ' + paletteTheme,
+          hasCustomDetail ? `Detail preference: about ${detailLevel}/5.` : '',
+          includeInterior
+            ? 'Prefer a coherent usable interior where the subject calls for one; for objects keep their real cavity.'
+            : 'Exterior only; leave interiors out.',
+        ].filter(Boolean).join(' '),
         referenceImage: referenceImage ?? undefined,
         type: '',
         style: styleId,
-        floors: referenceImage ? undefined : Math.max(1, Math.min(64, Math.round(dimY / 6))),
-        width: referenceOwnsEnvelope ? undefined : dimX,
-        height: referenceOwnsEnvelope ? undefined : dimY,
-        length: referenceOwnsEnvelope ? undefined : dimZ,
-        detailLevel,
+        floors: forceLocal && hasCustomDimensions ? Math.max(1, Math.min(64, Math.round(dimY / 6))) : undefined,
+        ...requestedSize,
+        detailLevel: hasCustomDetail ? detailLevel : undefined,
         includeInterior,
         seed: 42,
       }, controller.signal, (value, stage, log) => {
@@ -338,7 +423,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
         ...compareReferenceProfiles(result.structure),
         constructionReview: (result.structure.plan as any)?.constructionReview,
       });
-      setMaxY(result.structure.size.y);
+      setMaxY(Math.max(0, result.structure.size.y - 1));
       setMinY(0);
       setGenerationSource(result.source);
       setMobileTab('viewport');
@@ -360,6 +445,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
           ? (lang === 'zh' ? '模型服务拒绝了当前 API 密钥或账户权限。请在 Settings 更新密钥后重试。' : 'The model provider rejected the configured API key or account permissions. Update the key in Settings and retry.')
         : code === 'RATE_LIMITED'
           ? (lang === 'zh' ? '模型服务请求过于频繁，请稍后重试。' : 'The model is rate limiting requests. Please retry shortly.')
+        : code === 'REFERENCE_GLASS_COVERAGE_TOO_LOW' && lang === 'zh'
+          ? '生成结果的玻璃或发光面板与参考图的亮面重合不足，未通过验收。参考图和描述已保留，可以重试。'
           : message;
       setErrorMessage(cancelled ? (lang === 'zh' ? '已取消生成，输入内容已保留。' : 'Generation cancelled. Your inputs are preserved.') : friendly);
       setErrorCode(cancelled ? 'CANCELLED' : code || 'GENERATION_FAILED');
@@ -374,44 +461,30 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   const handleCancelGeneration = () => abortController.current?.abort();
 
   return (
-    <div className="flex-1 h-full overflow-hidden flex flex-col bg-[#07090e]">
+    <div className="flex-1 h-full overflow-hidden flex flex-col bg-[var(--bg-canvas)]">
       {/* Mobile Adaptive Top Segmented Tab Switcher (< lg) */}
       <div className="lg:hidden flex items-center justify-between p-2 border-b border-white/[0.07] bg-[#0c0f17]/95 backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.08] p-0.5 rounded-lg w-full">
-          <button
-            onClick={() => setMobileTab('controls')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'controls'
-                ? 'bg-white/10 text-white shadow-sm font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>{t.tabControls}</span>
-          </button>
-          <button
-            onClick={() => setMobileTab('viewport')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'viewport'
-                ? 'bg-white/10 text-white shadow-sm font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{t.tabViewport}</span>
-          </button>
-        </div>
+        <SegmentedTabs
+          items={[
+            { id: 'controls', label: t.tabControls, icon: Sliders },
+            { id: 'viewport', label: t.tabViewport, icon: Eye },
+          ]}
+          value={mobileTab}
+          onChange={(id) => setMobileTab(id as 'controls' | 'viewport')}
+          ariaLabel={lang === 'zh' ? '移动端视图切换' : 'Mobile view switcher'}
+          className="w-full"
+        />
       </div>
 
       {/* Main Studio Frame: Split side-by-side on lg+ */}
       <div className="flex-1 h-full overflow-hidden flex flex-col lg:flex-row relative">
         {/* Left Column: Brief & Generator Console */}
         <aside
-          className={`w-full lg:w-[420px] xl:w-[450px] shrink-0 h-full border-r border-white/[0.07] bg-[#0c0f17] flex flex-col overflow-y-auto ${
+          className={`w-full lg:w-[var(--workspace-panel-w)] xl:w-[var(--workspace-panel-w-wide)] shrink-0 h-full border-r border-white/[0.07] bg-[var(--bg-surface)] flex flex-col overflow-y-auto ${
             mobileTab === 'viewport' ? 'hidden lg:flex' : 'flex'
           }`}
         >
-          <div className="p-4 sm:p-5 lg:p-6 space-y-4 sm:space-y-5">
+          <div className="flex min-h-full flex-none flex-col p-4 sm:p-5 lg:p-6 space-y-4 sm:space-y-5">
             {/* Headline with Architectural Badge */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
@@ -428,16 +501,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
             {/* Architectural Prompt Card */}
             <div className="space-y-2.5">
-              <div className="relative group">
+              <div className="space-y-1.5">
                 <textarea
                   data-ai-prompt="true"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={t.promptPlaceholder}
                   rows={3}
-                  className="w-full studio-input rounded-lg p-3 text-xs text-zinc-100 placeholder-zinc-500 resize-none leading-relaxed transition-all focus:border-emerald-500/40"
+                  className="w-full studio-input rounded-lg p-3 text-xs text-zinc-100 placeholder-zinc-500 resize-none leading-relaxed [overflow-wrap:anywhere] transition-all focus:border-emerald-500/40"
                 />
-                <div className="absolute right-2 bottom-2.5 flex items-center gap-1.5">
+                <div data-ai-prompt-actions="true" className="flex items-center justify-end gap-1.5">
                   {prompt && (
                     <button
                       onClick={() => setPrompt('')}
@@ -472,6 +545,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </div>
 
               {/* Reference Image Dropzone */}
+              {readingImage && <p data-reference-loading="true" role="status" className="text-xs text-zinc-400">{lang === 'zh' ? '正在读取参考图片…' : 'Reading reference image…'}</p>}
               {referenceImage ? (
                 <div className="relative h-18 rounded-lg overflow-hidden border border-emerald-500/30 bg-emerald-950/10 flex items-center justify-between p-2.5">
                   <div className="flex items-center gap-3">
@@ -514,12 +588,15 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               )}
 
               {/* Curated Presets Grid */}
-              <div className="space-y-1.5 pt-1">
-                <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+              <details className="group rounded-lg border border-white/[0.07] bg-white/[0.01]">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-zinc-400 hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
                   <span>{t.quickPresets}</span>
-                  <span className="text-zinc-500 font-normal">Click to apply</span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
+                  <span className="flex items-center gap-2 normal-case tracking-normal text-zinc-500">
+                    {lang === 'zh' ? '点击应用' : 'Choose a preset'}
+                    <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                  </span>
+                </summary>
+                <div className="grid grid-cols-2 gap-1.5 border-t border-white/[0.06] p-2">
                   {PRESET_PROMPTS.map((p, idx) => {
                     const isSelected = style === p.style && paletteTheme === p.palette;
                     return (
@@ -557,13 +634,35 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     );
                   })}
                 </div>
-              </div>
+              </details>
+            </div>
+
+            <div className="sticky top-0 z-20 -mx-1 space-y-2 rounded-lg border border-emerald-400/20 bg-[#0c0f17]/95 p-2 shadow-xl backdrop-blur-md">
+              <button
+                data-ai-generate="true"
+                onClick={() => void handleGenerate()}
+                disabled={isLoading || readingImage}
+                className="w-full rounded-md btn-primary px-4 py-2.5 text-xs font-bold tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {isLoading ? (
+                  <><div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" /><span>{loadingStep || t.generating}</span></>
+                ) : (
+                  <><Sparkles className="w-4 h-4 text-emerald-600" /><span>{t.generateBtn}</span></>
+                )}
+              </button>
+              {isLoading && <button onClick={handleCancelGeneration} className="w-full rounded-md border border-white/10 py-1.5 text-xs text-zinc-300 hover:bg-white/5">{generationCopy.cancel}</button>}
+              {generationSource && <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">{generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}</p>}
+              {allowLocalPreview && !isLoading && <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full rounded-md border border-amber-500/30 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10">{generationCopy.local}</button>}
+              {errorMessage && <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="rounded-md border border-red-800/50 bg-red-950/40 p-2.5 text-xs leading-relaxed text-red-400">{errorMessage}</div>}
             </div>
 
             {/* Generation Parameters Section */}
             <div className="border border-white/[0.07] rounded-lg overflow-hidden bg-white/[0.01]">
               <button
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                data-generation-settings-toggle="true"
+                aria-expanded={isSettingsOpen}
+                aria-controls="ai-generation-parameters"
                 className="w-full flex items-center justify-between p-3 text-xs font-semibold text-zinc-200 hover:text-white transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2">
@@ -571,13 +670,19 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                   <span>{t.settingsTitle}</span>
                 </div>
                 <div className="flex items-center gap-2 text-zinc-400 font-mono text-[11px]">
-                  <span className="tabular-nums">{dimX}×{dimY}×{dimZ}</span>
+                  <span className="tabular-nums">{hasCustomDimensions ? `${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z}` : (lang === 'zh' ? 'AI 自动尺寸' : 'AI-chosen size')}</span>
                   {isSettingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </div>
               </button>
 
               {isSettingsOpen && (
-                <div className="p-3.5 pt-0 space-y-4 border-t border-white/[0.05] animate-fade-in text-xs">
+                <div id="ai-generation-parameters" className="p-3.5 pt-0 space-y-4 border-t border-white/[0.05] animate-fade-in text-xs">
+                  <details open data-parameter-section="size" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '尺寸' : 'Size'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-4 border-t border-white/[0.05] p-2.5">
                   {/* Rapid Aspect Envelope Presets */}
                   <div className="space-y-1.5 pt-2">
                     <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
@@ -585,6 +690,19 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       <span className="text-zinc-500">X × Y × Z</span>
                     </div>
                     <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        data-size-auto="true"
+                        onClick={() => setHasCustomDimensions(false)}
+                        aria-pressed={!hasCustomDimensions}
+                        className={`p-1.5 rounded-md border text-center transition-all ${
+                          !hasCustomDimensions
+                            ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-semibold'
+                            : 'border-white/[0.06] bg-white/[0.02] text-zinc-400 hover:text-white hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <div className="font-mono text-[11px]">{lang === 'zh' ? '自动' : 'Auto'}</div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5">{lang === 'zh' ? '由 AI 决定' : 'AI decides'}</div>
+                      </button>
                       {[
                         { label: '16×24×16', x: 16, y: 24, z: 16, sub: lang === 'zh' ? '紧凑型' : 'Compact' },
                         { label: '24×32×24', x: 24, y: 32, z: 24, sub: lang === 'zh' ? '标准级' : 'Standard' },
@@ -593,16 +711,15 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         { label: '256×256×256', x: 256, y: 256, z: 256, sub: lang === 'zh' ? '巨型' : 'Colossal' },
                         { label: '512×512×512', x: 512, y: 512, z: 512, sub: lang === 'zh' ? '超大型' : 'Super-scale' },
                       ].map((preset) => {
-                        const isCurrent = dimX === preset.x && dimY === preset.y && dimZ === preset.z;
+                        const isCurrent = hasCustomDimensions && displayedDimensions.x === preset.x && displayedDimensions.y === preset.y && displayedDimensions.z === preset.z;
                         return (
                           <button
                             key={preset.label}
+                            data-size-preset={`${preset.x}x${preset.y}x${preset.z}`}
                             onClick={() => {
-                              setHasCustomDimensions(true);
-                              setDimX(preset.x);
-                              setDimY(preset.y);
-                              setDimZ(preset.z);
+                              chooseDimensions(preset);
                             }}
+                            aria-pressed={isCurrent}
                             className={`p-1.5 rounded-md border text-center transition-all ${
                               isCurrent
                                 ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-semibold'
@@ -610,7 +727,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                             }`}
                           >
                             <div className="font-mono text-[11px] tabular-nums">{preset.label}</div>
-                            <div className="text-[9px] text-zinc-500 mt-0.5">{preset.sub}</div>
+                            <div className="text-[11px] text-zinc-500 mt-0.5">{preset.sub}</div>
                           </button>
                         );
                       })}
@@ -622,48 +739,50 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.width}</span>
-                        <input type="number" min={8} max={512} value={dimX} onChange={(e) => { setHasCustomDimensions(true); setDimX(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.x} onChange={(e) => editDimension('x', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Width in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimX}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimX(Number(e.target.value)); }}
+                        value={displayedDimensions.x}
+                        onChange={(e) => editDimension('x', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.height}</span>
-                        <input type="number" min={8} max={512} value={dimY} onChange={(e) => { setHasCustomDimensions(true); setDimY(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.y} onChange={(e) => editDimension('y', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Height in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimY}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimY(Number(e.target.value)); }}
+                        value={displayedDimensions.y}
+                        onChange={(e) => editDimension('y', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] text-zinc-400 font-mono mb-1">
                         <span>{t.depth}</span>
-                        <input type="number" min={8} max={512} value={dimZ} onChange={(e) => { setHasCustomDimensions(true); setDimZ(Math.max(8, Math.min(512, Math.round(Number(e.target.value) || 8)))); }} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
+                        <input type="number" min={8} max={512} value={displayedDimensions.z} onChange={(e) => editDimension('z', Number(e.target.value))} className="w-14 studio-input rounded px-1 py-0.5 text-right text-[10px]" aria-label="Length in blocks" />
                       </div>
                       <input
                         type="range"
                         min={8}
                         max={512}
-                        value={dimZ}
-                        onChange={(e) => { setHasCustomDimensions(true); setDimZ(Number(e.target.value)); }}
+                        value={displayedDimensions.z}
+                        onChange={(e) => editDimension('z', Number(e.target.value))}
                         className="w-full"
                       />
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-zinc-500">{lang === 'zh' ? `建筑尺寸 ${dimX}×${dimY}×${dimZ} 格；最多放置 12,000,000 方块。高复杂度会要求完整室内。` : `Building size ${dimX}×${dimY}×${dimZ}; max 12,000,000 placed blocks. High detail requires a complete interior.`}</p>
+                  <p className="text-[10px] text-zinc-500">{hasCustomDimensions
+                    ? (lang === 'zh' ? `建筑尺寸 ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} 格；最多放置 12,000,000 方块。` : `Building size ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z}; max 12,000,000 placed blocks.`)
+                    : (lang === 'zh' ? `当前模型 ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} 格，生成时自动决定尺寸。最多放置 12,000,000 个方块。` : `Current model: ${displayedDimensions.x}×${displayedDimensions.y}×${displayedDimensions.z} blocks. The next build uses automatic sizing. Up to 12,000,000 placed blocks.`)}</p>
                   {referenceImage && (
                     <p data-reference-mode="primary" role="status" className="text-[10px] text-emerald-300">
                       {hasCustomDimensions
@@ -671,6 +790,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         : (lang === 'zh' ? '参考图优先；尺寸和比例由图片推断。选择尺寸预设或编辑尺寸后才会锁定目标尺寸。' : 'Reference image is primary; dimensions and proportions come from the image until you choose a target size.')}
                     </p>
                   )}
+                    </div>
+                  </details>
+                  <details data-parameter-section="appearance" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '外观' : 'Appearance'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-4 border-t border-white/[0.05] p-2.5">
                   {/* Architectural Style Archetypes */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-mono text-zinc-400 block">{t.styleLabel}</label>
@@ -733,14 +860,33 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       ))}
                     </div>
                   </div>
+                    </div>
+                  </details>
 
                   {/* Complexity Density */}
+                  <details data-parameter-section="detail" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '细节' : 'Detail'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-1.5 border-t border-white/[0.05] p-2.5">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-mono text-zinc-400 block">{t.complexityLabel}</label>
-                      <span className="text-emerald-300 font-mono">{detailLevel}/5</span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          data-detail-auto="true"
+                          onClick={() => setHasCustomDetail(false)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-all ${
+                            hasCustomDetail ? 'text-zinc-500 hover:text-zinc-200' : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                          }`}
+                        >
+                          {lang === 'zh' ? '自动' : 'Auto'}
+                        </button>
+                        <span className="text-emerald-300 font-mono">{hasCustomDetail ? `${detailLevel}/5` : (lang === 'zh' ? 'AI 自动' : 'AI auto')}</span>
+                      </div>
                     </div>
-                    <label className="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" checked={includeInterior} onChange={(e) => setIncludeInterior(e.target.checked)} />{lang === 'zh' ? '生成完整室内（房间、楼梯、灯具、家具）' : 'Generate full interior (rooms, stairs, lighting, furniture)'}</label>
+                    <label className="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" checked={includeInterior} onChange={(e) => setIncludeInterior(e.target.checked)} />{lang === 'zh' ? '包含室内空间（按建筑类型自然生成）' : 'Include interior space (generated to suit the subject)'}</label>
                     <input
                       type="range"
                       min={1}
@@ -760,13 +906,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       {[1, 2, 3, 4, 5].map((level) => (
                         <button
                           key={level}
+                          data-detail-level={level}
                           onClick={() => {
                             setHasCustomDetail(true);
                             setDetailLevel(level);
                             setComplexity(level <= 2 ? 'Minimal' : level === 3 ? 'Standard' : level === 4 ? 'Detailed' : 'Maximal');
                           }}
                           className={`py-1 rounded-md text-[11px] font-mono transition-all ${
-                            detailLevel === level
+                            hasCustomDetail && detailLevel === level
                               ? 'bg-white text-zinc-950 font-semibold shadow-sm'
                               : 'bg-white/[0.03] text-zinc-400 hover:text-white border border-white/[0.06]'
                           }`}
@@ -777,54 +924,46 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       ))}
                     </div>
                   </div>
+                    </div>
+                  </details>
                 </div>
               )}
             </div>
 
-            {/* Synthesize Action Button */}
-            <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-white/[0.01]">
               <button
-                data-ai-generate="true"
-                onClick={() => void handleGenerate()}
-                disabled={isLoading}
-                className="w-full py-3 px-4 rounded-lg btn-primary text-xs font-bold tracking-wide flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
+                type="button"
+                data-ai-results-toggle="true"
+                onClick={() => setIsResultsOpen((open) => !open)}
+                aria-expanded={isResultsOpen}
+                className="flex w-full items-center justify-between gap-3 p-3 text-left text-xs font-semibold text-zinc-200 hover:text-white"
               >
-                {isLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" />
-                    <span>{loadingStep || t.generating}</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    <span>{t.generateBtn}</span>
-                  </>
-                )}
+                <span className="flex min-w-0 items-center gap-2">
+                  <Layers className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                  <span className="truncate">{t.regionSummary}</span>
+                  <span className="shrink-0 font-mono text-[10px] font-medium text-emerald-400">
+                    {structure.regions?.length || 0} {lang === 'zh' ? '������' : 'regions'}
+                  </span>
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isResultsOpen ? 'rotate-180' : ''}`} />
               </button>
-
-              {isLoading && (
-                <button onClick={handleCancelGeneration} className="w-full py-2 rounded-md border border-white/10 text-xs text-zinc-300 hover:bg-white/5">
-                  {generationCopy.cancel}
-                </button>
-              )}
-
-              {generationSource && (
-                <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">
-                  {generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}
-                </p>
-              )}
-
-              {allowLocalPreview && !isLoading && (
-                <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full py-2 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10">
-                  {generationCopy.local}
-                </button>
-              )}
-
-              {errorMessage && (
-                <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
-                  {errorMessage}
+              {isResultsOpen && <div className="space-y-3 border-t border-white/[0.06] p-3">
+                <div className="grid grid-cols-3 gap-2" aria-label={lang === 'zh' ? '结果预览' : 'Result previews'}>
+                  {(['front', 'iso', 'slice'] as const).map((mode) => (
+                    <VoxelThumbnail
+                      key={mode}
+                      structure={previewStructure}
+                      mode={mode}
+                      maxY={maxY}
+                      facing={(structure.plan?.referenceFacing as ThumbnailFacing | undefined) ?? 'z-min'}
+                      label={mode === 'front' ? (lang === 'zh' ? '正面' : 'Front') : mode === 'iso' ? (lang === 'zh' ? '斜视' : 'Isometric') : (lang === 'zh' ? '当前切片' : 'Current slice')}
+                      active={thumbnailMode === mode}
+                      onOpen={() => { setThumbnailMode(mode); setMobileTab('viewport'); }}
+                    />
+                  ))}
                 </div>
-              )}
+            {/* Generation feedback stays with the result history after the primary action. */}
+            <div className="space-y-2">
               {(isLoading || generationLog.length > 0) && (
                 <section aria-live="polite" aria-label={lang === 'zh' ? 'AI 建造日志' : 'AI construction log'} className="space-y-1.5 rounded-md border border-white/[0.08] bg-black/20 p-2.5">
                   <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-300">
@@ -903,10 +1042,13 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
             {/* Quick Export & Full CAD Jump */}
             <div className="pt-2 border-t border-white/[0.07] space-y-2">
+              {fileExport.exportError && <p data-export-error role="alert" className="text-xs text-red-400">{fileExport.exportError}</p>}
+              {fileExport.isExporting && <p role="status" className="text-xs text-zinc-400">{lang === 'zh' ? '正在导出…' : 'Exporting...'}</p>}
               <div className="grid grid-cols-2 gap-1.5">
                 <button
                   data-ai-export="litematic"
-                  onClick={() => void exportLitematic(structure, placements)}
+                  onClick={saveLitematic}
+                  disabled={fileExport.isExporting}
                   className="py-2 px-2.5 rounded-lg btn-secondary text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-400" />
@@ -914,7 +1056,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 </button>
                 <button
                   data-ai-export="schematic"
-                  onClick={() => void exportSchematic(structure, placements)}
+                  onClick={saveSchematic}
+                  disabled={fileExport.isExporting}
                   className="py-2 px-2.5 rounded-lg btn-secondary text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-zinc-400" />
@@ -930,54 +1073,86 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
               </button>
             </div>
+              </div>}
+            </div>
           </div>
         </aside>
 
         {/* Center / Right Column: Immersive 3D Spatial Viewport */}
         <main
-          className={`flex-1 h-full flex flex-col relative overflow-hidden bg-[#07090e] ${
+          className={`flex-1 h-full flex flex-col relative overflow-hidden bg-[var(--bg-canvas)] ${
             mobileTab === 'controls' ? 'hidden lg:flex' : 'flex'
           }`}
         >
           {/* Viewport Canvas with interactive Orbit */}
-          <div className="flex-1 relative">
-            <ThreeViewport
-              structure={structure}
+          <div data-ai-renderer={rendererMode} data-ai-preview-blocks={previewBlockCount} className="flex-1 relative">
+            {rendererMode === 'textured' ? (
+              <LodestoneViewport
+                lang={lang}
+                structure={previewStructure}
+                backgroundColor={viewportBackground}
+                cameraView={thumbnailMode === 'front' ? 'front' : thumbnailMode === 'slice' ? 'top' : 'iso'}
+                className="w-full h-full"
+              />
+            ) : (
+              <ThreeViewport
+                lang={lang}
+                structure={previewStructure}
                 backgroundColor={viewportBackground}
                 onBackgroundColorChange={changeViewportBackground}
-              minY={minY}
-              maxY={maxY}
-              wireframe={wireframe}
-              showRegions={false}
-              className="w-full h-full"
-            />
+                cameraView={thumbnailMode === 'front' ? 'front' : thumbnailMode === 'slice' ? 'top' : 'iso'}
+                minY={minY}
+                maxY={maxY}
+                showRegions={false}
+                className="w-full h-full"
+              />
+            )}
+
+            {solidFallback && (
+              <div
+                data-ai-preview-fallback="true"
+                role="status"
+                className="pointer-events-none absolute bottom-16 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-2.5 py-1 text-[10px] text-amber-200"
+              >
+                {lang === 'zh'
+                  ? `实体预览：${previewBlockCount.toLocaleString()} 个方块（材质预览上限 25 万）`
+                  : `Solid preview: ${previewBlockCount.toLocaleString()} blocks (textured preview caps at 250k)`}
+              </div>
+            )}
 
             {/* Floating Minimal Bottom Slicing Drawer */}
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 studio-glass px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-2xl flex items-center gap-3 sm:gap-4 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-24px)] overflow-x-auto">
+            <div className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 studio-glass px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-2xl flex items-center gap-3 sm:gap-4 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-24px)] overflow-x-auto">
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-[10px] sm:text-[11px] text-zinc-400 whitespace-nowrap">{t.layerSlice}</span>
                 <input
                   type="range"
+                  data-ai-slice="true"
                   min={0}
-                  max={structure.size.y}
+                  max={Math.max(0, structure.size.y - 1)}
                   value={maxY}
                   onChange={(e) => setMaxY(Number(e.target.value))}
                   className="w-24 sm:w-32 accent-white"
                 />
                 <span className="font-mono text-[10px] sm:text-[11px] text-emerald-400 font-semibold w-8 tabular-nums">
-                  {maxY}/{structure.size.y}
+                  {visibleLayerCount}/{structure.size.y}
                 </span>
               </div>
 
               <div className="w-[1px] h-3.5 bg-white/10 shrink-0" />
 
               <button
-                onClick={() => setWireframe(!wireframe)}
-                className={`px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-mono transition-colors shrink-0 cursor-pointer ${
-                  wireframe ? 'bg-white/20 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
+                data-ai-render-toggle="true"
+                aria-pressed={rendererMode === 'solid'}
+                disabled={solidFallback}
+                title={solidFallback ? (lang === 'zh' ? '方块数超过材质预览上限，已自动切换到实体预览' : 'Above the textured preview limit; solid preview is forced') : undefined}
+                onClick={() => setSolidPreview(!solidPreview)}
+                className={`px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-mono transition-colors shrink-0 ${
+                  solidFallback ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                } ${rendererMode === 'solid' ? 'bg-white/20 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
-                {wireframe ? 'Wireframe: ON' : 'Wireframe: OFF'}
+                <span className={rendererMode === 'textured' ? 'text-white' : 'text-zinc-500'}>{t.renderTextured}</span>
+                <span className="text-zinc-600"> / </span>
+                <span className={rendererMode === 'solid' ? 'text-white' : 'text-zinc-500'}>{t.renderSolid}</span>
               </button>
             </div>
           </div>

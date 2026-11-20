@@ -4,6 +4,7 @@ import { exportMaterialsCsv } from '../../utils/exporters';
 import { runEngineTask, structureToGrid } from '../../integrations/engine';
 import { BLOCK_REGISTRY, BLOCK_SUBSTITUTIONS } from '../../utils/blockRegistry';
 import { tr } from '../../i18n';
+import { PageWorkspace } from '../layout/PageWorkspace';
 import {
   Package,
   Download,
@@ -163,20 +164,17 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({
 
     onStructureChange({
       ...structure,
+      plan: undefined,
       blocks: updatedBlocks,
     });
   };
 
   return (
-    <div className="flex-1 h-full overflow-y-auto p-5 lg:p-7 space-y-6 max-w-7xl mx-auto w-full bg-[#090a0f]">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-base font-semibold tracking-tight text-white">{t.title}</h1>
-          <p className="text-xs text-zinc-400 mt-1">{t.subtitle}</p>
-          <p role="status" className="text-[10px] text-zinc-500 mt-1">{analysisState === 'running' ? (lang === 'zh' ? '正在通过 Worker 分析…' : 'Analyzing in Worker...') : analysisState === 'error' ? (lang === 'zh' ? '分析失败' : 'Analysis failed') : ''}</p>
-        </div>
-
+    <PageWorkspace
+      title={t.title}
+      subtitle={t.subtitle}
+      status={analysisState === 'running' ? (lang === 'zh' ? '正在通过 Worker 分析…' : 'Analyzing in Worker...') : analysisState === 'error' ? (lang === 'zh' ? '分析失败' : 'Analysis failed') : ''}
+      actions={
         <button
           onClick={() => exportMaterialsCsv(bom, structure.name)}
           className="px-3.5 py-1.5 rounded-md btn-primary text-xs font-semibold flex items-center gap-2 self-start sm:self-auto shrink-0 shadow-sm"
@@ -184,7 +182,8 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({
           <Download className="w-3.5 h-3.5" />
           <span>{t.exportCsv}</span>
         </button>
-      </div>
+      }
+    >
 
       {/* Metrics Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -372,6 +371,6 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({
           </table>
         </div>
       </div>
-    </div>
+    </PageWorkspace>
   );
 };

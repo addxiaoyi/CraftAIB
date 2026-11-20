@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { PNG } from 'pngjs';
 import { launchTestBrowser, previewUrl } from './lib/browser.mjs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -7,9 +8,27 @@ import { parseLitematicaDocumentBytes, summarizeLitematicaDocument } from '../pa
 const browser = await launchTestBrowser();
 const page = await browser.newPage();
 await page.setViewportSize({ width: 1600, height: 1000 });
+function pixelDifferenceRatio(left, right) {
+  assert.equal(left.width, right.width, 'camera previews must use the same canvas width');
+  assert.equal(left.height, right.height, 'camera previews must use the same canvas height');
+  let changed = 0;
+  for (let offset = 0; offset < left.data.length; offset += 4) {
+    const differs = Math.max(
+      Math.abs(left.data[offset] - right.data[offset]),
+      Math.abs(left.data[offset + 1] - right.data[offset + 1]),
+      Math.abs(left.data[offset + 2] - right.data[offset + 2]),
+    ) > 16;
+    if (differs) changed += 1;
+  }
+  return changed / (left.width * left.height);
+}
 const errors = [];
 let responseMode = 'success';
 let generatedPlan;
+const verifiedRequests = [];
+// The explicit-selection contract is checked against whatever the test locked in before the click.
+const unlockedConstraints = () => ({ width: undefined, height: undefined, length: undefined, floors: undefined, detailLevel: undefined });
+let expectedRequest = { label: 'default prompt-only build', ...unlockedConstraints() };
 page.on('pageerror', (error) => errors.push(error.message));
 await page.route('**/api/ai/status', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, text: true, vision: true, generationModel: 'mock-generation' }) }));
 await page.route('**/api/ai/structure-plan**', async (route) => {
@@ -21,8 +40,12 @@ await page.route('**/api/ai/structure-plan**', async (route) => {
   if (input.referenceImage) {
     assert.match(input.referenceImage.dataUrl, /^data:image\/(png|jpeg|webp|gif);base64,/);
     assert.equal('pixels' in input.referenceImage, false, 'reference pixels must not be expanded on the UI thread');
-    assert.equal(input.constraints.detailLevel, 4, 'reference-image builds must retain the selected detail level for interior synthesis');
   }
+  // Only a locked size or detail level may reach the model; Auto must leave the key undefined.
+  for (const key of ['width', 'height', 'length', 'floors', 'detailLevel']) {
+    assert.equal(input.constraints[key], expectedRequest[key], `${expectedRequest.label}: expected constraints.${key} to be ${String(expectedRequest[key])}, received ${String(input.constraints[key])}`);
+  }
+  verifiedRequests.push(expectedRequest.label);
   const planned = planBuilding({ prompt: input.prompt || 'reference building', seed: input.seed || 42, referenceImage: input.referenceImage, constraints: input.constraints });
   const plan = input.referenceImage?.referenceFeatures ? attachReferenceFeatures(planned, input.referenceImage.referenceFeatures) : planned;
   generatedPlan = plan;
@@ -38,11 +61,121 @@ await page.route('**/api/ai/structure-plan**', async (route) => {
 try {
   await page.goto(previewUrl);
   await page.locator('[data-active-workspace="ai_builder"]').waitFor();
-  await page.locator('[data-ai-prompt="true"]').fill('a harbor city with a lighthouse');
+  assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'false', 'result details should start collapsed');
+  await page.locator('[data-ai-generate="true"]').waitFor({ state: 'visible' });
+  const prompt = page.locator('[data-ai-prompt="true"]');
+  await page.setViewportSize({ width: 640, height: 800 });
+  await prompt.fill('ExtraordinarilyLongArchitecturalSpecificationWithoutSpaces'.repeat(14));
+  const promptLayout = await prompt.evaluate((node) => {
+    const actions = document.querySelector('[data-ai-prompt-actions="true"]');
+    return {
+      scrollWidth: node.scrollWidth,
+      clientWidth: node.clientWidth,
+      bottom: node.getBoundingClientRect().bottom,
+      actionsTop: actions?.getBoundingClientRect().top ?? -1,
+      pageWidth: Math.max(document.body.scrollWidth, document.documentElement.scrollWidth),
+    };
+  });
+  assert.ok(promptLayout.scrollWidth <= promptLayout.clientWidth, 'long unbroken English prompts must wrap inside the textarea');
+  assert.ok(promptLayout.actionsTop >= promptLayout.bottom, 'prompt actions must sit below the input without overlap');
+  assert.equal(promptLayout.pageWidth, 640, 'AI builder should not overflow horizontally at the 200% zoom equivalent width');
+  await prompt.fill('a harbor city with a lighthouse');
+  await page.setViewportSize({ width: 320, height: 720 });
+  const mobileLayout = await page.evaluate(() => ({ pageWidth: Math.max(document.body.scrollWidth, document.documentElement.scrollWidth), viewportWidth: innerWidth }));
+  assert.equal(mobileLayout.pageWidth, mobileLayout.viewportWidth, 'English AI builder should reflow without horizontal page overflow at 320px');
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.body.innerText.includes('tool_result'), null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
+  assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'true', 'generation should reveal its result details');
   assert.match(await page.locator('body').innerText(), /build_voxel_structure/);
+  await page.locator('[data-generation-settings-toggle="true"]').click();
+  assert.equal(await page.locator('[data-parameter-section="size"]').evaluate((node) => node.hasAttribute('open')), true);
+  assert.equal(await page.locator('[data-parameter-section="appearance"]').evaluate((node) => node.hasAttribute('open')), false);
+  assert.equal(await page.locator('[data-parameter-section="detail"]').evaluate((node) => node.hasAttribute('open')), false);
+  assert.equal(await page.locator('[data-ai-thumbnail]').count(), 3, 'result panel should expose front, isometric and slice previews');
+  const width = page.getByRole('spinbutton', { name: 'Width in blocks' });
+  const height = page.getByRole('spinbutton', { name: 'Height in blocks' });
+  const length = page.getByRole('spinbutton', { name: 'Length in blocks' });
+  assert.deepEqual(await Promise.all([width.inputValue(), height.inputValue(), length.inputValue()]),
+    [generatedPlan.dimensions.width, generatedPlan.dimensions.height, generatedPlan.dimensions.length].map(String));
+  assert.equal(await page.locator('[data-size-auto="true"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-size-preset][aria-pressed="true"]').count(), 0);
+
+  // The preview must be a painted, textured render, not an empty canvas behind a DOM shell.
+  const preview = page.locator('[data-ai-renderer="textured"]');
+  await preview.waitFor({ timeout: 30000 });
+  const previewBlocks = Number(await preview.getAttribute('data-ai-preview-blocks'));
+  assert.ok(previewBlocks > 0, `textured preview should receive blocks, received ${previewBlocks}`);
+  await page.waitForFunction(() => document.querySelector('[data-lodestone-status]')?.textContent?.includes('Minecraft resource pack ready'), null, { timeout: 30000 });
+  await page.waitForTimeout(600);
+  const previewPng = PNG.sync.read(await preview.locator('canvas').screenshot());
+  let opaquePixels = 0;
+  const previewColors = new Set();
+  for (let offset = 0; offset < previewPng.data.length; offset += 4) {
+    if (previewPng.data[offset + 3] < 8) continue;
+    opaquePixels += 1;
+    previewColors.add(`${previewPng.data[offset] >> 4},${previewPng.data[offset + 1] >> 4},${previewPng.data[offset + 2] >> 4}`);
+  }
+  const coverage = opaquePixels / (previewPng.width * previewPng.height);
+  assert.ok(coverage > 0.05, `textured preview should paint most of the canvas, coverage=${coverage.toFixed(3)}`);
+  assert.ok(previewColors.size >= 12, `textured preview should show many block colours, distinct=${previewColors.size}`);
+  const previewPixels = { blocks: previewBlocks, width: previewPng.width, height: previewPng.height, opaque: opaquePixels, colors: previewColors.size, coverage: Number(coverage.toFixed(3)) };
+
+  const isoView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  await page.locator('[data-ai-thumbnail="front"]').click();
+  assert.equal(await page.locator('[data-ai-thumbnail="front"]').getAttribute('aria-pressed'), 'true');
+  await page.waitForTimeout(250);
+  const frontView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  const frontViewChange = pixelDifferenceRatio(isoView, frontView);
+  assert.ok(frontViewChange > 0.01, `front thumbnail should change the rendered camera view, changed=${frontViewChange.toFixed(3)}`);
+  await page.locator('[data-ai-thumbnail="slice"]').click();
+  assert.equal(await page.locator('[data-ai-thumbnail="slice"]').getAttribute('aria-pressed'), 'true');
+  await page.waitForTimeout(250);
+  const sliceView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  const sliceViewChange = pixelDifferenceRatio(frontView, sliceView);
+  assert.ok(sliceViewChange > 0.01, `slice thumbnail should change the rendered camera view, changed=${sliceViewChange.toFixed(3)}`);
+  await page.locator('[data-ai-thumbnail="iso"]').click();
+  await page.waitForTimeout(250);
+
+  // Slicing must rebuild the mesh in place, not swap the Lodestone renderer instance.
+  const instanceBeforeSlice = await preview.locator('canvas').getAttribute('data-lodestone-instance');
+  assert.ok(instanceBeforeSlice, 'textured preview should expose its renderer instance');
+  const slice = page.locator('[data-ai-slice="true"]');
+  const fullHeight = Number(await slice.getAttribute('max'));
+  assert.equal(fullHeight, generatedPlan.dimensions.height - 1, 'the last selectable slice is the last valid Y coordinate');
+  const sliceHeight = Math.max(1, Math.floor(fullHeight / 2));
+  await slice.fill(String(sliceHeight));
+  await page.waitForFunction((expected) => {
+    const value = document.querySelector('[data-ai-preview-blocks]')?.getAttribute('data-ai-preview-blocks');
+    return value !== null && Number(value) < expected;
+  }, previewBlocks, { timeout: 15000 });
+  const slicedBlocks = Number(await preview.getAttribute('data-ai-preview-blocks'));
+  assert.ok(slicedBlocks > 0, `sliced preview should keep blocks, received ${slicedBlocks}`);
+  const instanceAfterSlice = await preview.locator('canvas').getAttribute('data-lodestone-instance');
+  assert.equal(instanceAfterSlice, instanceBeforeSlice, 'slicing should reuse the renderer instance');
+  await page.waitForFunction(() => document.querySelector('[data-lodestone-status]')?.textContent?.includes('Minecraft resource pack ready'), null, { timeout: 15000 });
+  const sliceResult = { fullHeight, sliceHeight, blocksBefore: previewBlocks, blocksAfter: slicedBlocks, rendererReused: instanceAfterSlice === instanceBeforeSlice };
+
+  // Locking a size or a detail level must reach the request; Auto must release them again.
+  expectedRequest = { label: 'locked 16x24x16 envelope', ...unlockedConstraints(), width: 16, height: 24, length: 16 };
+  await page.locator('[data-size-preset="16x24x16"]').click();
+  assert.equal(await page.locator('[data-size-preset="16x24x16"]').getAttribute('aria-pressed'), 'true');
+  await page.locator('[data-ai-generate="true"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
+
+  expectedRequest = { label: 'locked 16x24x16 envelope with detail 3', ...unlockedConstraints(), width: 16, height: 24, length: 16, detailLevel: 3 };
+  await page.locator('[data-parameter-section="detail"] summary').click();
+  await page.locator('[data-detail-level="3"]').click();
+  await page.locator('[data-ai-generate="true"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
+
+  expectedRequest = { label: 'released envelope and detail after Auto', ...unlockedConstraints() };
+  await page.locator('[data-detail-auto="true"]').click();
+  await page.locator('[data-size-auto="true"]').click();
+  await page.locator('[data-ai-generate="true"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
+
   const downloadPromise = page.waitForEvent('download');
   await page.locator('[data-ai-export="litematic"]').click();
   const download = await downloadPromise;
@@ -61,6 +194,7 @@ try {
   });
   assert.equal(litematicSummary.metadata.totalBlocks, litematicSummary.regions.reduce((total, region) => total + region.blocks, 0));
   assert.ok(litematicSummary.metadata.totalBlocks > 0, 're-imported Litematic should contain blocks');
+  expectedRequest = { label: 'reference-image build without a locked envelope', ...unlockedConstraints() };
   await page.locator('[data-reference-image="true"]').setInputFiles(resolve('res/logo.png'));
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
@@ -87,5 +221,8 @@ try {
   await page.locator('[data-ai-error-code="MODEL_TLS_CERTIFICATE_INVALID"]').waitFor();
   assert.match(await page.locator('[data-ai-error="true"]').innerText(), /TLS certificate|证书密钥强度过低/i);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ textGeneration: true, litematicDownload: true, litematicRegions: litematicSummary.regions, referenceGeneration: true, timeoutMessage: true, rateLimitMessage: true, explicitLocalRecovery: true, errors }, null, 2));
+  console.log(JSON.stringify({ textGeneration: true, litematicDownload: true, litematicRegions: litematicSummary.regions, referenceGeneration: true, verifiedRequests, timeoutMessage: true, rateLimitMessage: true, explicitLocalRecovery: true, previewPixels, thumbnailCameraChanges: { front: Number(frontViewChange.toFixed(3)), slice: Number(sliceViewChange.toFixed(3)) }, sliceResult, errors }, null, 2));
+} catch (error) {
+  console.error(JSON.stringify({ error: error instanceof Error ? error.message : String(error), errors }));
+  throw error;
 } finally { await browser.close(); }
