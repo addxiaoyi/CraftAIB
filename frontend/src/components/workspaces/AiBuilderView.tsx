@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CraftAibProject, LitematicaPlacementState, ReferenceReport, StructureData } from '../../types/minecraft';
 import { ThreeViewport, LodestoneViewport } from '../LazyViewport';
+import { VoxelThumbnail, type ThumbnailMode, type ThumbnailFacing } from '../VoxelThumbnail';
 import { resolvePreviewBlockId } from '../../utils/blockAliases';
 import { SegmentedTabs } from '../layout/SegmentedTabs';
 import { useFileExport } from '../../hooks/useFileExport';
@@ -160,6 +161,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
   }, []);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
+  const [thumbnailMode, setThumbnailMode] = useState<ThumbnailMode>('iso');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -482,7 +484,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
             mobileTab === 'viewport' ? 'hidden lg:flex' : 'flex'
           }`}
         >
-          <div className="p-4 sm:p-5 lg:p-6 space-y-4 sm:space-y-5">
+          <div className="flex min-h-full flex-none flex-col p-4 sm:p-5 lg:p-6 space-y-4 sm:space-y-5">
             {/* Headline with Architectural Badge */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
@@ -499,16 +501,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
             {/* Architectural Prompt Card */}
             <div className="space-y-2.5">
-              <div className="relative group">
+              <div className="space-y-1.5">
                 <textarea
                   data-ai-prompt="true"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={t.promptPlaceholder}
                   rows={3}
-                  className="w-full studio-input rounded-lg p-3 text-xs text-zinc-100 placeholder-zinc-500 resize-none leading-relaxed transition-all focus:border-emerald-500/40"
+                  className="w-full studio-input rounded-lg p-3 text-xs text-zinc-100 placeholder-zinc-500 resize-none leading-relaxed [overflow-wrap:anywhere] transition-all focus:border-emerald-500/40"
                 />
-                <div className="absolute right-2 bottom-2.5 flex items-center gap-1.5">
+                <div data-ai-prompt-actions="true" className="flex items-center justify-end gap-1.5">
                   {prompt && (
                     <button
                       onClick={() => setPrompt('')}
@@ -585,47 +587,6 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 </label>
               )}
 
-              <div className="sticky top-2 z-20 -mx-1 space-y-2 rounded-lg border border-emerald-400/20 bg-[#0c0f17]/95 p-2 shadow-xl backdrop-blur-md">
-                <button
-                  data-ai-generate="true"
-                  onClick={() => void handleGenerate()}
-                  disabled={isLoading || readingImage}
-                  className="w-full rounded-md btn-primary px-4 py-2.5 text-xs font-bold tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" />
-                      <span>{loadingStep || t.generating}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 text-emerald-600" />
-                      <span>{t.generateBtn}</span>
-                    </>
-                  )}
-                </button>
-                {isLoading && (
-                  <button onClick={handleCancelGeneration} className="w-full rounded-md border border-white/10 py-1.5 text-xs text-zinc-300 hover:bg-white/5">
-                    {generationCopy.cancel}
-                  </button>
-                )}
-                {generationSource && (
-                  <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">
-                    {generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}
-                  </p>
-                )}
-                {allowLocalPreview && !isLoading && (
-                  <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full rounded-md border border-amber-500/30 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10">
-                    {generationCopy.local}
-                  </button>
-                )}
-                {errorMessage && (
-                  <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="rounded-md border border-red-800/50 bg-red-950/40 p-2.5 text-xs leading-relaxed text-red-400">
-                    {errorMessage}
-                  </div>
-                )}
-              </div>
-
               {/* Curated Presets Grid */}
               <details className="group rounded-lg border border-white/[0.07] bg-white/[0.01]">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-zinc-400 hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
@@ -676,6 +637,25 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </details>
             </div>
 
+            <div className="sticky top-0 z-20 -mx-1 space-y-2 rounded-lg border border-emerald-400/20 bg-[#0c0f17]/95 p-2 shadow-xl backdrop-blur-md">
+              <button
+                data-ai-generate="true"
+                onClick={() => void handleGenerate()}
+                disabled={isLoading || readingImage}
+                className="w-full rounded-md btn-primary px-4 py-2.5 text-xs font-bold tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {isLoading ? (
+                  <><div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" /><span>{loadingStep || t.generating}</span></>
+                ) : (
+                  <><Sparkles className="w-4 h-4 text-emerald-600" /><span>{t.generateBtn}</span></>
+                )}
+              </button>
+              {isLoading && <button onClick={handleCancelGeneration} className="w-full rounded-md border border-white/10 py-1.5 text-xs text-zinc-300 hover:bg-white/5">{generationCopy.cancel}</button>}
+              {generationSource && <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">{generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}</p>}
+              {allowLocalPreview && !isLoading && <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full rounded-md border border-amber-500/30 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10">{generationCopy.local}</button>}
+              {errorMessage && <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="rounded-md border border-red-800/50 bg-red-950/40 p-2.5 text-xs leading-relaxed text-red-400">{errorMessage}</div>}
+            </div>
+
             {/* Generation Parameters Section */}
             <div className="border border-white/[0.07] rounded-lg overflow-hidden bg-white/[0.01]">
               <button
@@ -697,6 +677,12 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
 
               {isSettingsOpen && (
                 <div id="ai-generation-parameters" className="p-3.5 pt-0 space-y-4 border-t border-white/[0.05] animate-fade-in text-xs">
+                  <details open data-parameter-section="size" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '尺寸' : 'Size'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-4 border-t border-white/[0.05] p-2.5">
                   {/* Rapid Aspect Envelope Presets */}
                   <div className="space-y-1.5 pt-2">
                     <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
@@ -804,6 +790,14 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                         : (lang === 'zh' ? '参考图优先；尺寸和比例由图片推断。选择尺寸预设或编辑尺寸后才会锁定目标尺寸。' : 'Reference image is primary; dimensions and proportions come from the image until you choose a target size.')}
                     </p>
                   )}
+                    </div>
+                  </details>
+                  <details data-parameter-section="appearance" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '外观' : 'Appearance'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-4 border-t border-white/[0.05] p-2.5">
                   {/* Architectural Style Archetypes */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-mono text-zinc-400 block">{t.styleLabel}</label>
@@ -866,8 +860,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       ))}
                     </div>
                   </div>
+                    </div>
+                  </details>
 
                   {/* Complexity Density */}
+                  <details data-parameter-section="detail" className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-2 text-[11px] font-semibold text-zinc-300 [&::-webkit-details-marker]:hidden">
+                      <span>{lang === 'zh' ? '细节' : 'Detail'}</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                    </summary>
+                    <div className="space-y-1.5 border-t border-white/[0.05] p-2.5">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-mono text-zinc-400 block">{t.complexityLabel}</label>
@@ -922,6 +924,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                       ))}
                     </div>
                   </div>
+                    </div>
+                  </details>
                 </div>
               )}
             </div>
@@ -944,6 +948,20 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isResultsOpen ? 'rotate-180' : ''}`} />
               </button>
               {isResultsOpen && <div className="space-y-3 border-t border-white/[0.06] p-3">
+                <div className="grid grid-cols-3 gap-2" aria-label={lang === 'zh' ? '结果预览' : 'Result previews'}>
+                  {(['front', 'iso', 'slice'] as const).map((mode) => (
+                    <VoxelThumbnail
+                      key={mode}
+                      structure={previewStructure}
+                      mode={mode}
+                      maxY={maxY}
+                      facing={(structure.plan?.referenceFacing as ThumbnailFacing | undefined) ?? 'z-min'}
+                      label={mode === 'front' ? (lang === 'zh' ? '正面' : 'Front') : mode === 'iso' ? (lang === 'zh' ? '斜视' : 'Isometric') : (lang === 'zh' ? '当前切片' : 'Current slice')}
+                      active={thumbnailMode === mode}
+                      onOpen={() => { setThumbnailMode(mode); setMobileTab('viewport'); }}
+                    />
+                  ))}
+                </div>
             {/* Generation feedback stays with the result history after the primary action. */}
             <div className="space-y-2">
               {(isLoading || generationLog.length > 0) && (
@@ -1073,6 +1091,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 lang={lang}
                 structure={previewStructure}
                 backgroundColor={viewportBackground}
+                cameraView={thumbnailMode === 'front' ? 'front' : thumbnailMode === 'slice' ? 'top' : 'iso'}
                 className="w-full h-full"
               />
             ) : (
@@ -1081,6 +1100,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 structure={previewStructure}
                 backgroundColor={viewportBackground}
                 onBackgroundColorChange={changeViewportBackground}
+                cameraView={thumbnailMode === 'front' ? 'front' : thumbnailMode === 'slice' ? 'top' : 'iso'}
                 minY={minY}
                 maxY={maxY}
                 showRegions={false}

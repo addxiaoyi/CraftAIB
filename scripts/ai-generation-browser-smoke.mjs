@@ -8,6 +8,20 @@ import { parseLitematicaDocumentBytes, summarizeLitematicaDocument } from '../pa
 const browser = await launchTestBrowser();
 const page = await browser.newPage();
 await page.setViewportSize({ width: 1600, height: 1000 });
+function pixelDifferenceRatio(left, right) {
+  assert.equal(left.width, right.width, 'camera previews must use the same canvas width');
+  assert.equal(left.height, right.height, 'camera previews must use the same canvas height');
+  let changed = 0;
+  for (let offset = 0; offset < left.data.length; offset += 4) {
+    const differs = Math.max(
+      Math.abs(left.data[offset] - right.data[offset]),
+      Math.abs(left.data[offset + 1] - right.data[offset + 1]),
+      Math.abs(left.data[offset + 2] - right.data[offset + 2]),
+    ) > 16;
+    if (differs) changed += 1;
+  }
+  return changed / (left.width * left.height);
+}
 const errors = [];
 let responseMode = 'success';
 let generatedPlan;
@@ -49,13 +63,37 @@ try {
   await page.locator('[data-active-workspace="ai_builder"]').waitFor();
   assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'false', 'result details should start collapsed');
   await page.locator('[data-ai-generate="true"]').waitFor({ state: 'visible' });
-  await page.locator('[data-ai-prompt="true"]').fill('a harbor city with a lighthouse');
+  const prompt = page.locator('[data-ai-prompt="true"]');
+  await page.setViewportSize({ width: 640, height: 800 });
+  await prompt.fill('ExtraordinarilyLongArchitecturalSpecificationWithoutSpaces'.repeat(14));
+  const promptLayout = await prompt.evaluate((node) => {
+    const actions = document.querySelector('[data-ai-prompt-actions="true"]');
+    return {
+      scrollWidth: node.scrollWidth,
+      clientWidth: node.clientWidth,
+      bottom: node.getBoundingClientRect().bottom,
+      actionsTop: actions?.getBoundingClientRect().top ?? -1,
+      pageWidth: Math.max(document.body.scrollWidth, document.documentElement.scrollWidth),
+    };
+  });
+  assert.ok(promptLayout.scrollWidth <= promptLayout.clientWidth, 'long unbroken English prompts must wrap inside the textarea');
+  assert.ok(promptLayout.actionsTop >= promptLayout.bottom, 'prompt actions must sit below the input without overlap');
+  assert.equal(promptLayout.pageWidth, 640, 'AI builder should not overflow horizontally at the 200% zoom equivalent width');
+  await prompt.fill('a harbor city with a lighthouse');
+  await page.setViewportSize({ width: 320, height: 720 });
+  const mobileLayout = await page.evaluate(() => ({ pageWidth: Math.max(document.body.scrollWidth, document.documentElement.scrollWidth), viewportWidth: innerWidth }));
+  assert.equal(mobileLayout.pageWidth, mobileLayout.viewportWidth, 'English AI builder should reflow without horizontal page overflow at 320px');
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.body.innerText.includes('tool_result'), null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
   assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'true', 'generation should reveal its result details');
   assert.match(await page.locator('body').innerText(), /build_voxel_structure/);
   await page.locator('[data-generation-settings-toggle="true"]').click();
+  assert.equal(await page.locator('[data-parameter-section="size"]').evaluate((node) => node.hasAttribute('open')), true);
+  assert.equal(await page.locator('[data-parameter-section="appearance"]').evaluate((node) => node.hasAttribute('open')), false);
+  assert.equal(await page.locator('[data-parameter-section="detail"]').evaluate((node) => node.hasAttribute('open')), false);
+  assert.equal(await page.locator('[data-ai-thumbnail]').count(), 3, 'result panel should expose front, isometric and slice previews');
   const width = page.getByRole('spinbutton', { name: 'Width in blocks' });
   const height = page.getByRole('spinbutton', { name: 'Height in blocks' });
   const length = page.getByRole('spinbutton', { name: 'Length in blocks' });
@@ -84,6 +122,22 @@ try {
   assert.ok(previewColors.size >= 12, `textured preview should show many block colours, distinct=${previewColors.size}`);
   const previewPixels = { blocks: previewBlocks, width: previewPng.width, height: previewPng.height, opaque: opaquePixels, colors: previewColors.size, coverage: Number(coverage.toFixed(3)) };
 
+  const isoView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  await page.locator('[data-ai-thumbnail="front"]').click();
+  assert.equal(await page.locator('[data-ai-thumbnail="front"]').getAttribute('aria-pressed'), 'true');
+  await page.waitForTimeout(250);
+  const frontView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  const frontViewChange = pixelDifferenceRatio(isoView, frontView);
+  assert.ok(frontViewChange > 0.01, `front thumbnail should change the rendered camera view, changed=${frontViewChange.toFixed(3)}`);
+  await page.locator('[data-ai-thumbnail="slice"]').click();
+  assert.equal(await page.locator('[data-ai-thumbnail="slice"]').getAttribute('aria-pressed'), 'true');
+  await page.waitForTimeout(250);
+  const sliceView = PNG.sync.read(await preview.locator('canvas').screenshot());
+  const sliceViewChange = pixelDifferenceRatio(frontView, sliceView);
+  assert.ok(sliceViewChange > 0.01, `slice thumbnail should change the rendered camera view, changed=${sliceViewChange.toFixed(3)}`);
+  await page.locator('[data-ai-thumbnail="iso"]').click();
+  await page.waitForTimeout(250);
+
   // Slicing must rebuild the mesh in place, not swap the Lodestone renderer instance.
   const instanceBeforeSlice = await preview.locator('canvas').getAttribute('data-lodestone-instance');
   assert.ok(instanceBeforeSlice, 'textured preview should expose its renderer instance');
@@ -111,6 +165,7 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
 
   expectedRequest = { label: 'locked 16x24x16 envelope with detail 3', ...unlockedConstraints(), width: 16, height: 24, length: 16, detailLevel: 3 };
+  await page.locator('[data-parameter-section="detail"] summary').click();
   await page.locator('[data-detail-level="3"]').click();
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
@@ -166,8 +221,8 @@ try {
   await page.locator('[data-ai-error-code="MODEL_TLS_CERTIFICATE_INVALID"]').waitFor();
   assert.match(await page.locator('[data-ai-error="true"]').innerText(), /TLS certificate|证书密钥强度过低/i);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ textGeneration: true, litematicDownload: true, litematicRegions: litematicSummary.regions, referenceGeneration: true, verifiedRequests, timeoutMessage: true, rateLimitMessage: true, explicitLocalRecovery: true, previewPixels, sliceResult, errors }, null, 2));
+  console.log(JSON.stringify({ textGeneration: true, litematicDownload: true, litematicRegions: litematicSummary.regions, referenceGeneration: true, verifiedRequests, timeoutMessage: true, rateLimitMessage: true, explicitLocalRecovery: true, previewPixels, thumbnailCameraChanges: { front: Number(frontViewChange.toFixed(3)), slice: Number(sliceViewChange.toFixed(3)) }, sliceResult, errors }, null, 2));
 } catch (error) {
-  console.error(JSON.stringify({ previewStatus: await page.locator('[data-lodestone-status]').allTextContents(), errors }));
+  console.error(JSON.stringify({ error: error instanceof Error ? error.message : String(error), errors }));
   throw error;
 } finally { await browser.close(); }

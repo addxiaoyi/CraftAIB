@@ -28,6 +28,7 @@ interface ThreeViewportProps {
   isFullscreen?: boolean;
   backgroundColor?: string;
   onBackgroundColorChange?: (color: string) => void;
+  cameraView?: ViewportView;
 }
 
 export const ThreeViewport: React.FC<ThreeViewportProps> = ({
@@ -44,6 +45,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   isFullscreen = false,
   backgroundColor = '#090a0f',
   onBackgroundColorChange,
+  cameraView,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -77,7 +79,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const [missingTextures, setMissingTextures] = useState(0);
   const [textureEpoch, setTextureEpoch] = useState(0);
   const retryTextures = () => setTextureEpoch((epoch) => epoch + 1);
-  const [activeCameraView, setActiveCameraView] = useState<'iso' | 'top' | 'front' | 'side'>('iso');
+  const [activeCameraView, setActiveCameraView] = useState<ViewportView>(cameraView ?? 'iso');
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -537,6 +539,10 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     },
     [focus, structure.plan?.referenceFacing]
   );
+
+  useEffect(() => {
+    if (cameraView) setCameraPreset(cameraView);
+  }, [cameraView, setCameraPreset]);
 
   useEffect(() => {
     if (framedKeyRef.current === cameraKey) return;
