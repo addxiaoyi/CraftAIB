@@ -11,7 +11,7 @@ const compiled = await build({
   platform: 'node',
   write: false,
 });
-const { isReferenceFacing, viewportCameraPosition } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const { frameViewport, isReferenceFacing, viewportCameraKey, viewportCameraPosition, viewportFocus } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 
 const center = [10, 12, 8];
 const size = 24;
@@ -43,4 +43,22 @@ for (const { facing, front, side, iso } of directions) {
 }
 
 assert.equal(isReferenceFacing('invalid'), false);
-console.log('Viewport camera regression passed: standard fallback, all four reference facings, and every preset.');
+
+const focus = viewportFocus([300, 60, 100], [
+  { x: 120, y: 6, z: 20, blockId: 'minecraft:stone' },
+  { x: 199, y: 25, z: 29, blockId: 'minecraft:stone' },
+  { x: 299, y: 59, z: 99, blockId: 'minecraft:air' },
+]);
+assert.deepEqual(focus, { center: [160, 16, 25], size: 80, span: [80, 20, 10] });
+assert.deepEqual(viewportFocus([20, 24, 16], []), { center, size, span: [20, 24, 16] });
+const landscape = frameViewport(focus, 'front', 'z-min', 2);
+const portrait = frameViewport(focus, 'front', 'z-min', 0.6);
+assert.equal(landscape[0], 160);
+assert.equal(landscape[1], 16);
+assert.ok(portrait[2] < landscape[2], 'a portrait viewport backs up to keep a wide model in frame');
+
+const model = { id: 'lantern', size: { x: 20, y: 24, z: 16 }, plan: { referenceFacing: 'z-min' } };
+assert.equal(viewportCameraKey(model), viewportCameraKey({ ...model, blocks: [] }));
+assert.notEqual(viewportCameraKey(model), viewportCameraKey({ ...model, id: 'next-lantern' }));
+assert.notEqual(viewportCameraKey(model), viewportCameraKey({ ...model, plan: { referenceFacing: 'z-max' } }));
+console.log('Viewport camera regression passed: presets, occupied bounds, portrait fit, and stable camera identity.');

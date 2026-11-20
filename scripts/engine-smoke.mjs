@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzeReferencePixels, planBuilding, planBuildingFromReference, planBuildingWithModel, structurePlanToGrid } from '../packages/ai-planner/dist/index.js';
+import { analyzeReferencePixels, planBuilding, planBuildingFromReference, planBuildingWithModel, structurePlanToGrid, surfaceNormalAxis } from '../packages/ai-planner/dist/index.js';
 import { analyzeMaterials, mergeGrids, applyGridEdit, countMaterials, createGrid, createProject, parseProject, serializeProject, gridToScene, validateGrid } from '../packages/core/dist/index.js';
 import { fromVoxelartcraft } from '../packages/voxelartcraft-adapter/dist/index.js';
 import { fromCartographerCells, generateLitematicaSchema, generateMapArt, serializeLitematica } from '../packages/cartographer-adapter/dist/index.js';
@@ -19,6 +19,36 @@ assert.equal(towerBlocks.get('7,2,0').properties.half, 'upper');
 assert.equal(towerBlocks.get('7,1,0').properties.facing, 'south');
 assert.ok(towerGrid.cells.some((cell) => cell.block.id === 'minecraft:stone_brick_stairs'), 'tower should contain a stairs flight');
 assert.ok(towerGrid.cells.some((cell) => cell.block.id === towerPlan.palette.window), 'tower should open windows');
+function surfaceGrid(surface, dimensions) {
+  const plan = {
+    ...towerPlan,
+    dimensions,
+    floors: 1,
+    rooms: [],
+    regions: [{ name: 'surface', role: 'surface', x: 0, y: 0, z: 0, ...dimensions }],
+    components: [],
+    geometry: { parts: [{ id: 'surface', type: 'surface', material: 'minecraft:white_stained_glass', purpose: 'decoration', ...surface }] },
+  };
+  return structurePlanToGrid(plan).cells;
+}
+const frontPane = surfaceGrid({ x: 0, y: 0, z: 0, width: 11, height: 9, length: 1 }, { width: 11, height: 9, length: 1 });
+assert.equal(frontPane.length, 99, 'an X-Y front pane should span every row instead of flattening to two Y layers');
+assert.equal(new Set(frontPane.map((cell) => cell.y)).size, 9);
+const sidePane = surfaceGrid({ x: 0, y: 0, z: 0, width: 1, height: 9, length: 9 }, { width: 1, height: 9, length: 9 });
+assert.equal(sidePane.length, 81, 'a Y-Z side pane should span every row');
+assert.equal(new Set(sidePane.map((cell) => cell.y)).size, 9);
+const horizontalDeck = surfaceGrid({ x: 0, y: 0, z: 0, width: 4, height: 2, length: 3 }, { width: 4, height: 2, length: 3 });
+assert.equal(horizontalDeck.length, 24, 'horizontal decks retain both declared Y courses');
+const facingOverridesThinX = surfaceGrid({ x: 0, y: 0, z: 0, width: 1, height: 4, length: 5, facing: 'north' }, { width: 1, height: 4, length: 5 });
+assert.equal(facingOverridesThinX.length, 8, 'explicit cardinal facing selects the Z-normal plane');
+assert.equal(new Set(facingOverridesThinX.map((cell) => cell.z)).size, 2);
+assert.equal(surfaceNormalAxis({ width: 1, height: 4, length: 5, facing: 'north' }), 'z');
+assert.equal(surfaceNormalAxis({ width: 5, height: 4, length: 1 }), 'z');
+assert.equal(surfaceNormalAxis({ width: 1, height: 4, length: 5 }), 'x');
+assert.equal(surfaceNormalAxis({ width: 1, height: 5, length: 1 }), 'y');
+const ambiguousThinAxes = surfaceGrid({ x: 0, y: 0, z: 0, width: 1, height: 5, length: 1 }, { width: 1, height: 5, length: 1 });
+assert.equal(ambiguousThinAxes.length, 2, 'tied X/Z dimensions default to a horizontal surface');
+assert.deepEqual([...new Set(ambiguousThinAxes.map((cell) => cell.y))], [0, 1]);
 assert.equal(towerGrid.cells.filter((cell) => cell.y === towerHeight - 2 && cell.block.id === towerPlan.palette.roof).length, towerWidth * towerLength, 'deck should be one solid course under the crown');
 assert.ok(towerGrid.cells.filter((cell) => cell.y === towerHeight - 1 && cell.block.id === towerPlan.palette.roof).length < towerWidth * towerLength / 2, 'crown should be a merlon ring, not a solid cap');
 assert.ok(towerGrid.cells.some((cell) => cell.y === 3 && cell.x === 0 && cell.block.id === towerPlan.palette.wall), 'tower wall should not have the old periodic full-floor gap');

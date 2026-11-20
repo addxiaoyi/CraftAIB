@@ -441,6 +441,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
           ? (lang === 'zh' ? '模型服务拒绝了当前 API 密钥或账户权限。请在 Settings 更新密钥后重试。' : 'The model provider rejected the configured API key or account permissions. Update the key in Settings and retry.')
         : code === 'RATE_LIMITED'
           ? (lang === 'zh' ? '模型服务请求过于频繁，请稍后重试。' : 'The model is rate limiting requests. Please retry shortly.')
+        : code === 'REFERENCE_GLASS_COVERAGE_TOO_LOW' && lang === 'zh'
+          ? '生成结果的玻璃或发光面板与参考图的亮面重合不足，未通过验收。参考图和描述已保留，可以重试。'
           : message;
       setErrorMessage(cancelled ? (lang === 'zh' ? '已取消生成，输入内容已保留。' : 'Generation cancelled. Your inputs are preserved.') : friendly);
       setErrorCode(cancelled ? 'CANCELLED' : code || 'GENERATION_FAILED');

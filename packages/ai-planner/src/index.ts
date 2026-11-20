@@ -132,7 +132,15 @@ export type ConstructionReview = {
   accepted: boolean;
   projectionAudits: ProjectionAudit[];
   interiorAudit: InteriorAudit;
-  materialAudit: { ok: boolean; issues: string[] };
+  materialAudit: {
+    ok: boolean;
+    issues: string[];
+    referenceCoverage?: {
+      brightTargetShare: number;
+      visibleGlassShare: number;
+      brightPanelCoverage: number;
+    };
+  };
   inferredHiddenGeometry: string[];
   requiredRevision: string[];
 };
@@ -1008,7 +1016,7 @@ function addGeometryParts(
       continue;
     }
     if (part.type === 'roof') { addRoofPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
-    if (part.type === 'surface') { addSurfacePart(putMaterial, x0, y0, z0, x1, y1, z1); continue; }
+    if (part.type === 'surface') { addSurfacePart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'beam') { addBeamPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
     if (part.type === 'arch') { addArchPart(putMaterial, part, x0, y0, z0, x1, y1, z1); continue; }
       addBoxPart(putMaterial, part, open, x0, y0, z0, x1, y1, z1);
@@ -1054,9 +1062,28 @@ function addBoxPart(put: (x: number, y: number, z: number) => void, part: Geomet
   }
 }
 
-function addSurfacePart(put: (x: number, y: number, z: number) => void, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
-  const thickness = Math.max(1, Math.min(y1 - y0, 2));
-  for (let y = y0; y < Math.min(y1, y0 + thickness); y += 1) for (let z = z0; z < z1; z += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
+export function surfaceNormalAxis(part: Pick<GeometryPart, 'width' | 'height' | 'length' | 'facing'>): 'x' | 'y' | 'z' {
+  if (part.facing === 'east' || part.facing === 'west') return 'x';
+  if (part.facing === 'north' || part.facing === 'south') return 'z';
+  const thinX = part.width < part.height && part.width < part.length;
+  const thinZ = part.length < part.width && part.length < part.height;
+  return thinX ? 'x' : thinZ ? 'z' : 'y';
+}
+
+function addSurfacePart(put: (x: number, y: number, z: number) => void, part: GeometryPart, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+  const spans = { x: x1 - x0, y: y1 - y0, z: z1 - z0 };
+  const normal = surfaceNormalAxis(part);
+  const thickness = Math.max(1, Math.min(spans[normal], 2));
+
+  if (normal === 'x') {
+    for (let x = x0; x < x0 + thickness; x += 1) for (let y = y0; y < y1; y += 1) for (let z = z0; z < z1; z += 1) put(x, y, z);
+    return;
+  }
+  if (normal === 'z') {
+    for (let z = z0; z < z0 + thickness; z += 1) for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
+    return;
+  }
+  for (let y = y0; y < y0 + thickness; y += 1) for (let z = z0; z < z1; z += 1) for (let x = x0; x < x1; x += 1) put(x, y, z);
 }
 
 function addBeamPart(put: (x: number, y: number, z: number) => void, part: GeometryPart, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {

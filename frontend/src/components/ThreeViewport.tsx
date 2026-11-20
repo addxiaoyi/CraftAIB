@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { StructureData, VoxelBlock } from '../types/minecraft';
 import { BLOCK_REGISTRY } from '../utils/blockRegistry';
 import { RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
-import { viewportCameraPosition, type ViewportView } from './viewportCamera';
+import { frameViewport, viewportCameraKey, viewportFocus, VIEWPORT_FOV, type ViewportView } from './viewportCamera';
 import { blockTextureName, cropBlockTexture, loadBundledTextures } from '../integrations/bundledTextures';
 
 const MAX_PREVIEW_BLOCKS = 500_000;
@@ -14,23 +14,6 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-function focusForStructure(structure: StructureData): { center: THREE.Vector3; size: number } {
-  if (!structure.blocks.length) {
-    return {
-      center: new THREE.Vector3(structure.size.x / 2, structure.size.y / 2, structure.size.z / 2),
-      size: Math.max(structure.size.x, structure.size.y, structure.size.z, 16),
-    };
-  }
-  const bounds = structure.blocks.reduce((acc, block) => ({
-    minX: Math.min(acc.minX, block.x), maxX: Math.max(acc.maxX, block.x),
-    minY: Math.min(acc.minY, block.y), maxY: Math.max(acc.maxY, block.y),
-    minZ: Math.min(acc.minZ, block.z), maxZ: Math.max(acc.maxZ, block.z),
-  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity });
-  return {
-    center: new THREE.Vector3((bounds.minX + bounds.maxX + 1) / 2, (bounds.minY + bounds.maxY + 1) / 2, (bounds.minZ + bounds.maxZ + 1) / 2),
-    size: Math.max(bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1, bounds.maxZ - bounds.minZ + 1, 16),
-  };
-}
 interface ThreeViewportProps {
   structure: StructureData;
   activeRegionId?: string | null;
@@ -71,6 +54,9 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   const hoverOutlineRef = useRef<THREE.LineSegments | null>(null);
   const boundingBoxesGroupRef = useRef<THREE.Group | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const cameraKey = viewportCameraKey(structure);
+  const framedKeyRef = useRef(cameraKey);
+  const focus = useMemo(() => viewportFocus([structure.size.x, structure.size.y, structure.size.z], structure.blocks), [structure.size, structure.blocks]);
 
   // Smooth camera tweening ref
   const cameraTweenRef = useRef<{
@@ -181,8 +167,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 500;
 
-    const focus = focusForStructure(structure);
     const maxDim = focus.size;
+    const center = new THREE.Vector3(...focus.center);
     const isLightBackground = backgroundColor === '#d9dde5';
 
     // Keep large structures visible across the full schematic envelope.
@@ -203,9 +189,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     scene.add(outline);
     hoverOutlineRef.current = outline;
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, Math.max(1200, maxDim * 6));
-    const { x, y, z } = focus.center;
-    camera.position.set(...viewportCameraPosition([x, y, z], maxDim, 'iso', structure.plan?.referenceFacing));
+    const camera = new THREE.PerspectiveCamera(VIEWPORT_FOV, width / height, 0.1, Math.max(1200, maxDim * 6));
+    camera.position.set(...frameViewport(focus, 'iso', structure.plan?.referenceFacing, camera.aspect));
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -229,8 +214,8 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05; // Buttery smooth inertial drag
-    controls.target.copy(focus.center);
-    controls.maxDistance = Math.max(320, maxDim * 6);
+    controls.target.copy(center);
+    controls.maxDistance = Math.max(320, maxDim * 6, camera.position.distanceTo(center) * 1.5);
     controls.minDistance = 2;
     controlsRef.current = controls;
 
@@ -239,18 +224,18 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     scene.add(ambientLight);
 
     const keyLight = new THREE.DirectionalLight('#fffcf5', isLightBackground ? 0.95 : 1.85);
-    keyLight.position.set(focus.center.x + maxDim * 2.2, focus.center.y + maxDim * 3.2, focus.center.z + maxDim * 2.2);
+    keyLight.position.set(center.x + maxDim * 2.2, center.y + maxDim * 3.2, center.z + maxDim * 2.2);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
 
     const fillLight = new THREE.DirectionalLight('#a1a1aa', isLightBackground ? 0.2 : 0.48);
-    fillLight.position.set(focus.center.x - maxDim * 2, focus.center.y + maxDim * 1.5, focus.center.z - maxDim);
+    fillLight.position.set(center.x - maxDim * 2, center.y + maxDim * 1.5, center.z - maxDim);
     scene.add(fillLight);
 
     const rimLight = new THREE.DirectionalLight('#10b981', isLightBackground ? 0.12 : 0.28);
-    rimLight.position.set(focus.center.x, focus.center.y - maxDim, focus.center.z + maxDim * 2.5);
+    rimLight.position.set(center.x, center.y - maxDim, center.z + maxDim * 2.5);
     scene.add(rimLight);
 
     // Ground Grid with delicate subdivisions
@@ -530,10 +515,13 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       if (!cameraRef.current || !controlsRef.current) return;
       const camera = cameraRef.current;
       const controls = controlsRef.current;
-      const focus = focusForStructure(structure);
       const preset = view === 'reset' ? 'iso' : view;
-      const { x, y, z } = focus.center;
-      const targetPos = new THREE.Vector3(...viewportCameraPosition([x, y, z], focus.size, preset, structure.plan?.referenceFacing));
+      const target = new THREE.Vector3(...focus.center);
+      const targetPos = new THREE.Vector3(...frameViewport(focus, preset, structure.plan?.referenceFacing, camera.aspect));
+      const distance = targetPos.distanceTo(target);
+      camera.far = Math.max(1200, focus.size * 6, distance + focus.size * 2);
+      camera.updateProjectionMatrix();
+      controls.maxDistance = Math.max(320, focus.size * 6, distance * 1.5);
       setActiveCameraView(preset);
 
       // Trigger silky 400ms camera lerp animation
@@ -543,16 +531,18 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         startPos: camera.position.clone(),
         targetPos: targetPos,
         startTarget: controls.target.clone(),
-        targetTarget: focus.center,
+        targetTarget: target,
         active: true,
       };
     },
-    [structure.blocks, structure.id, structure.size.x, structure.size.y, structure.size.z, structure.plan?.referenceFacing]
+    [focus, structure.plan?.referenceFacing]
   );
 
   useEffect(() => {
-    if (structure.blocks.length > 0) setCameraPreset('reset');
-  }, [structure.id, setCameraPreset]);
+    if (framedKeyRef.current === cameraKey) return;
+    framedKeyRef.current = cameraKey;
+    setCameraPreset('reset');
+  }, [cameraKey, setCameraPreset]);
 
   return (
     <div

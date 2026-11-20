@@ -1,4 +1,4 @@
-import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, validateStructurePlan, type BuildingPrompt, type GeometryPart, type InteriorAudit, type ProjectionAudit, type ReferenceFeatures, type StructurePlan, type StructureRegionPlan } from './index.js';
+import { attachReferenceFeatures, compareReferenceFrontMask, createLitematicaPlannerInstruction, structurePlanToGrid, surfaceNormalAxis, validateStructurePlan, type BuildingPrompt, type GeometryPart, type InteriorAudit, type ProjectionAudit, type ReferenceFeatures, type StructurePlan, type StructureRegionPlan } from './index.js';
 
 export type VisionPlannerOptions = {
   endpoint: string;
@@ -44,17 +44,20 @@ type ReferenceImageAnalysis = {
   inferences: string[];
 };
 
-export function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis): { projections: ProjectionAudit[]; interior: InteriorAudit; material: { ok: boolean; issues: string[] }; inferred: string[]; revisions: string[] } {
+export function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis, glassCoverage = referenceGlassCoverageFeedback(plan, cells, analysis)): { projections: ProjectionAudit[]; interior: InteriorAudit; material: ConstructionReviewMaterial; inferred: string[]; revisions: string[] } {
   const spatial = summarizeSpatialStructure(cells, plan.dimensions.width, plan.dimensions.height, plan.dimensions.length);
   const occupied = cells.filter((cell) => cell.block.id !== 'minecraft:air');
   const face = compareReferenceFrontMask(plan, cells);
-  const occupiedY = occupied.length ? Math.max(...occupied.map((cell) => cell.y)) - Math.min(...occupied.map((cell) => cell.y)) + 1 : 0;
   const depth = Math.min(1, spatial.occupiedSize.length / Math.max(1, plan.dimensions.length));
   const issues: string[] = [];
-  if (occupiedY < 3 || spatial.occupiedSize.width < 3 || spatial.occupiedSize.length < 3) issues.push('The build is facade-like or too thin for a complete 3D reconstruction.');
+  if (Math.min(spatial.occupiedSize.height, spatial.occupiedSize.width, spatial.occupiedSize.length) < 3) issues.push('The build is facade-like or too thin for a complete 3D reconstruction.');
   if (!analysis?.inferences?.length) issues.push('Hidden geometry assumptions were not declared.');
+  if (glassCoverage.issue) issues.push(glassCoverage.issue);
   const projections: ProjectionAudit[] = [
-    { view: 'front', silhouette: face?.silhouette ?? 0, missing: face?.missing ?? 1, extra: face?.extra ?? 1, depth, materials: 1, issues: face && face.silhouette >= 0.6 ? [] : ['Camera-facing silhouette is below the acceptance threshold.'] },
+    { view: 'front', silhouette: face?.silhouette ?? 0, missing: face?.missing ?? 1, extra: face?.extra ?? 1, depth, materials: glassCoverage.issue ? 0 : 1, issues: [
+      ...(face && face.silhouette >= 0.6 ? [] : ['Camera-facing silhouette is below the acceptance threshold.']),
+      ...(glassCoverage.issue ? [glassCoverage.issue] : []),
+    ] },
     { view: 'side', silhouette: depth, missing: depth < 0.35 ? 0.65 : 0, extra: depth > 1 ? depth - 1 : 0, depth, materials: 1, issues: depth < 0.35 ? ['Side projection is too shallow.'] : [] },
     { view: 'rear', silhouette: depth, missing: depth < 0.35 ? 0.65 : 0, extra: 0, depth, materials: 1, issues: depth < 0.35 ? ['Rear volume is not established.'] : [] },
     { view: 'top', silhouette: Math.min(1, spatial.occupiedSize.width * spatial.occupiedSize.length / Math.max(1, plan.dimensions.width * plan.dimensions.length)), missing: 0, extra: 0, depth, materials: 1, issues: [] },
@@ -62,8 +65,111 @@ export function auditConstruction(plan: StructurePlan, cells: ReturnType<typeof 
   const interior = summarizeInteriorVoxelization(plan, cells, `${plan.type} ${plan.name}`);
   const interiorAudit: InteriorAudit = { occupiedVoxels: interior.occupiedBlocks, volume: interior.volume, lights: interior.lightBlocks, connectedComponents: interior.occupiedBlocks > 0 ? 1 : 0, supports: occupied.filter((cell) => cell.y === 0 || cells.some((other) => other.x === cell.x && other.y === cell.y - 1 && other.z === cell.z)).length, openings: cells.filter((cell) => /door|window|opening|pane|glass/i.test(cell.block.id)).length };
   if (interior.volume > 0 && interior.occupiedBlocks === 0) issues.push('Interior is described but contains no actual voxels.');
-  const material = { ok: !issues.length, issues };
+  const material = { ok: !issues.length, issues, referenceCoverage: glassCoverage.metrics };
   return { projections, interior: interiorAudit, material, inferred: analysis?.inferences ?? [], revisions: issues };
+}
+
+type ConstructionReviewMaterial = NonNullable<StructurePlan['constructionReview']>['materialAudit'];
+type ReferenceGlassCoverage = { issue?: string; metrics?: ConstructionReviewMaterial['referenceCoverage'] };
+type VoxelBuild = { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid>; signature: string; glassCoverage: ReferenceGlassCoverage };
+const MIN_BRIGHT_SUBJECT_SHARE = 0.12;
+const MIN_BRIGHT_PANEL_COVERAGE = 0.5;
+const PANEL_NAME = /\bpanels?\b|glazing|\bpanes?\b|面板|玻璃|灯罩/i;
+const PANEL_MATERIAL = /\b(?:glass|glazed|luminous|backlit|translucent|illuminated)\b|玻璃|透光|发光/i;
+
+function expectsBrightPanels(plan: StructurePlan, analysis?: ReferenceImageAnalysis): boolean {
+  const evidence = [...(analysis?.materialRegions ?? []), ...(analysis?.visibleParts ?? [])];
+  if (evidence.some((part) => PANEL_NAME.test(part) && PANEL_MATERIAL.test(part))) return true;
+  return (plan.geometry?.parts ?? []).some((part) => part.type === 'surface' && surfaceNormalAxis(part) !== 'y'
+    && PANEL_NAME.test(part.id.replace(/[_-]/g, ' ')) && isPanelBlock(plan.palette[part.material] ?? part.material));
+}
+
+function referenceGlassCoverageFeedback(plan: StructurePlan, cells: ReturnType<typeof structurePlanToGrid>['cells'], analysis?: ReferenceImageAnalysis): ReferenceGlassCoverage {
+  const features = plan.referenceFeatures;
+  if (!features?.frontMask?.length || !features.colorMask?.length || !features.colorPalette?.length || !plan.referenceFacing) return {};
+  if (!expectsBrightPanels(plan, analysis)) return {};
+  const brightReference = brightSubjectPixels(features);
+  const foregroundPixels = features.frontMask.reduce((count, value) => count + Number(value === 1), 0);
+  const brightPixels = brightReference.size;
+  const brightTargetShare = brightPixels / Math.max(1, foregroundPixels);
+  if (brightTargetShare < MIN_BRIGHT_SUBJECT_SHARE) return {};
+
+  const glassPixels = projectedPanelPixels(plan.referenceFacing, plan.dimensions, cells, features);
+  const visibleGlassShare = glassPixels.size / foregroundPixels;
+  const brightPanelCoverage = [...glassPixels].filter((index) => brightReference.has(index)).length / brightPixels;
+  const metrics = { brightTargetShare, visibleGlassShare, brightPanelCoverage };
+  if (brightPanelCoverage >= MIN_BRIGHT_PANEL_COVERAGE) return { metrics };
+  return {
+    metrics,
+    issue: `Reference bright panel coverage is too low: bright regions cover ${Math.round(brightTargetShare * 100)}% of the reference subject, but visible glass or luminous blocks match only ${Math.round(brightPanelCoverage * 100)}% of those bright pixels (minimum ${MIN_BRIGHT_PANEL_COVERAGE * 100}%). Rebuild the camera-facing panels with the intended materials before finishing.`,
+  };
+}
+
+function brightSubjectPixels(features: ReferenceFeatures): Set<number> {
+  const bright = new Set<number>();
+  for (let index = 0; index < features.frontMask.length; index += 1) {
+    if (features.frontMask[index] !== 1) continue;
+    const color = features.colorPalette[features.colorMask[index]];
+    if (!color) continue;
+    const { r, g, b } = color;
+    if (0.213 * r + 0.715 * g + 0.072 * b >= 185 && Math.max(r, g, b) - Math.min(r, g, b) <= 80) bright.add(index);
+  }
+  return bright;
+}
+
+function isPanelBlock(id: string): boolean {
+  const name = id.replace(/^minecraft:/, '');
+  return /^(?:(?:white_|light_gray_)?stained_)?glass(?:_pane)?$|^(?:ice|packed_ice|sea_lantern|glowstone|white_concrete|white_wool|snow_block)$/.test(name);
+}
+
+function projectedPanelPixels(facing: NonNullable<StructurePlan['referenceFacing']>, dimensions: StructurePlan['dimensions'], cells: ReturnType<typeof structurePlanToGrid>['cells'], features: ReferenceFeatures): Set<number> {
+  const horizontal = facing[0] === 'z' ? 'x' : 'z';
+  const depth = facing[0] === 'z' ? 'z' : 'x';
+  const reverse = facing.endsWith('max');
+  const columns = new Map<number, (typeof cells)[number]>();
+  const stride = horizontal === 'x' ? dimensions.width : dimensions.length;
+  let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity;
+  for (const cell of cells) {
+    if (/^minecraft:(?:air|cave_air|void_air)$/.test(cell.block.id)) continue;
+    const along = cell[horizontal];
+    const key = cell.y * stride + along;
+    const previous = columns.get(key);
+    if (!previous || (reverse ? cell[depth] > previous[depth] : cell[depth] < previous[depth])) columns.set(key, cell);
+    left = Math.min(left, along);
+    right = Math.max(right, along);
+    bottom = Math.min(bottom, cell.y);
+    top = Math.max(top, cell.y);
+  }
+  const panels = new Set<number>();
+  if (!columns.size) return panels;
+
+  const bounds = features.subjectBounds;
+  const minColumn = Math.max(0, Math.floor(bounds.left * features.maskWidth));
+  const maxColumn = Math.min(features.maskWidth - 1, Math.ceil(bounds.right * features.maskWidth) - 1);
+  const minRow = Math.max(0, Math.floor(bounds.top * features.maskHeight));
+  const maxRow = Math.min(features.maskHeight - 1, Math.ceil(bounds.bottom * features.maskHeight) - 1);
+  const targetWidth = maxColumn - minColumn + 1;
+  const targetHeight = maxRow - minRow + 1;
+  const width = right - left + 1;
+  const height = top - bottom + 1;
+  const scale = Math.min(targetWidth / width, targetHeight / height);
+  const fittedLeft = minColumn + (targetWidth - width * scale) / 2;
+  const fittedTop = minRow + (targetHeight - height * scale) / 2;
+  // Sample each image pixel once, against the closest occupied block along its ray.
+  for (let row = minRow; row <= maxRow; row += 1) {
+    const y = top - Math.floor((row + 0.5 - fittedTop) / scale);
+    if (y < bottom || y > top) continue;
+    for (let column = minColumn; column <= maxColumn; column += 1) {
+      const index = row * features.maskWidth + column;
+      if (features.frontMask[index] !== 1) continue;
+      const offset = Math.floor((column + 0.5 - fittedLeft) / scale);
+      if (offset < 0 || offset >= width) continue;
+      const along = reverse ? right - offset : left + offset;
+      const cell = columns.get(y * stride + along);
+      if (cell && isPanelBlock(cell.block.id)) panels.add(index);
+    }
+  }
+  return panels;
 }
 
 const DEFAULT_RETRIES = 2;
@@ -298,7 +404,7 @@ async function runBuildToolLoop(
   signal: AbortSignal,
 ): Promise<StructurePlan> {
   const messages: any[] = [...request.messages];
-  const builds = new Map<string, { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid>; signature: string }>();
+  const builds = new Map<string, VoxelBuild>();
   const inspectedBuilds = new Set<string>();
   const reviewedBuilds = new Set<string>();
   const rejectedReviews = new Set<string>();
@@ -325,7 +431,7 @@ async function runBuildToolLoop(
       : null;
     const referencePasses = !imageUrl || !latestReferenceMatch || passesReferenceMatch(latestReferenceMatch);
     if (inspectedLatest && inspectedBuilds.has(latestBuildId) && referencePasses && (!imageUrl || (reviewedBuilds.has(latestBuildId) && constructionReview?.accepted))) {
-      return finalizeInspectedBuild(inspectedLatest.plan, input, imageUrl, turn);
+      return finalizeInspectedBuild({ ...inspectedLatest.plan, constructionReview }, input, imageUrl, turn);
     }
     const requiredTool = !imageUrl
       ? undefined
@@ -386,7 +492,7 @@ async function runBuildToolLoop(
           : null;
         if (inspected && reviewedBuilds.has(latestBuildId) && inspectedBuilds.has(latestBuildId) && (!match || passesReferenceMatch(match))) {
           return withReferenceValidation({
-            ...attachReferenceFeatures(inspected.plan, input.referenceImage?.referenceFeatures),
+            ...attachReferenceFeatures({ ...inspected.plan, constructionReview }, input.referenceImage?.referenceFeatures),
             notes: [...inspected.plan.notes, `The model returned no further tool call after inspection in turn ${turn}; the inspected build was finalized.`],
           }, input);
         }
@@ -445,6 +551,7 @@ async function runBuildToolLoop(
             throw new Error(`The reference was identified as an object (${referenceAnalysis.object}), but this plan adds building floors or rooms. Reconstruct the pictured object and its visible parts instead of inventing habitable architecture.`);
           }
           const grid = structurePlanToGrid(candidate);
+          const glassCoverage = imageUrl ? referenceGlassCoverageFeedback(candidate, grid.cells, referenceAnalysis) : {};
           if (imageUrl) {
             const colorMismatch = referenceMaterialColorFeedback(input.referenceImage?.referenceFeatures, grid.cells);
             // Name-based palette estimates are advisory: hidden solid cores distort color shares.
@@ -460,7 +567,7 @@ async function runBuildToolLoop(
           if (duplicate) {
             const [duplicateId, previous] = duplicate;
             const previousMatch = compareReferenceFrontMask(previous.plan, previous.grid.cells);
-            if (previousMatch && passesReferenceMatch(previousMatch)) {
+            if (previousMatch && passesReferenceMatch(previousMatch) && !previous.glassCoverage.issue) {
               // The repeated geometry is already a valid reference match. Rebuilding it cannot
               // improve the result, but failing the request would discard a passing build.
               repeatedPassingReuses += 1;
@@ -480,10 +587,10 @@ async function runBuildToolLoop(
               options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: true, silhouette: previousMatch.silhouette, message: `Identical geometry reused from ${duplicateId}; it already passes the reference silhouette gates.` });
               continue;
             }
-            throw new Error(`This geometry is identical to previous build ${duplicateId}; it will not improve the result. ${referenceSilhouetteFeedback(previousMatch, previous.plan.dimensions.height)} Change the camera-facing geometry parts and coordinates before rebuilding.`);
+            throw new Error(`This geometry is identical to previous build ${duplicateId}; it will not improve the result. ${previous.glassCoverage.issue ?? referenceSilhouetteFeedback(previousMatch, previous.plan.dimensions.height)} Change the camera-facing geometry parts before rebuilding.`);
           }
           latestBuildId = `build-${turn}-${builds.size + 1}`;
-          builds.set(latestBuildId, { plan: candidate, grid, signature });
+          builds.set(latestBuildId, { plan: candidate, grid, signature, glassCoverage });
           volumeBuilt = false;
           projectionAudits.clear();
           interiorAudit = undefined;
@@ -505,6 +612,8 @@ async function runBuildToolLoop(
             blocks: grid.cells.length,
             regions: candidate.regions.map(({ name, role, x, y, z, width, height, length }) => ({ name, role, x, y, z, width, height, length })),
             materials: summarizeGridMaterials(grid.cells),
+            referenceGlassCoverage: glassCoverage.metrics,
+            requiredRevision: glassCoverage.issue ? [glassCoverage.issue] : [],
             interior,
             spatial,
             aesthetic: summarizeAestheticChecks(grid.cells, grid.width, grid.height, grid.length),
@@ -542,6 +651,8 @@ async function runBuildToolLoop(
                 : '';
               return finalizeInspectedBuild(salvaged.plan, input, imageUrl, turn, `The model repeated rejected geometry; the server returned the closest built structure instead of discarding it (${deficit.trim() || 'no measured match'}).`);
             }
+            const panelIssue = builds.get(latestBuildId)?.glassCoverage.issue;
+            if (panelIssue) throw glassCoverageError(panelIssue);
             throw Object.assign(new Error(`The construction tool rejected ${identicalBuildFailures} consecutive build attempts. Last validation error: ${failureMessage}`), { statusCode: 422, code: 'BUILD_VALIDATION_REPEATED' });
           }
         }
@@ -686,14 +797,19 @@ async function runBuildToolLoop(
           messages.push(toolResult(toolCallId, { ok: false, error: 'Report matchesReference, a string array of mismatches, and a concrete visual comparison summary.' }));
           continue;
         }
-        const audit = builds.get(buildId) ? auditConstruction(builds.get(buildId)!.plan, builds.get(buildId)!.grid.cells, referenceAnalysis) : null;
+        const build = builds.get(buildId);
+        const audit = build ? auditConstruction(build.plan, build.grid.cells, referenceAnalysis, build.glassCoverage) : null;
         const gatesPass = audit && projectionAudits.has('front') && projectionAudits.has('side') && projectionAudits.has('rear') && projectionAudits.has('top') && Boolean(interiorAudit) && audit.revisions.length === 0;
         const accepted = Boolean(gatesPass && args.matchesReference && args.mismatches.length === 0);
         if (accepted) reviewedBuilds.add(buildId);
-        if (audit) constructionReview = { accepted, projectionAudits: [...projectionAudits.values()], interiorAudit: interiorAudit ?? audit.interior, materialAudit: audit.material, inferredHiddenGeometry: audit.inferred, requiredRevision: [...audit.revisions, ...args.mismatches] };
-        messages.push(toolResult(toolCallId, { ok: accepted, buildId, summary: args.summary, mismatches: args.mismatches, next: accepted ? 'Visual review passed; finish the structure.' : 'Rebuild the mismatched geometry/materials while preserving the original subject.' }));
-        options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: accepted, message: `${args.summary}${args.mismatches.length ? ` Corrections: ${args.mismatches.join('; ')}` : ''}` });
-        if (!accepted) rejectedReviews.add(buildId);
+        const requiredRevision = [...(audit?.revisions ?? []), ...args.mismatches];
+        if (audit) constructionReview = { accepted, projectionAudits: [...projectionAudits.values()], interiorAudit: interiorAudit ?? audit.interior, materialAudit: audit.material, inferredHiddenGeometry: audit.inferred, requiredRevision };
+        messages.push(toolResult(toolCallId, { ok: accepted, buildId, summary: args.summary, mismatches: args.mismatches, requiredRevision, next: accepted ? 'Visual review passed; finish the structure.' : 'Rebuild the mismatched geometry/materials while preserving the original subject.' }));
+        options.onToolEvent?.({ stage: 'tool_result', turn, tool: toolName, ok: accepted, message: `${args.summary}${requiredRevision.length ? ` Corrections: ${requiredRevision.join('; ')}` : ''}` });
+        if (!accepted) {
+          reviewedBuilds.delete(buildId);
+          rejectedReviews.add(buildId);
+        }
         continue;
       }
 
@@ -724,13 +840,14 @@ async function runBuildToolLoop(
 
   const completed = builds.get(latestBuildId);
   if (completed) {
+    if (completed.glassCoverage.issue) throw glassCoverageError(completed.glassCoverage.issue);
     const referenceMatch = compareReferenceFrontMask(completed.plan, completed.grid.cells);
     if (imageUrl && (!inspectedBuilds.has(latestBuildId) || !reviewedBuilds.has(latestBuildId))) {
       throw Object.assign(new Error(`The latest 3D build was not inspected before the ${MAX_BUILD_TOOL_TURNS}-turn limit. No result was finalized.`), { statusCode: 422, code: 'MODEL_BUILD_NOT_INSPECTED' });
     }
     if (!imageUrl || !referenceMatch || passesReferenceMatch(referenceMatch)) {
       return finalizeInspectedBuild(
-        completed.plan,
+        { ...completed.plan, constructionReview },
         input,
         imageUrl,
         MAX_BUILD_TOOL_TURNS,
@@ -743,6 +860,10 @@ async function runBuildToolLoop(
   }
 
   throw Object.assign(new Error(`The model used ${MAX_BUILD_TOOL_TURNS} construction turns without producing a buildable voxel structure. Its last required tool was '${requiredToolForLatestState(catalogProvided, latestBuildId, inspectedBuilds)}'. Retry once; if this repeats, the provider is not following required tool calls.`), { statusCode: 422, code: 'MODEL_TOOL_LOOP_EXHAUSTED' });
+}
+
+function glassCoverageError(issue: string): Error {
+  return Object.assign(new Error(issue), { statusCode: 422, code: 'REFERENCE_GLASS_COVERAGE_TOO_LOW' });
 }
 
 function requiredToolForLatestState(catalogProvided: boolean, latestBuildId: string, inspectedBuilds: Set<string>): string {
@@ -1189,10 +1310,11 @@ function referenceMatchScore(match: NonNullable<ReturnType<typeof compareReferen
   return match.silhouette * 0.45 + (1 - Math.min(1, profileError)) * 0.35 - match.missing * 0.1 - match.extra * 0.1;
 }
 
-function bestBuiltStructure(builds: Map<string, { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid> }>) {
-  let best: { plan: StructurePlan; grid: ReturnType<typeof structurePlanToGrid> } | undefined;
+function bestBuiltStructure(builds: Map<string, VoxelBuild>) {
+  let best: VoxelBuild | undefined;
   let bestScore = Number.NEGATIVE_INFINITY;
   for (const build of builds.values()) {
+    if (build.glassCoverage.issue) continue;
     const match = compareReferenceFrontMask(build.plan, build.grid.cells);
     const score = match ? referenceMatchScore(match) : 0;
     if (score > bestScore) {

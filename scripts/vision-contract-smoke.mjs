@@ -172,6 +172,127 @@ assert.match(missingColorFeedback ?? '', /red covers 70%.*only 0%/i, 'reference-
 const redColorCells = [...Array.from({ length: 70 }, () => ({ block: { id: 'minecraft:red_concrete' } })), ...Array.from({ length: 30 }, () => ({ block: { id: 'minecraft:yellow_concrete' } }))];
 assert.equal(referenceMaterialColorFeedback(redReferenceFeatures, redColorCells), undefined, 'a build preserving dominant reference color areas should pass color coverage');
 
+const glazingPixels = new Uint8Array(32 * 32 * 4);
+for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) {
+  const insideSubject = x >= 4 && x < 28 && y >= 4 && y < 28;
+  const insidePanel = x >= 10 && x < 22 && y >= 8 && y < 22;
+  const shade = insidePanel ? 240 : insideSubject ? 48 : 4;
+  const offset = (y * 32 + x) * 4;
+  glazingPixels[offset] = shade;
+  glazingPixels[offset + 1] = shade;
+  glazingPixels[offset + 2] = shade;
+  glazingPixels[offset + 3] = 255;
+}
+const glazingFeatures = analyzeReferencePixels({ width: 32, height: 32, pixels: glazingPixels });
+const glazingAnalysis = {
+  object: 'ornamental lantern', category: 'object', silhouette: 'square hanging case',
+  visibleParts: ['large white luminous glass panels'], symmetry: 'bilateral', view: 'three-quarter',
+  depthCues: ['visible side wall'], topCues: ['ornamental crown'], negativeSpaces: ['open panels'],
+  materialRegions: ['luminous white glass panels'], evidence: ['large white panels'], inferences: ['rear depth'],
+};
+const glazingPlan = {
+  ...modelGeometry,
+  name: 'Reference panel coverage fixture',
+  type: 'decorative_object',
+  dimensions: { width: 16, height: 16, length: 8 },
+  floors: 1,
+  rooms: [],
+  regions: [{ name: 'body', role: 'structure', x: 0, y: 0, z: 0, width: 16, height: 16, length: 8 }],
+  referenceFacing: 'z-min',
+  referenceFeatures: glazingFeatures,
+  geometry: { parts: [
+    { ...modelGeometry.geometry.parts[0], id: 'case_frame', type: 'box', x: 0, y: 0, z: 1, width: 16, height: 16, length: 7, material: 'minecraft:dark_oak_planks', purpose: 'structure' },
+    { ...modelGeometry.geometry.parts[0], id: 'white_luminous_panels', type: 'surface', x: 4, y: 3, z: 0, width: 8, height: 10, length: 1, material: 'minecraft:dark_oak_planks', purpose: 'opening' },
+  ] },
+};
+const missingGlassGrid = structurePlanToGrid(glazingPlan);
+const missingGlassAudit = auditConstruction(glazingPlan, missingGlassGrid.cells, glazingAnalysis);
+assert.match(missingGlassAudit.revisions.join(' '), /bright panel coverage is too low/i, 'a dark face must fail when the reference has large luminous panels');
+assert.equal(missingGlassAudit.material.referenceCoverage?.brightPanelCoverage, 0);
+assert.equal(missingGlassAudit.projections.find((audit) => audit.view === 'front')?.materials, 0);
+
+const glazedPlan = { ...glazingPlan, geometry: { parts: glazingPlan.geometry.parts.map((part) => part.id === 'white_luminous_panels' ? { ...part, material: 'minecraft:white_stained_glass_pane' } : part) } };
+const glazedGrid = structurePlanToGrid(glazedPlan);
+const glazedAudit = auditConstruction(glazedPlan, glazedGrid.cells, glazingAnalysis);
+assert.ok((glazedAudit.material.referenceCoverage?.brightPanelCoverage ?? 0) >= 0.5, 'front-facing glass must cover at least half of the bright panel pixels');
+assert.equal(glazedAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false);
+
+const noBrightFeatures = { ...glazingFeatures, colorMask: glazingFeatures.colorMask.map(() => 0), colorPalette: [{ r: 48, g: 48, b: 48 }] };
+const noBrightAudit = auditConstruction({ ...glazingPlan, referenceFeatures: noBrightFeatures }, missingGlassGrid.cells, glazingAnalysis);
+assert.equal(noBrightAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false, 'dark references must not require white glazing');
+
+const ordinaryDarkPlan = { ...glazingPlan, geometry: { parts: glazingPlan.geometry.parts.map((part) => ({ ...part, id: part.id === 'white_luminous_panels' ? 'trim' : part.id, purpose: part.id === 'white_luminous_panels' ? 'decoration' : part.purpose })) } };
+const ordinaryDarkAudit = auditConstruction(ordinaryDarkPlan, structurePlanToGrid(ordinaryDarkPlan).cells, {
+  ...glazingAnalysis, visibleParts: ['square body', 'wood frame'], materialRegions: ['dark wood'],
+});
+assert.equal(ordinaryDarkAudit.revisions.some((issue) => /bright panel coverage/i.test(issue)), false, 'dark references without a declared panel must not be forced to add glass');
+
+const panelReference = {
+  prompt: 'Reconstruct the ornamental lantern shown in the reference.',
+  constraints: { includeInterior: false },
+  referenceImage: { dataUrl: 'data:image/png;base64,AA==', referenceFeatures: glazingFeatures },
+};
+const toolCall = (name, args) => ({ name, arguments: JSON.stringify(args) });
+const buildCall = (plan) => {
+  const { referenceFeatures: _features, ...geometry } = plan;
+  return toolCall('build_voxel_structure', { plan: geometry });
+};
+const inspectCalls = (buildId) => [
+  toolCall('build_volume_layer', { buildId }),
+  ...['front', 'side', 'rear', 'top'].map((view) => toolCall('inspect_projection', { buildId, view })),
+  toolCall('inspect_interior', { buildId }),
+  toolCall('inspect_voxel_structure', { buildId }),
+  toolCall('review_reference_structure', { buildId, matchesReference: true, mismatches: [], summary: 'The silhouette matches the reference.' }),
+];
+
+async function runPanelReview(nextCalls, replies, events = []) {
+  const firstBuild = 'build-3-1';
+  const sequence = [
+    referenceAnalysisCall({ ...glazingAnalysis, visibleParts: ['hanging case', ...glazingAnalysis.visibleParts] }),
+    toolCall('get_minecraft_blocks', { category: 'all' }),
+    buildCall(glazingPlan),
+    ...inspectCalls(firstBuild),
+    toolCall('finish_structure', { buildId: firstBuild }),
+    ...nextCalls,
+  ];
+  let turn = 0;
+  return planBuildingWithModel(panelReference, {
+    endpoint: 'http://mock.invalid',
+    maxRetries: 0,
+    onToolEvent: (event) => events.push(event),
+    fetcher: async (_url, init) => {
+      const { messages } = JSON.parse(init.body);
+      if (turn > 0) {
+        const prior = messages.findLast((message) => message.role === 'tool');
+        replies.push({ name: sequence[turn - 1].name, ...JSON.parse(prior.content) });
+      }
+      const call = sequence[turn];
+      assert.ok(call, `unexpected vision model turn ${turn + 1}`);
+      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: `panels-${++turn}`, type: 'function', function: call }] } }] }), { status: 200 });
+    },
+  });
+}
+
+const blockedPanelReplies = [];
+await assert.rejects(
+  runPanelReview(Array.from({ length: 3 }, () => buildCall(glazingPlan)), blockedPanelReplies),
+  (error) => error?.code === 'REFERENCE_GLASS_COVERAGE_TOO_LOW' && /bright panel coverage is too low/i.test(error.message),
+  'repeated builds must not bypass glass coverage through silhouette-only reuse or salvage',
+);
+const badPanelBuild = blockedPanelReplies.find((reply) => reply.name === 'build_voxel_structure');
+assert.ok(badPanelBuild?.ok && badPanelBuild.referenceMatch?.silhouette > 0.9, 'the deficient panel fixture must pass silhouette before being rejected for its material');
+const badPanelReview = blockedPanelReplies.find((reply) => reply.name === 'review_reference_structure');
+assert.equal(badPanelReview?.ok, false);
+assert.match(badPanelReview.requiredRevision?.join(' ') ?? '', /bright panel coverage is too low/i);
+assert.equal(blockedPanelReplies.find((reply) => reply.name === 'finish_structure')?.ok, false, 'model approval alone must not finalize the deficient build');
+
+const correctedPanelEvents = [];
+const correctedPanelPlan = await runPanelReview([buildCall(glazedPlan), ...inspectCalls('build-13-2')], [], correctedPanelEvents);
+assert.deepEqual(correctedPanelEvents.filter((event) => event.stage === 'tool_result' && event.tool === 'review_reference_structure').map((event) => event.ok), [false, true]);
+const correctedPanelCells = structurePlanToGrid(correctedPanelPlan).cells;
+assert.ok(correctedPanelCells.some(({ block }) => block.id === 'minecraft:white_stained_glass_pane'));
+assert.ok((correctedPanelPlan.referenceValidation?.silhouette ?? 0) > 0.9, 'a material-only correction must preserve the accepted silhouette');
+
 let rejectedBuildCalls = 0;
 const failedBuildEvents = [];
 const invalidDimensionsPlan = { ...planBuilding({ prompt: 'small stone house' }), referenceFacing: 'z-max' };
@@ -401,6 +522,8 @@ const lanternReferenceFeatures = {
   ...referenceFeatures,
   subjectBounds: { left: lanternLeft / lanternWidth, top: lanternTop / lanternHeight, right: lanternRight / lanternWidth, bottom: lanternBottom / lanternHeight },
   frontMask: lanternMask,
+  colorMask: lanternMask.map(() => 0),
+  colorPalette: [{ r: 48, g: 48, b: 48 }],
 };
 const calledLanternTools = new Set();
 let lanternProjectionCount = 0;

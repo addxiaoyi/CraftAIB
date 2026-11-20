@@ -78,6 +78,8 @@ Success: `200`
 
 `plan` must satisfy `StructurePlan` version 1 and the schema in `packages/ai-planner/src/vision.ts`. The browser validates it again before creating blocks. Keep all region coordinates within `dimensions`.
 
+Reference builds with bright translucent or luminous panels can include `plan.constructionReview.materialAudit.referenceCoverage`. The audit compares the frontmost blocks along `referenceFacing` with the reference foreground. When panel evidence is present and bright neutral pixels make up at least 12% of the reference subject, the projected glass or bright panel blocks must cover at least half of those pixels.
+
 ## 3. Error shape
 
 All errors use one safe shape; messages are user-visible and must not contain prompts, image data, provider response bodies, or secrets.
@@ -92,7 +94,7 @@ All errors use one safe shape; messages are user-visible and must not contain pr
 }
 ```
 
-Expected status/code pairs: `400 INVALID_REQUEST`, `413 IMAGE_TOO_LARGE`, `422 INVALID_STRUCTURE_PLAN`, `429 RATE_LIMITED`, `502 MODEL_REQUEST_FAILED`, and `503 MODEL_NOT_CONFIGURED`. Keep the request open only while planning; a disconnected client must not leave expensive model work running.
+Expected status/code pairs: `400 INVALID_REQUEST`, `413 IMAGE_TOO_LARGE`, `422 INVALID_STRUCTURE_PLAN`, `422 REFERENCE_GLASS_COVERAGE_TOO_LOW`, `429 RATE_LIMITED`, `502 MODEL_REQUEST_FAILED`, and `503 MODEL_NOT_CONFIGURED`. Keep the request open only while planning; a disconnected client must not leave expensive model work running.
 
 ## Not backend endpoints
 
