@@ -20,8 +20,8 @@
 
     /* Layout skeleton — one header height, one panel ladder, one canvas dock width */
     --app-header-h: 52px;
-    --workspace-panel-w: 420px;
-    --workspace-panel-w-wide: 450px;
+    --workspace-panel-w: 390px;
+    --workspace-panel-w-wide: 420px;
     --workspace-dock-w: 288px;
 
     /* Focus ring — must clear the dark shell (>=3:1 against #07090e) */

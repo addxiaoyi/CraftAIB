@@ -158,7 +158,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     imageReader.current = null;
     reader?.abort();
   }, []);
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -367,6 +368,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
     const controller = new AbortController();
     abortController.current = controller;
     setIsLoading(true);
+    setIsResultsOpen(true);
     setErrorMessage(null);
     setErrorCode(null);
     setGenerationLog([]);
@@ -583,13 +585,57 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 </label>
               )}
 
+              <div className="sticky top-2 z-20 -mx-1 space-y-2 rounded-lg border border-emerald-400/20 bg-[#0c0f17]/95 p-2 shadow-xl backdrop-blur-md">
+                <button
+                  data-ai-generate="true"
+                  onClick={() => void handleGenerate()}
+                  disabled={isLoading || readingImage}
+                  className="w-full rounded-md btn-primary px-4 py-2.5 text-xs font-bold tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  {isLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" />
+                      <span>{loadingStep || t.generating}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                      <span>{t.generateBtn}</span>
+                    </>
+                  )}
+                </button>
+                {isLoading && (
+                  <button onClick={handleCancelGeneration} className="w-full rounded-md border border-white/10 py-1.5 text-xs text-zinc-300 hover:bg-white/5">
+                    {generationCopy.cancel}
+                  </button>
+                )}
+                {generationSource && (
+                  <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">
+                    {generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}
+                  </p>
+                )}
+                {allowLocalPreview && !isLoading && (
+                  <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full rounded-md border border-amber-500/30 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10">
+                    {generationCopy.local}
+                  </button>
+                )}
+                {errorMessage && (
+                  <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="rounded-md border border-red-800/50 bg-red-950/40 p-2.5 text-xs leading-relaxed text-red-400">
+                    {errorMessage}
+                  </div>
+                )}
+              </div>
+
               {/* Curated Presets Grid */}
-              <div className="space-y-1.5 pt-1">
-                <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+              <details className="group rounded-lg border border-white/[0.07] bg-white/[0.01]">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-zinc-400 hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
                   <span>{t.quickPresets}</span>
-                  <span className="text-zinc-500 font-normal">Click to apply</span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
+                  <span className="flex items-center gap-2 normal-case tracking-normal text-zinc-500">
+                    {lang === 'zh' ? '点击应用' : 'Choose a preset'}
+                    <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                  </span>
+                </summary>
+                <div className="grid grid-cols-2 gap-1.5 border-t border-white/[0.06] p-2">
                   {PRESET_PROMPTS.map((p, idx) => {
                     const isSelected = style === p.style && paletteTheme === p.palette;
                     return (
@@ -627,13 +673,16 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                     );
                   })}
                 </div>
-              </div>
+              </details>
             </div>
 
             {/* Generation Parameters Section */}
             <div className="border border-white/[0.07] rounded-lg overflow-hidden bg-white/[0.01]">
               <button
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                data-generation-settings-toggle="true"
+                aria-expanded={isSettingsOpen}
+                aria-controls="ai-generation-parameters"
                 className="w-full flex items-center justify-between p-3 text-xs font-semibold text-zinc-200 hover:text-white transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2">
@@ -647,7 +696,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               </button>
 
               {isSettingsOpen && (
-                <div className="p-3.5 pt-0 space-y-4 border-t border-white/[0.05] animate-fade-in text-xs">
+                <div id="ai-generation-parameters" className="p-3.5 pt-0 space-y-4 border-t border-white/[0.05] animate-fade-in text-xs">
                   {/* Rapid Aspect Envelope Presets */}
                   <div className="space-y-1.5 pt-2">
                     <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
@@ -877,50 +926,26 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
               )}
             </div>
 
-            {/* Synthesize Action Button */}
-            <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-white/[0.01]">
               <button
-                data-ai-generate="true"
-                onClick={() => void handleGenerate()}
-                disabled={isLoading || readingImage}
-                className="w-full py-3 px-4 rounded-lg btn-primary text-xs font-bold tracking-wide flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
+                type="button"
+                data-ai-results-toggle="true"
+                onClick={() => setIsResultsOpen((open) => !open)}
+                aria-expanded={isResultsOpen}
+                className="flex w-full items-center justify-between gap-3 p-3 text-left text-xs font-semibold text-zinc-200 hover:text-white"
               >
-                {isLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" />
-                    <span>{loadingStep || t.generating}</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    <span>{t.generateBtn}</span>
-                  </>
-                )}
+                <span className="flex min-w-0 items-center gap-2">
+                  <Layers className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                  <span className="truncate">{t.regionSummary}</span>
+                  <span className="shrink-0 font-mono text-[10px] font-medium text-emerald-400">
+                    {structure.regions?.length || 0} {lang === 'zh' ? '������' : 'regions'}
+                  </span>
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isResultsOpen ? 'rotate-180' : ''}`} />
               </button>
-
-              {isLoading && (
-                <button onClick={handleCancelGeneration} className="w-full py-2 rounded-md border border-white/10 text-xs text-zinc-300 hover:bg-white/5">
-                  {generationCopy.cancel}
-                </button>
-              )}
-
-              {generationSource && (
-                <p className={`text-[11px] ${generationSource === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`} role="status">
-                  {generationSource === 'ai' ? generationCopy.ai : generationCopy.localSource}
-                </p>
-              )}
-
-              {allowLocalPreview && !isLoading && (
-                <button data-local-preview="true" onClick={() => void handleGenerate(true)} className="w-full py-2 rounded-md border border-amber-500/30 text-xs text-amber-300 hover:bg-amber-500/10">
-                  {generationCopy.local}
-                </button>
-              )}
-
-              {errorMessage && (
-                <div data-ai-error="true" data-ai-error-code={errorCode ?? 'GENERATION_FAILED'} role="alert" className="text-xs text-red-400 p-2.5 rounded-lg bg-red-950/40 border border-red-800/50 leading-relaxed">
-                  {errorMessage}
-                </div>
-              )}
+              {isResultsOpen && <div className="space-y-3 border-t border-white/[0.06] p-3">
+            {/* Generation feedback stays with the result history after the primary action. */}
+            <div className="space-y-2">
               {(isLoading || generationLog.length > 0) && (
                 <section aria-live="polite" aria-label={lang === 'zh' ? 'AI 建造日志' : 'AI construction log'} className="space-y-1.5 rounded-md border border-white/[0.08] bg-black/20 p-2.5">
                   <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-300">
@@ -1030,6 +1055,8 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
                 <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
               </button>
             </div>
+              </div>}
+            </div>
           </div>
         </aside>
 
@@ -1074,7 +1101,7 @@ export const AiBuilderView: React.FC<AiBuilderViewProps> = ({
             )}
 
             {/* Floating Minimal Bottom Slicing Drawer */}
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 studio-glass px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-2xl flex items-center gap-3 sm:gap-4 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-24px)] overflow-x-auto">
+            <div className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 studio-glass px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-lg shadow-2xl flex items-center gap-3 sm:gap-4 text-xs z-10 border border-white/[0.08] max-w-[calc(100%-24px)] overflow-x-auto">
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-[10px] sm:text-[11px] text-zinc-400 whitespace-nowrap">{t.layerSlice}</span>
                 <input

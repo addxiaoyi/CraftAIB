@@ -66,6 +66,7 @@ try {
     await page.locator(`[data-workspace-id="${workspace}"]`).filter({ visible: true }).first().click();
     const scope = page.locator(`[data-active-workspace="${workspace}"]`);
     await scope.waitFor();
+    if (workspace === 'ai_builder') await scope.locator('[data-ai-results-toggle="true"]').click();
     const downloadButton = workspace === 'ai_builder' ? scope.locator('[data-ai-export="litematic"]') : scope.getByRole('button', { name: /\.litematic/ }).first();
     await downloadButton.click();
     await scope.locator('[data-export-error]').waitFor();

@@ -47,11 +47,15 @@ await page.route('**/api/ai/structure-plan**', async (route) => {
 try {
   await page.goto(previewUrl);
   await page.locator('[data-active-workspace="ai_builder"]').waitFor();
+  assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'false', 'result details should start collapsed');
+  await page.locator('[data-ai-generate="true"]').waitFor({ state: 'visible' });
   await page.locator('[data-ai-prompt="true"]').fill('a harbor city with a lighthouse');
   await page.locator('[data-ai-generate="true"]').click();
   await page.waitForFunction(() => document.body.innerText.includes('tool_result'), null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelector('[data-ai-generate="true"]')?.disabled === false, null, { timeout: 30000 });
+  assert.equal(await page.locator('[data-ai-results-toggle="true"]').getAttribute('aria-expanded'), 'true', 'generation should reveal its result details');
   assert.match(await page.locator('body').innerText(), /build_voxel_structure/);
+  await page.locator('[data-generation-settings-toggle="true"]').click();
   const width = page.getByRole('spinbutton', { name: 'Width in blocks' });
   const height = page.getByRole('spinbutton', { name: 'Height in blocks' });
   const length = page.getByRole('spinbutton', { name: 'Length in blocks' });
